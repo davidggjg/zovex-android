@@ -92,9 +92,7 @@ jobs:
             -dname "CN=Zovex,OU=Mobile,O=Zovex,L=IL,ST=IL,C=IL"
 
       - name: Build Release APK
-        run: |
-          cd android
-          ./gradlew assembleRelease --no-daemon
+        run: ./gradlew -p android assembleRelease --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
