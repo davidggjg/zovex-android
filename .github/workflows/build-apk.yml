@@ -30,6 +30,15 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Download Gradle wrapper jar
+        run: |
+          mkdir -p android/gradle/wrapper
+          curl -fsSL -o android/gradle/wrapper/gradle-wrapper.jar \
+            https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
       - name: Generate Keystore
         run: |
           cd android/app
@@ -43,9 +52,6 @@ jobs:
             -storepass zovex2026 \
             -keypass zovex2026 \
             -dname "CN=Zovex,OU=Mobile,O=Zovex,L=IL,ST=IL,C=IL"
-
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
 
       - name: Build Release APK
         run: |
