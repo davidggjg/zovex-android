@@ -30,6 +30,45 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Generate app icons
+        run: |
+          pip install Pillow --quiet
+          python3 << 'EOF'
+          from PIL import Image, ImageDraw, ImageFont
+          import os
+
+          sizes = {
+            'android/app/src/main/res/mipmap-mdpi': 48,
+            'android/app/src/main/res/mipmap-hdpi': 72,
+            'android/app/src/main/res/mipmap-xhdpi': 96,
+            'android/app/src/main/res/mipmap-xxhdpi': 144,
+            'android/app/src/main/res/mipmap-xxxhdpi': 192,
+          }
+
+          for folder, size in sizes.items():
+            os.makedirs(folder, exist_ok=True)
+            img = Image.new('RGB', (size, size), color='#0a0a0a')
+            draw = ImageDraw.Draw(img)
+            margin = int(size * 0.08)
+            draw.ellipse([margin, margin, size-margin, size-margin], fill='#e50914')
+            try:
+              font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', int(size * 0.55))
+            except:
+              font = ImageFont.load_default()
+            text = 'Z'
+            bbox = draw.textbbox((0, 0), text, font=font)
+            tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
+            draw.text(((size-tw)//2 - bbox[0], (size-th)//2 - bbox[1]), text, fill='white', font=font)
+            img.save(f'{folder}/ic_launcher.png')
+            img_r = Image.new('RGBA', (size, size), (0,0,0,0))
+            mask = Image.new('L', (size, size), 0)
+            ImageDraw.Draw(mask).ellipse([0, 0, size, size], fill=255)
+            img_r.paste(img, mask=mask)
+            img_r.save(f'{folder}/ic_launcher_round.png')
+
+          print("Icons created!")
+          EOF
+
       - name: Download Gradle wrapper jar
         run: |
           mkdir -p android/gradle/wrapper
@@ -56,7 +95,7 @@ jobs:
       - name: Build Release APK
         run: |
           cd android
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          ./gradlew assembleRelease --no-daemon
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
