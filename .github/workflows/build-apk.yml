@@ -28,6 +28,29 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Fix Gradle plugin path
+        run: |
+          if [ -d "node_modules/@react-native/gradle-plugin" ]; then
+            echo "gradle-plugin already at top-level node_modules"
+          elif [ -d "node_modules/react-native/node_modules/@react-native/gradle-plugin" ]; then
+            echo "gradle-plugin nested inside react-native, symlinking..."
+            mkdir -p node_modules/@react-native
+            ln -sf "$(pwd)/node_modules/react-native/node_modules/@react-native/gradle-plugin" \
+              node_modules/@react-native/gradle-plugin
+            echo "Done"
+          else
+            PLUGIN=$(find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -1)
+            if [ -n "$PLUGIN" ]; then
+              echo "Found at $PLUGIN, symlinking..."
+              mkdir -p node_modules/@react-native
+              ln -sf "$(pwd)/$PLUGIN" node_modules/@react-native/gradle-plugin
+            else
+              echo "ERROR: @react-native/gradle-plugin not found anywhere in node_modules"
+              ls node_modules/@react-native/ 2>/dev/null || echo "No @react-native scope at top level"
+              exit 1
+            fi
+          fi
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
