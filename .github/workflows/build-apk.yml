@@ -27,12 +27,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Download Gradle wrapper jar
-        run: |
-          mkdir -p android/gradle/wrapper
-          curl -fsSL -o android/gradle/wrapper/gradle-wrapper.jar \
-            https://services.gradle.org/distributions/gradle-8.6-wrapper.jar
-
       - name: Make gradlew executable
         run: chmod +x android/gradlew
 
