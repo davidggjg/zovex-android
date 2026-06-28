@@ -27,9 +27,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install dependencies
-        run: npm install
-
       - name: Download Gradle wrapper jar
         run: |
           mkdir -p android/gradle/wrapper
@@ -38,6 +35,9 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
+
+      - name: Install dependencies
+        run: npm install
 
       - name: Generate app icons
         run: |
