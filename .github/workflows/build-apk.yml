@@ -30,10 +30,19 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Download Gradle wrapper jar
+        run: |
+          mkdir -p android/gradle/wrapper
+          curl -fsSL -o android/gradle/wrapper/gradle-wrapper.jar \
+            https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar
+
+      - name: Make gradlew executable
+        run: chmod +x android/gradlew
+
       - name: Generate app icons
         run: |
           pip install Pillow --quiet
-          python3 << 'EOF'
+          python3 << 'PYEOF'
           from PIL import Image, ImageDraw, ImageFont
           import os
 
@@ -67,16 +76,7 @@ jobs:
             img_r.save(f'{folder}/ic_launcher_round.png')
 
           print("Icons created!")
-          EOF
-
-      - name: Download Gradle wrapper jar
-        run: |
-          mkdir -p android/gradle/wrapper
-          curl -fsSL -o android/gradle/wrapper/gradle-wrapper.jar \
-            https://raw.githubusercontent.com/gradle/gradle/v8.6.0/gradle/wrapper/gradle-wrapper.jar
-
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew
+          PYEOF
 
       - name: Generate Keystore
         run: |
