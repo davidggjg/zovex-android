@@ -1,19 +1,14 @@
 apply plugin: "com.android.application"
-apply plugin: "com.facebook.react"
 apply plugin: "kotlin-android"
-
-react {
-    autolinkLibrariesWithApp()
-}
 
 android {
     namespace "com.zovexapp"
-    compileSdkVersion rootProject.ext.compileSdkVersion
+    compileSdkVersion 34
 
     defaultConfig {
         applicationId "com.zovexapp"
-        minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
+        minSdkVersion 24
+        targetSdkVersion 34
         versionCode 1
         versionName "1.0"
     }
@@ -40,6 +35,13 @@ android {
 }
 
 dependencies {
-    implementation("com.facebook.react:react-android")
-    implementation("com.facebook.react:hermes-android")
+    implementation("com.facebook.react:react-android:0.73.6")
+    implementation("com.facebook.react:hermes-android:0.73.6")
+}
+
+repositories {
+    maven { url "https://dl.bintray.com/kotlin/kotlin-eap" }
+    mavenCentral()
+    google()
+    maven { url "$rootDir/../node_modules/react-native/android" }
 }
