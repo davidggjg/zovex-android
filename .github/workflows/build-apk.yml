@@ -96,19 +96,9 @@ jobs:
           print("Icons created!")
           PYEOF
 
-      - name: Generate Keystore
+      - name: Restore Keystore
         run: |
-          cd android/app
-          keytool -genkeypair \
-            -v \
-            -keystore zovex-release.keystore \
-            -alias zovex-key \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass zovex2026 \
-            -keypass zovex2026 \
-            -dname "CN=Zovex,OU=Mobile,O=Zovex,L=IL,ST=IL,C=IL"
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/zovex-release.keystore
 
       - name: Build Release APK
         run: |
