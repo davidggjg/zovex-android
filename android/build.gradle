@@ -19,7 +19,9 @@ buildscript {
     }
 }
 
-apply plugin: "com.facebook.react.rootproject"
+plugins {
+    id "com.facebook.react.rootproject"
+}
 
 allprojects {
     repositories {
