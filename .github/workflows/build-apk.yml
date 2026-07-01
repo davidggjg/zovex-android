@@ -28,25 +28,20 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Diagnose Gradle plugin path
+      - name: Ensure gradle-plugin at top-level node_modules
         run: |
-          echo "=== npm ls ==="
-          npm ls @react-native/gradle-plugin 2>/dev/null || true
-          echo ""
-          echo "=== find gradle-plugin dirs ==="
-          find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null
-          echo ""
-          echo "=== top-level @react-native/ packages ==="
-          ls node_modules/@react-native/ 2>/dev/null || echo "(none)"
-          echo ""
-          echo "=== gradle-plugin dir contents (top-level) ==="
-          ls -la node_modules/@react-native/gradle-plugin/ 2>/dev/null || echo "(not found)"
-          echo ""
-          echo "=== .gradle/.kts files inside @react-native/gradle-plugin ==="
-          find node_modules/@react-native/gradle-plugin -name "*.gradle*" -o -name "*.kts" 2>/dev/null | head -20
-          echo ""
-          echo "=== .gradle/.kts files inside react-native pkg ==="
-          find node_modules/react-native -name "*.gradle*" -o -name "*.kts" 2>/dev/null | head -20
+          if [ ! -d "node_modules/@react-native/gradle-plugin" ]; then
+            NESTED=$(find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -1)
+            if [ -n "$NESTED" ]; then
+              mkdir -p node_modules/@react-native
+              ln -sf "$(pwd)/$NESTED" node_modules/@react-native/gradle-plugin
+              echo "Symlinked $NESTED → node_modules/@react-native/gradle-plugin"
+            else
+              echo "WARNING: @react-native/gradle-plugin not found anywhere"
+            fi
+          else
+            echo "@react-native/gradle-plugin already at top-level"
+          fi
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
