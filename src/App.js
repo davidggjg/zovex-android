@@ -1,12 +1,29 @@
 import React, {useRef} from 'react';
-import {BackHandler, StatusBar, StyleSheet, View} from 'react-native';
+import {BackHandler, Linking, StatusBar, StyleSheet, View} from 'react-native';
 import {WebView} from 'react-native-webview';
 
 const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
 
-// Chrome user agent without "wv" marker so Google OAuth isn't blocked in WebView
 const CHROME_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+
+// Convert window.open() popups (used by Google OAuth) into same-window navigation
+// so the auth flow stays inside the WebView instead of opening Chrome
+const INJECT_BEFORE = `
+  (function() {
+    window.open = function(url) {
+      if (url) { window.location.href = url; }
+      return {
+        closed: false,
+        close: function() {},
+        focus: function() {},
+        postMessage: function() {},
+        location: { href: url || '' },
+      };
+    };
+  })();
+  true;
+`;
 
 export default function App() {
   const webviewRef = useRef(null);
@@ -35,6 +52,18 @@ export default function App() {
         thirdPartyCookiesEnabled
         allowsInlineMediaPlayback
         mediaPlaybackRequiresUserAction={false}
+        originWhitelist={['*']}
+        injectedJavaScriptBeforeContentLoaded={INJECT_BEFORE}
+        onShouldStartLoadWithRequest={request => {
+          if (
+            request.url.startsWith('http://') ||
+            request.url.startsWith('https://')
+          ) {
+            return true;
+          }
+          Linking.openURL(request.url).catch(() => {});
+          return false;
+        }}
         onNavigationStateChange={state => {
           canGoBackRef.current = state.canGoBack;
         }}
