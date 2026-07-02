@@ -1,26 +1,26 @@
 import React, {useRef, useEffect, useState, useCallback} from 'react';
 import {
   Alert,
-  AppState,
   BackHandler,
   Linking,
+  Modal,
   PermissionsAndroid,
   Platform,
+  SafeAreaView,
   StatusBar,
   StyleSheet,
+  Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import messaging from '@react-native-firebase/messaging';
 
 const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
-const WEB_CLIENT_ID =
-  '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com';
-const OAUTH_REDIRECT =
-  'com.googleusercontent.apps.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v:/oauth2redirect/google';
 const CHROME_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
+// Intercepts window.open so the Google OAuth popup URL reaches native code
 const MAIN_INJECT = `(function(){
   window.open = function(url) {
     if (url) window.ReactNativeWebView.postMessage(JSON.stringify({type:'open',url:url}));
@@ -42,11 +42,35 @@ const MAIN_INJECT = `(function(){
   })();
 })(); true;`;
 
+// Injected into the sign-in popup WebView — fakes window.opener so GIS postMessage reaches us
+const POPUP_INJECT = `(function(){
+  try {
+    Object.defineProperty(window, 'opener', {
+      get: function() {
+        return {
+          postMessage: function(data, targetOrigin) {
+            if (window.ReactNativeWebView) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'popup_msg',
+                data: typeof data === 'string' ? data : JSON.stringify(data),
+                origin: window.location.origin
+              }));
+            }
+          },
+          closed: false,
+          location: {href: ''}
+        };
+      },
+      configurable: true,
+      enumerable: true
+    });
+  } catch(e) {}
+})(); true;`;
+
 export default function App() {
   const webviewRef = useRef(null);
   const canGoBackRef = useRef(false);
-  const pendingSignIn = useRef(false);
-  const [signingIn, setSigningIn] = useState(false);
+  const [popupUrl, setPopupUrl] = useState(null);
 
   const injectGoogleUser = useCallback((userData, accessToken) => {
     if (!webviewRef.current) return;
@@ -74,22 +98,8 @@ export default function App() {
     `);
   }, []);
 
-  const handleOAuthRedirect = useCallback(
-    async url => {
-      if (!url || !url.startsWith('com.googleusercontent.apps.')) return false;
-      pendingSignIn.current = false;
-      setSigningIn(false);
-      const fragment = url.split('#')[1] || '';
-      const params = {};
-      fragment.split('&').forEach(pair => {
-        const eqIdx = pair.indexOf('=');
-        if (eqIdx !== -1) {
-          params[decodeURIComponent(pair.slice(0, eqIdx))] =
-            decodeURIComponent(pair.slice(eqIdx + 1));
-        }
-      });
-      const accessToken = params.access_token;
-      if (!accessToken) return true;
+  const handleAccessToken = useCallback(
+    async accessToken => {
       try {
         const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
           headers: {Authorization: 'Bearer ' + accessToken},
@@ -107,7 +117,6 @@ export default function App() {
       } catch (e) {
         Alert.alert('שגיאת כניסה', e.message || String(e));
       }
-      return true;
     },
     [injectGoogleUser],
   );
@@ -121,28 +130,8 @@ export default function App() {
       }
       return false;
     });
-    const linkingSub = Linking.addEventListener('url', event => {
-      handleOAuthRedirect(event.url);
-    });
-    Linking.getInitialURL().then(url => {
-      if (url) handleOAuthRedirect(url);
-    });
-    const appStateSub = AppState.addEventListener('change', state => {
-      if (state === 'active' && pendingSignIn.current) {
-        setTimeout(() => {
-          if (pendingSignIn.current) {
-            pendingSignIn.current = false;
-            setSigningIn(false);
-          }
-        }, 1500);
-      }
-    });
-    return () => {
-      backSub.remove();
-      linkingSub.remove();
-      appStateSub.remove();
-    };
-  }, [handleOAuthRedirect]);
+    return () => backSub.remove();
+  }, []);
 
   const setupNotifications = async () => {
     if (Platform.OS === 'android' && Platform.Version >= 33) {
@@ -184,26 +173,6 @@ export default function App() {
     `);
   };
 
-  const handleGoogleSignIn = async () => {
-    if (signingIn) return;
-    pendingSignIn.current = true;
-    setSigningIn(true);
-    try {
-      const authUrl =
-        'https://accounts.google.com/o/oauth2/v2/auth' +
-        '?client_id=' + encodeURIComponent(WEB_CLIENT_ID) +
-        '&redirect_uri=' + encodeURIComponent(OAUTH_REDIRECT) +
-        '&response_type=token' +
-        '&scope=' + encodeURIComponent('email profile openid') +
-        '&prompt=select_account';
-      await Linking.openURL(authUrl);
-    } catch (e) {
-      pendingSignIn.current = false;
-      setSigningIn(false);
-      Alert.alert('שגיאת כניסה', e.message || String(e));
-    }
-  };
-
   const onMainMsg = e => {
     try {
       const m = JSON.parse(e.nativeEvent.data);
@@ -212,13 +181,96 @@ export default function App() {
           m.url.includes('accounts.google.com') ||
           m.url.includes('google.com/o/oauth2');
         if (isGoogleAuth) {
-          handleGoogleSignIn();
+          setPopupUrl(m.url);
         } else {
           Linking.openURL(m.url).catch(() => {});
         }
       }
     } catch (_) {}
   };
+
+  // Receives window.opener.postMessage from the popup WebView and relays it to the main WebView
+  const onPopupMsg = useCallback(
+    e => {
+      try {
+        const m = JSON.parse(e.nativeEvent.data);
+        if (m.type === 'popup_msg') {
+          setPopupUrl(null);
+          if (webviewRef.current) {
+            const dataJson = JSON.stringify(m.data);
+            const originJson = JSON.stringify(
+              m.origin || 'https://accounts.google.com',
+            );
+            webviewRef.current.injectJavaScript(`
+              (function(){
+                try {
+                  window.dispatchEvent(new MessageEvent('message', {
+                    data: ${dataJson},
+                    origin: ${originJson},
+                    source: window,
+                    bubbles: false,
+                    cancelable: false
+                  }));
+                } catch(er){}
+              })(); true;
+            `);
+          }
+        }
+      } catch (_) {}
+    },
+    [],
+  );
+
+  // Catches non-http redirects in the popup (e.g. storagerelay://) which carry the access_token
+  const onPopupShouldLoad = useCallback(
+    req => {
+      if (req.url.startsWith('http://') || req.url.startsWith('https://')) {
+        return true;
+      }
+      setPopupUrl(null);
+      const fragment = req.url.split('#')[1] || '';
+      const params = {};
+      fragment.split('&').forEach(pair => {
+        const eq = pair.indexOf('=');
+        if (eq > -1) {
+          try {
+            params[decodeURIComponent(pair.slice(0, eq))] = decodeURIComponent(
+              pair.slice(eq + 1),
+            );
+          } catch (_) {}
+        }
+      });
+      if (params.access_token) {
+        handleAccessToken(params.access_token);
+      }
+      return false;
+    },
+    [handleAccessToken],
+  );
+
+  // Also watch navigation state of popup for access_token in any URL format
+  const onPopupNavChange = useCallback(
+    nav => {
+      if (nav.url && nav.url.includes('access_token=') && popupUrl) {
+        setPopupUrl(null);
+        const part = nav.url.split('#')[1] || nav.url.split('?')[1] || '';
+        const params = {};
+        part.split('&').forEach(pair => {
+          const eq = pair.indexOf('=');
+          if (eq > -1) {
+            try {
+              params[decodeURIComponent(pair.slice(0, eq))] =
+                decodeURIComponent(pair.slice(eq + 1));
+            } catch (_) {}
+          }
+        });
+        if (params.access_token) {
+          handleAccessToken(params.access_token);
+        }
+      }
+    },
+    [handleAccessToken, popupUrl],
+  );
 
   return (
     <View style={styles.container}>
@@ -250,6 +302,33 @@ export default function App() {
         }}
         style={styles.webview}
       />
+      {popupUrl ? (
+        <Modal
+          visible
+          animationType="slide"
+          statusBarTranslucent
+          onRequestClose={() => setPopupUrl(null)}>
+          <SafeAreaView style={styles.popupContainer}>
+            <WebView
+              source={{uri: popupUrl}}
+              userAgent={CHROME_UA}
+              javaScriptEnabled
+              domStorageEnabled
+              thirdPartyCookiesEnabled
+              injectedJavaScriptBeforeContentLoaded={POPUP_INJECT}
+              onMessage={onPopupMsg}
+              onShouldStartLoadWithRequest={onPopupShouldLoad}
+              onNavigationStateChange={onPopupNavChange}
+              style={styles.webview}
+            />
+            <TouchableOpacity
+              style={styles.cancelBtn}
+              onPress={() => setPopupUrl(null)}>
+              <Text style={styles.cancelText}>ביטול</Text>
+            </TouchableOpacity>
+          </SafeAreaView>
+        </Modal>
+      ) : null}
     </View>
   );
 }
@@ -257,4 +336,7 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0a0a0a'},
   webview: {flex: 1},
+  popupContainer: {flex: 1, backgroundColor: '#fff'},
+  cancelBtn: {padding: 16, backgroundColor: '#f0f0f0', alignItems: 'center'},
+  cancelText: {fontSize: 16, color: '#333'},
 });
