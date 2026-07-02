@@ -20,7 +20,6 @@ const WEB_CLIENT_ID =
 const CHROME_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
-// Intercept window.open() so native Google Sign-In handles it instead of Chrome
 const MAIN_INJECT = `(function(){
   window.open = function(url) {
     if (url) window.ReactNativeWebView.postMessage(JSON.stringify({type:'open',url:url}));
@@ -68,11 +67,11 @@ export default function App() {
 
     if (enabled) {
       const token = await messaging().getToken();
-      // Inject FCM token into the WebView so the website can save it
       injectFcmToken(token);
+      // Subscribe to broadcast topic so admin can send to all users at once
+      messaging().subscribeToTopic('allUsers').catch(() => {});
     }
 
-    // Handle notifications received while app is in foreground
     messaging().onMessage(async remoteMessage => {
       if (remoteMessage.notification) {
         Alert.alert(
@@ -92,64 +91,39 @@ export default function App() {
     `);
   };
 
-  // Native Google Sign-In — triggered when window.open() is intercepted
+  // Native Google Sign-In — triggered when window.open() is intercepted for accounts.google.com
+  // The website uses GIS (window.google.accounts.oauth2.initTokenClient) and stores
+  // the signed-in user as { id, name, email, picture } in localStorage['zovex_user'].
+  // We bypass the GIS popup entirely: sign in natively, then set localStorage directly
+  // and reload so the website picks up the session.
   const handleNativeGoogleSignIn = async () => {
     if (signingIn) return;
     setSigningIn(true);
     try {
       await GoogleSignin.hasPlayServices();
-      const userInfo = await GoogleSignin.signIn();
-      const {idToken} = await GoogleSignin.getTokens();
+      const result = await GoogleSignin.signIn();
+      const user = result?.data?.user || result?.user;
+      if (!user || !webviewRef.current) return;
 
-      if (webviewRef.current && idToken) {
-        // Try to sign in via Firebase Auth (if the website uses it)
-        // Also dispatch a custom event the website can listen to
-        webviewRef.current.injectJavaScript(`
-          (function(){
-            var token = ${JSON.stringify(idToken)};
-            var email = ${JSON.stringify(userInfo.data?.user?.email || '')};
-            var name = ${JSON.stringify(userInfo.data?.user?.name || '')};
-            var photo = ${JSON.stringify(userInfo.data?.user?.photo || '')};
+      const userData = {
+        id: user.id || '',
+        name: user.name || '',
+        email: user.email || '',
+        picture: user.photo || '',
+      };
+      const userJson = JSON.stringify(JSON.stringify(userData));
 
-            // Firebase Auth compat
-            if (window.firebase && window.firebase.auth) {
-              var cred = window.firebase.auth.GoogleAuthProvider.credential(token);
-              window.firebase.auth().signInWithCredential(cred).catch(function(){});
-            }
-
-            // Firebase Auth modular (v9+)
-            if (window.__firebaseAuth) {
-              try {
-                var GoogleAuthProvider = window.__firebaseGoogleProvider || {};
-                var credential = {providerId:'google.com', signInMethod:'google.com', idToken: token};
-                window.__firebaseAuth.signInWithCredential && window.__firebaseAuth.signInWithCredential(credential).catch(function(){});
-              } catch(e){}
-            }
-
-            // GIS / custom callback
-            ['handleCredentialResponse','onGoogleSignIn','googleCallback'].forEach(function(fn){
-              if (typeof window[fn] === 'function') {
-                try { window[fn]({credential: token}); } catch(e){}
-              }
-            });
-
-            // Custom native event — website can listen with: window.addEventListener('nativeGoogleSignIn', ...)
-            window.dispatchEvent(new CustomEvent('nativeGoogleSignIn', {
-              detail: {idToken: token, email: email, name: name, photo: photo}
-            }));
-
-            // Simulate postMessage from Google accounts (for Firebase popup flow)
-            window.dispatchEvent(new MessageEvent('message', {
-              data: JSON.stringify({credential: token}),
-              origin: 'https://accounts.google.com',
-              source: null
-            }));
-          })();
-          true;
-        `);
-      }
+      webviewRef.current.injectJavaScript(`
+        (function(){
+          try {
+            localStorage.setItem('zovex_user', ${userJson});
+            localStorage.removeItem('zovex_skipped');
+            window.location.reload();
+          } catch(e) {}
+        })(); true;
+      `);
     } catch (e) {
-      // User cancelled or error — silently ignore
+      // Cancelled or error — silent
     } finally {
       setSigningIn(false);
     }
@@ -188,7 +162,6 @@ export default function App() {
         onMessage={onMainMsg}
         onNavigationStateChange={s => {
           canGoBackRef.current = s.canGoBack;
-          // Inject FCM token on each new page load
           if (s.loading === false) {
             messaging()
               .getToken()
