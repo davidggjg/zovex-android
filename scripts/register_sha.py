@@ -1,9 +1,9 @@
 """
 Called during the GitHub Actions build to:
 1. Extract the SHA-1 fingerprint from the release keystore
-2. Register it with Firebase (so GoogleSignin works without DEVELOPER_ERROR)
-3. Download the updated google-services.json from Firebase
-Falls back to the static GOOGLE_SERVICES_JSON_BASE64 secret on any error.
+2. Delete + re-add it in Firebase (triggers Android OAuth client creation)
+3. Wait up to 90s for the Android OAuth client to appear in google-services.json
+4. Falls back to the static GOOGLE_SERVICES_JSON_BASE64 secret on any error.
 """
 import base64
 import json
@@ -29,24 +29,15 @@ def fallback():
 # --- 1. Extract SHA-1 from release keystore ---
 print("=== Extracting SHA-1 from keystore ===")
 r = subprocess.run(
-    [
-        "keytool", "-list", "-v",
-        "-keystore", "android/app/zovex-release.keystore",
-        "-alias", "zovex-key",
-        "-storepass", "zovex2026",
-    ],
-    capture_output=True,
-    text=True,
+    ["keytool", "-list", "-v",
+     "-keystore", "android/app/zovex-release.keystore",
+     "-alias", "zovex-key", "-storepass", "zovex2026"],
+    capture_output=True, text=True,
 )
-
 if r.returncode != 0:
-    print(f"keytool failed (exit {r.returncode}):\n{r.stderr}")
+    print(f"keytool failed: {r.stderr}")
     fallback()
     sys.exit(0)
-
-# Print first few lines of keytool output for debugging
-for line in r.stdout.split("\n")[:20]:
-    print(f"  keytool: {line}")
 
 sha1_raw = None
 for line in r.stdout.split("\n"):
@@ -55,22 +46,20 @@ for line in r.stdout.split("\n"):
         break
 
 if not sha1_raw:
-    print("Could not find SHA1: line in keytool output — using static google-services.json")
+    print("SHA1 line not found in keytool output")
     fallback()
     sys.exit(0)
 
-# Normalize: remove spaces, ensure uppercase with colons (AA:BB:CC:...)
 sha1_hex = sha1_raw.replace(":", "").replace(" ", "").upper()
 if len(sha1_hex) != 40:
-    print(f"Unexpected SHA-1 length {len(sha1_hex)} from {sha1_raw!r} — using static")
+    print(f"Unexpected SHA-1 length: {sha1_raw!r}")
     fallback()
     sys.exit(0)
 
-# Firebase API expects: AA:BB:CC:DD:... (uppercase hex pairs with colons)
 sha1_formatted = ":".join(sha1_hex[i:i+2] for i in range(0, 40, 2))
 print(f"Release SHA-1: {sha1_formatted}")
 
-# --- 2. Register with Firebase and fetch updated google-services.json ---
+# --- 2. Firebase: delete existing SHA-1 entry then re-add to trigger OAuth client creation ---
 try:
     from google.auth.transport.requests import Request as GReq
     from google.oauth2 import service_account
@@ -92,9 +81,9 @@ try:
         "Content-Type": "application/json",
     }
 
-    def api(url, data=None):
-        method = "POST" if data else "GET"
-        req = urllib.request.Request(url, data=data, headers=hdrs, method=method)
+    def api(url, data=None, method=None):
+        m = method or ("POST" if data is not None else "GET")
+        req = urllib.request.Request(url, data=data, headers=hdrs, method=m)
         return json.loads(urllib.request.urlopen(req).read())
 
     # Find the Android app ID for com.zovexapp
@@ -107,27 +96,53 @@ try:
         raise RuntimeError("com.zovexapp not found in Firebase project")
     print(f"Firebase appId: {app_id}")
 
-    # Register SHA-1 — Firebase expects AA:BB:CC:... format with colons
+    # List existing SHA certificates
+    sha_list = api(f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha")
+    existing = sha_list.get("certificates", [])
+    print(f"Existing SHA certificates: {len(existing)}")
+
+    # Delete any existing SHA-1 with our fingerprint (delete+re-add triggers OAuth client creation)
+    for cert in existing:
+        cert_name = cert.get("name", "")
+        cert_hash = cert.get("shaHash", "")
+        cert_normalized = cert_hash.replace(":", "").upper()
+        if cert_normalized == sha1_hex:
+            print(f"Deleting existing SHA-1 entry: {cert_name}")
+            try:
+                req = urllib.request.Request(
+                    f"https://firebase.googleapis.com/v1beta1/{cert_name}",
+                    headers=hdrs,
+                    method="DELETE",
+                )
+                urllib.request.urlopen(req).read()
+                print("Deleted successfully")
+            except Exception as del_exc:
+                print(f"Delete failed: {del_exc}")
+            time.sleep(2)
+            break
+
+    # Add the SHA-1 (this triggers Android OAuth client creation in Google Cloud Console)
+    print(f"Adding SHA-1: {sha1_formatted}")
     try:
-        api(
+        result = api(
             f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha",
             data=json.dumps({"shaHash": sha1_formatted, "certType": "SHA_1"}).encode(),
         )
-        print(f"SHA-1 registered with Firebase: {sha1_formatted}")
+        print(f"SHA-1 added: {result}")
     except urllib.error.HTTPError as e:
         if e.code == 409:
-            print(f"SHA-1 already registered — no change needed")
+            print("SHA-1 already registered (409) — will still check for OAuth client")
         else:
             raise
 
-    # Download updated google-services.json — retry up to 4x waiting for Android client to appear
+    # Wait up to 90 seconds for the Android OAuth client to appear in google-services.json
+    print("Waiting for Android OAuth client to be provisioned...")
     gs_json = None
     android_client_found = False
-
-    for attempt in range(4):
-        if attempt > 0:
-            print(f"Android client not in config yet, waiting 5s before retry {attempt + 1}...")
-            time.sleep(5)
+    for attempt in range(10):
+        wait = 5 if attempt == 0 else 10
+        print(f"  Waiting {wait}s (attempt {attempt + 1}/10)...")
+        time.sleep(wait)
 
         cfg = api(
             f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/config"
@@ -135,30 +150,28 @@ try:
         gs_json = base64.b64decode(cfg["configFileContents"]).decode()
         gs_obj = json.loads(gs_json)
 
-        print(f"  Attempt {attempt + 1} — oauth_clients in google-services.json:")
         for client_entry in gs_obj.get("client", []):
             for oc in client_entry.get("oauth_client", []):
                 ctype = oc.get("client_type")
                 cert = oc.get("android_info", {}).get("certificate_hash", "")
-                client_id = oc.get("client_id", "")[:40]
-                print(f"    type={ctype} cert={cert or '(none)'} id={client_id}...")
-                if ctype == 1:
-                    # Normalize cert hash for comparison
-                    cert_norm = cert.replace(":", "").upper()
-                    if cert_norm == sha1_hex:
-                        android_client_found = True
-                        print(f"    ^^^ MATCH — Android OAuth client with release SHA-1 found!")
+                cert_norm = cert.replace(":", "").upper()
+                print(f"    oauth type={ctype} cert={cert or '(none)'}")
+                if ctype == 1 and cert_norm == sha1_hex:
+                    android_client_found = True
+                    print("    ^^^ MATCH — Android OAuth client found!")
 
         if android_client_found:
+            print(f"Android OAuth client provisioned after {attempt + 1} attempts!")
             break
 
     if not android_client_found:
-        print("WARNING: No Android OAuth client matching release SHA-1 found in google-services.json")
-        print("Google Sign-In may still fail with DEVELOPER_ERROR")
+        print("Android OAuth client NOT found after 90s — using fallback google-services.json")
+        fallback()
+        sys.exit(0)
 
     with open("android/app/google-services.json", "w") as f:
         f.write(gs_json)
-    print("google-services.json written from Firebase API")
+    print("google-services.json written with Android OAuth client — Google Sign-In should work!")
 
 except Exception as exc:
     print(f"Firebase step failed: {exc}")
