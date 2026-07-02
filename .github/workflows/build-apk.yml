@@ -37,7 +37,6 @@ jobs:
             if [ -n "$NESTED" ]; then
               mkdir -p node_modules/@react-native
               cp -r "$NESTED" node_modules/@react-native/gradle-plugin
-              echo "Copied $NESTED to $PLUGIN_DIR"
             else
               echo "ERROR: @react-native/gradle-plugin not found"
               exit 1
@@ -69,7 +68,13 @@ jobs:
           from PIL import Image, ImageDraw
           import os
 
-          src = Image.open('assets/icon.png').convert('RGBA')
+          if os.path.exists('assets/icon.png'):
+            src = Image.open('assets/icon.png').convert('RGBA')
+          else:
+            src = Image.new('RGBA', (512, 512), (10, 10, 10, 255))
+            draw = ImageDraw.Draw(src)
+            draw.ellipse([80, 80, 432, 432], fill=(0, 113, 227, 255))
+            draw.text((256, 256), 'Z', fill=(255,255,255,255), anchor='mm')
 
           sizes = {
             'android/app/src/main/res/mipmap-mdpi': 48,
@@ -87,13 +92,13 @@ jobs:
             bg.convert('RGB').save(f'{folder}/ic_launcher.png')
             circle_bg = Image.new('RGBA', (size, size), (255, 255, 255, 255))
             circle_bg.paste(icon, mask=icon.split()[3])
-            mask = Image.new('L', (size, size), 0)
-            ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
+            m = Image.new('L', (size, size), 0)
+            ImageDraw.Draw(m).ellipse([0, 0, size - 1, size - 1], fill=255)
             result = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-            result.paste(circle_bg, mask=mask)
+            result.paste(circle_bg, mask=m)
             result.save(f'{folder}/ic_launcher_round.png')
 
-          print("Icons generated")
+          print('Icons generated')
           PYEOF
 
       - name: Restore Keystore
