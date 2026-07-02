@@ -134,6 +134,20 @@ jobs:
           pip install google-auth --quiet
           python3 scripts/register_sha.py
 
+      - name: Apply iOS OAuth client ID to source files
+        run: |
+          if [ -f ios_oauth.txt ]; then
+            IOS_CLIENT_ID=$(sed -n '1p' ios_oauth.txt | tr -d '[:space:]')
+            IOS_SCHEME=$(sed -n '2p' ios_oauth.txt | tr -d '[:space:]')
+            echo "iOS CLIENT_ID: $IOS_CLIENT_ID"
+            echo "iOS scheme:    $IOS_SCHEME"
+            sed -i "s|IOS_CLIENT_ID_PLACEHOLDER|${IOS_CLIENT_ID}|g" src/App.js
+            sed -i "s|IOS_SCHEME_PLACEHOLDER|${IOS_SCHEME}|g" android/app/src/main/AndroidManifest.xml
+            echo "Applied iOS OAuth client ID to App.js and AndroidManifest.xml"
+          else
+            echo "WARNING: ios_oauth.txt not found — building with placeholder values (sign-in will not work)"
+          fi
+
       - name: Build Release APK
         run: |
           cd android
