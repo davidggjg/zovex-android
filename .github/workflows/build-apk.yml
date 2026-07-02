@@ -34,8 +34,8 @@ jobs:
             NESTED=$(find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -1)
             if [ -n "$NESTED" ]; then
               mkdir -p node_modules/@react-native
-              ln -sf "$(pwd)/$NESTED" node_modules/@react-native/gradle-plugin
-              echo "Symlinked $NESTED → node_modules/@react-native/gradle-plugin"
+              cp -r "$NESTED" node_modules/@react-native/gradle-plugin
+              echo "Copied $NESTED → node_modules/@react-native/gradle-plugin"
             else
               echo "WARNING: @react-native/gradle-plugin not found anywhere"
             fi
