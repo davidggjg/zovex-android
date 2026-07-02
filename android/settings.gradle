@@ -1,14 +1,27 @@
 pluginManagement {
     includeBuild("../node_modules/@react-native/gradle-plugin")
     repositories {
-        gradlePluginPortal()
         google()
         mavenCentral()
+        gradlePluginPortal()
     }
 }
-plugins { id("com.facebook.react.settings") }
-extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
 
-rootProject.name = "ZovexApp"
+rootProject.name = 'ZovexApp'
+
 include ':app'
 project(':app').projectDir = new File(rootProject.projectDir, './app')
+
+// Manual native module inclusion (replaces applyNativeModulesSettingsGradle which requires
+// com.facebook.react.settings — not available in the bundled @react-native/gradle-plugin version)
+include ':react-native-webview'
+project(':react-native-webview').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-webview/android')
+
+include ':@react-native-firebase_app'
+project(':@react-native-firebase_app').projectDir = new File(rootProject.projectDir, '../node_modules/@react-native-firebase/app/android')
+
+include ':@react-native-firebase_messaging'
+project(':@react-native-firebase_messaging').projectDir = new File(rootProject.projectDir, '../node_modules/@react-native-firebase/messaging/android')
+
+include ':@react-native-google-signin_google-signin'
+project(':@react-native-google-signin_google-signin').projectDir = new File(rootProject.projectDir, '../node_modules/@react-native-google-signin/google-signin/android')
