@@ -23,17 +23,41 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+          cache: 'gradle'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.6'
+      - name: Ensure gradle-plugin at top-level node_modules
+        run: |
+          PLUGIN_DIR="node_modules/@react-native/gradle-plugin"
+
+          if [ ! -d "$PLUGIN_DIR" ]; then
+            NESTED=$(find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -1)
+            if [ -n "$NESTED" ]; then
+              mkdir -p node_modules/@react-native
+              cp -r "$NESTED" node_modules/@react-native/gradle-plugin
+              echo "Copied $NESTED to $PLUGIN_DIR"
+            else
+              echo "ERROR: @react-native/gradle-plugin not found"
+              exit 1
+            fi
+          fi
+
+          if [ ! -f "$PLUGIN_DIR/settings.gradle" ] && [ ! -f "$PLUGIN_DIR/settings.gradle.kts" ]; then
+            echo "rootProject.name = 'react-native-gradle-plugin'" > "$PLUGIN_DIR/settings.gradle"
+          fi
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK components
+        run: |
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.1.10909125"
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew
@@ -42,8 +66,10 @@ jobs:
         run: |
           pip install Pillow --quiet
           python3 << 'PYEOF'
-          from PIL import Image, ImageDraw, ImageFont
+          from PIL import Image, ImageDraw
           import os
+
+          src = Image.open('assets/icon.png').convert('RGBA')
 
           sizes = {
             'android/app/src/main/res/mipmap-mdpi': 48,
@@ -55,44 +81,33 @@ jobs:
 
           for folder, size in sizes.items():
             os.makedirs(folder, exist_ok=True)
-            img = Image.new('RGB', (size, size), color='#0a0a0a')
-            draw = ImageDraw.Draw(img)
-            margin = int(size * 0.08)
-            draw.ellipse([margin, margin, size-margin, size-margin], fill='#e50914')
-            try:
-              font = ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', int(size * 0.55))
-            except:
-              font = ImageFont.load_default()
-            text = 'Z'
-            bbox = draw.textbbox((0, 0), text, font=font)
-            tw, th = bbox[2]-bbox[0], bbox[3]-bbox[1]
-            draw.text(((size-tw)//2 - bbox[0], (size-th)//2 - bbox[1]), text, fill='white', font=font)
-            img.save(f'{folder}/ic_launcher.png')
-            img_r = Image.new('RGBA', (size, size), (0,0,0,0))
+            icon = src.resize((size, size), Image.LANCZOS)
+            bg = Image.new('RGBA', (size, size), (255, 255, 255, 255))
+            bg.paste(icon, mask=icon.split()[3])
+            bg.convert('RGB').save(f'{folder}/ic_launcher.png')
+            circle_bg = Image.new('RGBA', (size, size), (255, 255, 255, 255))
+            circle_bg.paste(icon, mask=icon.split()[3])
             mask = Image.new('L', (size, size), 0)
-            ImageDraw.Draw(mask).ellipse([0, 0, size, size], fill=255)
-            img_r.paste(img, mask=mask)
-            img_r.save(f'{folder}/ic_launcher_round.png')
+            ImageDraw.Draw(mask).ellipse([0, 0, size - 1, size - 1], fill=255)
+            result = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+            result.paste(circle_bg, mask=mask)
+            result.save(f'{folder}/ic_launcher_round.png')
 
-          print("Icons created!")
+          print("Icons generated")
           PYEOF
 
-      - name: Generate Keystore
+      - name: Restore Keystore
         run: |
-          cd android/app
-          keytool -genkeypair \
-            -v \
-            -keystore zovex-release.keystore \
-            -alias zovex-key \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass zovex2026 \
-            -keypass zovex2026 \
-            -dname "CN=Zovex,OU=Mobile,O=Zovex,L=IL,ST=IL,C=IL"
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/zovex-release.keystore
+
+      - name: Restore google-services.json
+        run: |
+          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
 
       - name: Build Release APK
-        run: android/gradlew -p android assembleRelease --no-daemon
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon --no-configuration-cache --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
