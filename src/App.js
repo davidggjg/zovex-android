@@ -1,6 +1,7 @@
-import React, {useRef, useEffect, useState} from 'react';
+import React, {useRef, useEffect, useState, useCallback} from 'react';
 import {
   Alert,
+  AppState,
   BackHandler,
   Linking,
   PermissionsAndroid,
@@ -10,24 +11,21 @@ import {
   View,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
-import {GoogleSignin, statusCodes} from '@react-native-google-signin/google-signin';
 import messaging from '@react-native-firebase/messaging';
 
 const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
 const WEB_CLIENT_ID =
   '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com';
-
+const OAUTH_REDIRECT =
+  'com.googleusercontent.apps.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v:/oauth2redirect/google';
 const CHROME_UA =
   'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
 
-// Intercepts window.open + patches GIS initTokenClient to save callback reference
 const MAIN_INJECT = `(function(){
   window.open = function(url) {
     if (url) window.ReactNativeWebView.postMessage(JSON.stringify({type:'open',url:url}));
     return {closed:false,close:function(){},focus:function(){},blur:function(){},postMessage:function(){},location:{href:url||''}};
   };
-
-  // Poll until GIS loads, then wrap initTokenClient to capture callback reference
   window.__gisCallback = null;
   (function pollGIS() {
     try {
@@ -44,16 +42,75 @@ const MAIN_INJECT = `(function(){
   })();
 })(); true;`;
 
-GoogleSignin.configure({
-  webClientId: WEB_CLIENT_ID,
-  scopes: ['profile', 'email', 'openid'],
-  offlineAccess: false,
-});
-
 export default function App() {
   const webviewRef = useRef(null);
   const canGoBackRef = useRef(false);
+  const pendingSignIn = useRef(false);
   const [signingIn, setSigningIn] = useState(false);
+
+  const injectGoogleUser = useCallback((userData, accessToken) => {
+    if (!webviewRef.current) return;
+    const userJson = JSON.stringify(JSON.stringify(userData));
+    const tokenJson = JSON.stringify(accessToken || '');
+    webviewRef.current.injectJavaScript(`
+      (function(){
+        try {
+          localStorage.setItem('zovex_user', ${userJson});
+          localStorage.removeItem('zovex_skipped');
+          if (window.__gisCallback && ${tokenJson}) {
+            window.__gisCallback({
+              access_token: ${tokenJson},
+              token_type: 'Bearer',
+              expires_in: 3599,
+              scope: 'email profile openid',
+              authuser: '0',
+              prompt: 'select_account'
+            });
+          } else {
+            window.location.reload();
+          }
+        } catch(e) { window.location.reload(); }
+      })(); true;
+    `);
+  }, []);
+
+  const handleOAuthRedirect = useCallback(
+    async url => {
+      if (!url || !url.startsWith('com.googleusercontent.apps.')) return false;
+      pendingSignIn.current = false;
+      setSigningIn(false);
+      const fragment = url.split('#')[1] || '';
+      const params = {};
+      fragment.split('&').forEach(pair => {
+        const eqIdx = pair.indexOf('=');
+        if (eqIdx !== -1) {
+          params[decodeURIComponent(pair.slice(0, eqIdx))] =
+            decodeURIComponent(pair.slice(eqIdx + 1));
+        }
+      });
+      const accessToken = params.access_token;
+      if (!accessToken) return true;
+      try {
+        const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: {Authorization: 'Bearer ' + accessToken},
+        });
+        const user = await res.json();
+        injectGoogleUser(
+          {
+            id: user.id || '',
+            name: user.name || '',
+            email: user.email || '',
+            picture: user.picture || '',
+          },
+          accessToken,
+        );
+      } catch (e) {
+        Alert.alert('שגיאת כניסה', e.message || String(e));
+      }
+      return true;
+    },
+    [injectGoogleUser],
+  );
 
   useEffect(() => {
     setupNotifications();
@@ -64,8 +121,28 @@ export default function App() {
       }
       return false;
     });
-    return () => backSub.remove();
-  }, []);
+    const linkingSub = Linking.addEventListener('url', event => {
+      handleOAuthRedirect(event.url);
+    });
+    Linking.getInitialURL().then(url => {
+      if (url) handleOAuthRedirect(url);
+    });
+    const appStateSub = AppState.addEventListener('change', state => {
+      if (state === 'active' && pendingSignIn.current) {
+        setTimeout(() => {
+          if (pendingSignIn.current) {
+            pendingSignIn.current = false;
+            setSigningIn(false);
+          }
+        }, 1500);
+      }
+    });
+    return () => {
+      backSub.remove();
+      linkingSub.remove();
+      appStateSub.remove();
+    };
+  }, [handleOAuthRedirect]);
 
   const setupNotifications = async () => {
     if (Platform.OS === 'android' && Platform.Version >= 33) {
@@ -107,68 +184,23 @@ export default function App() {
     `);
   };
 
-  const handleNativeGoogleSignIn = async () => {
+  const handleGoogleSignIn = async () => {
     if (signingIn) return;
+    pendingSignIn.current = true;
     setSigningIn(true);
     try {
-      await GoogleSignin.hasPlayServices();
-      const result = await GoogleSignin.signIn();
-      const user = result?.data?.user || result?.user;
-      if (!user || !webviewRef.current) return;
-
-      // Get a real OAuth access token so we can call the website's GIS callback
-      let accessToken = null;
-      try {
-        const tokens = await GoogleSignin.getTokens();
-        accessToken = tokens?.accessToken || null;
-      } catch (_) {}
-
-      const userData = {
-        id: user.id || '',
-        name: user.name || '',
-        email: user.email || '',
-        picture: user.photo || '',
-      };
-      const userJson = JSON.stringify(JSON.stringify(userData));
-      const tokenJson = JSON.stringify(accessToken || '');
-
-      // Invoke the site's GIS callback with the real token (preferred),
-      // or fall back to setting localStorage and reloading.
-      webviewRef.current.injectJavaScript(`
-        (function(){
-          try {
-            localStorage.setItem('zovex_user', ${userJson});
-            localStorage.removeItem('zovex_skipped');
-
-            if (window.__gisCallback && ${tokenJson}) {
-              window.__gisCallback({
-                access_token: ${tokenJson},
-                token_type: 'Bearer',
-                expires_in: 3599,
-                scope: 'email profile openid',
-                authuser: '0',
-                prompt: 'select_account'
-              });
-            } else {
-              window.location.reload();
-            }
-          } catch(e) {
-            window.location.reload();
-          }
-        })(); true;
-      `);
+      const authUrl =
+        'https://accounts.google.com/o/oauth2/v2/auth' +
+        '?client_id=' + encodeURIComponent(WEB_CLIENT_ID) +
+        '&redirect_uri=' + encodeURIComponent(OAUTH_REDIRECT) +
+        '&response_type=token' +
+        '&scope=' + encodeURIComponent('email profile openid') +
+        '&prompt=select_account';
+      await Linking.openURL(authUrl);
     } catch (e) {
-      if (e.code === statusCodes.SIGN_IN_CANCELLED) {
-        // User cancelled — do nothing
-      } else {
-        // Unexpected error — log it so we can debug
-        Alert.alert(
-          'שגיאת כניסה',
-          'קוד שגיאה: ' + (e.code || 'unknown') + '\n' + (e.message || ''),
-        );
-      }
-    } finally {
+      pendingSignIn.current = false;
       setSigningIn(false);
+      Alert.alert('שגיאת כניסה', e.message || String(e));
     }
   };
 
@@ -180,7 +212,7 @@ export default function App() {
           m.url.includes('accounts.google.com') ||
           m.url.includes('google.com/o/oauth2');
         if (isGoogleAuth) {
-          handleNativeGoogleSignIn();
+          handleGoogleSignIn();
         } else {
           Linking.openURL(m.url).catch(() => {});
         }
