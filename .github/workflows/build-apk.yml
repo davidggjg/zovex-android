@@ -108,21 +108,17 @@ jobs:
           }
           for folder, size in sizes.items():
               os.makedirs(folder, exist_ok=True)
-              ratio = min(size / src.width, size / src.height)
+              ratio = max(size / src.width, size / src.height)
               new_w, new_h = int(src.width * ratio), int(src.height * ratio)
-              icon = src.resize((new_w, new_h), Image.LANCZOS)
-              x, y = (size - new_w) // 2, (size - new_h) // 2
-              bg = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-              bg.paste(icon, (x, y), mask=icon.split()[3])
-              out = Image.new('RGB', (size, size), (0, 0, 0))
-              out.paste(bg.convert('RGB'), mask=bg.split()[3])
+              scaled = src.resize((new_w, new_h), Image.LANCZOS)
+              x, y = (new_w - size) // 2, (new_h - size) // 2
+              icon = scaled.crop((x, y, x + size, y + size))
+              out = icon.convert('RGB')
               out.save(f'{folder}/ic_launcher.png')
-              circle_bg = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-              circle_bg.paste(icon, (x, y), mask=icon.split()[3])
               mask = Image.new('L', (size, size), 0)
               ImageDraw.Draw(mask).ellipse([0, 0, size-1, size-1], fill=255)
               result = Image.new('RGBA', (size, size), (0, 0, 0, 0))
-              result.paste(circle_bg, mask=mask)
+              result.paste(icon, mask=mask)
               result.save(f'{folder}/ic_launcher_round.png')
           print('Icons created!')
           "
