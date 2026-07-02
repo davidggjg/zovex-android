@@ -108,12 +108,17 @@ jobs:
           }
           for folder, size in sizes.items():
               os.makedirs(folder, exist_ok=True)
-              icon = src.resize((size, size), Image.LANCZOS)
-              bg = Image.new('RGBA', (size, size), (255, 255, 255, 255))
-              bg.paste(icon, mask=icon.split()[3])
-              bg.convert('RGB').save(f'{folder}/ic_launcher.png')
-              circle_bg = Image.new('RGBA', (size, size), (255, 255, 255, 255))
-              circle_bg.paste(icon, mask=icon.split()[3])
+              ratio = min(size / src.width, size / src.height)
+              new_w, new_h = int(src.width * ratio), int(src.height * ratio)
+              icon = src.resize((new_w, new_h), Image.LANCZOS)
+              x, y = (size - new_w) // 2, (size - new_h) // 2
+              bg = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              bg.paste(icon, (x, y), mask=icon.split()[3])
+              out = Image.new('RGB', (size, size), (0, 0, 0))
+              out.paste(bg.convert('RGB'), mask=bg.split()[3])
+              out.save(f'{folder}/ic_launcher.png')
+              circle_bg = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+              circle_bg.paste(icon, (x, y), mask=icon.split()[3])
               mask = Image.new('L', (size, size), 0)
               ImageDraw.Draw(mask).ellipse([0, 0, size-1, size-1], fill=255)
               result = Image.new('RGBA', (size, size), (0, 0, 0, 0))
