@@ -30,17 +30,27 @@ jobs:
 
       - name: Ensure gradle-plugin at top-level node_modules
         run: |
-          if [ ! -d "node_modules/@react-native/gradle-plugin" ]; then
+          PLUGIN_DIR="node_modules/@react-native/gradle-plugin"
+          if [ ! -d "$PLUGIN_DIR" ]; then
             NESTED=$(find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -1)
             if [ -n "$NESTED" ]; then
               mkdir -p node_modules/@react-native
               cp -r "$NESTED" node_modules/@react-native/gradle-plugin
-              echo "Copied $NESTED → node_modules/@react-native/gradle-plugin"
+              echo "Copied $NESTED → $PLUGIN_DIR"
             else
-              echo "WARNING: @react-native/gradle-plugin not found anywhere"
+              echo "ERROR: @react-native/gradle-plugin not found anywhere in node_modules"
+              find node_modules -maxdepth 3 -name "gradle-plugin" -type d 2>/dev/null || true
+              exit 1
             fi
           else
-            echo "@react-native/gradle-plugin already at top-level"
+            echo "$PLUGIN_DIR already at top-level"
+          fi
+          echo "--- $PLUGIN_DIR contents ---"
+          ls -la "$PLUGIN_DIR/"
+          # Gradle 8 composite builds require a settings.gradle
+          if [ ! -f "$PLUGIN_DIR/settings.gradle" ] && [ ! -f "$PLUGIN_DIR/settings.gradle.kts" ]; then
+            echo "rootProject.name = 'react-native-gradle-plugin'" > "$PLUGIN_DIR/settings.gradle"
+            echo "Created missing settings.gradle in gradle-plugin"
           fi
 
       - name: Setup Android SDK
