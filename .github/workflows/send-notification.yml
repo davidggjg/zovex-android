@@ -1,0 +1,50 @@
+name: Send Push Notification
+
+on:
+  workflow_dispatch:
+    inputs:
+      title:
+        description: 'כותרת ההתראה'
+        required: true
+        type: string
+      body:
+        description: 'תוכן ההתראה'
+        required: true
+        type: string
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install firebase-admin
+        run: npm install firebase-admin --prefix /tmp/fcm
+
+      - name: Send FCM to all users
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          NOTIF_TITLE: ${{ inputs.title }}
+          NOTIF_BODY: ${{ inputs.body }}
+        run: |
+          node -e "
+          const admin = require('/tmp/fcm/node_modules/firebase-admin');
+          const sa = JSON.parse(process.env.FIREBASE_SA_JSON);
+          admin.initializeApp({ credential: admin.credential.cert(sa) });
+          admin.messaging().send({
+            notification: {
+              title: process.env.NOTIF_TITLE,
+              body: process.env.NOTIF_BODY,
+            },
+            android: {
+              priority: 'high',
+              notification: { sound: 'default', channelId: 'default' },
+            },
+            topic: 'allUsers',
+          })
+          .then(() => { console.log('Notification sent'); process.exit(0); })
+          .catch(e => { console.error('Error:', e.message); process.exit(1); });
+          "
