@@ -129,9 +129,85 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/zovex-release.keystore
 
-      - name: Restore google-services.json
+      - name: Register release SHA-1 with Firebase and fetch updated google-services.json
+        env:
+          FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
         run: |
-          echo "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" | base64 -d > android/app/google-services.json
+          pip install google-auth --quiet
+          python3 << 'PYEOF'
+import json, os, sys, base64, subprocess
+import urllib.request, urllib.error
+
+# --- Extract SHA-1 from release keystore ---
+r = subprocess.run(
+    ['keytool', '-list', '-v', '-keystore', 'android/app/zovex-release.keystore',
+     '-alias', 'zovex-key', '-storepass', 'zovex2026'],
+    capture_output=True, text=True
+)
+sha1 = None
+for line in r.stdout.split('\n'):
+    if 'SHA1:' in line:
+        sha1 = line.split('SHA1:')[1].strip().replace(':', '').replace(' ', '')
+        break
+
+if not sha1 or len(sha1) != 40:
+    print('Could not extract SHA-1 — using static google-services.json')
+    b64 = os.environ.get('GOOGLE_SERVICES_JSON_BASE64', '')
+    if b64:
+        open('android/app/google-services.json', 'wb').write(base64.b64decode(b64))
+    sys.exit(0)
+
+print(f'Release SHA-1: {sha1}')
+
+try:
+    from google.oauth2 import service_account
+    from google.auth.transport.requests import Request as GReq
+
+    sa = json.loads(os.environ['FIREBASE_SA_JSON'])
+    project_id = sa['project_id']
+    creds = service_account.Credentials.from_service_account_info(
+        sa, scopes=['https://www.googleapis.com/auth/firebase',
+                    'https://www.googleapis.com/auth/cloud-platform'])
+    creds.refresh(GReq())
+    hdrs = {'Authorization': f'Bearer {creds.token}', 'Content-Type': 'application/json'}
+
+    def api(url, data=None, method=None):
+        req = urllib.request.Request(url, data=data, headers=hdrs,
+                                     method=method or ('POST' if data else 'GET'))
+        return json.loads(urllib.request.urlopen(req).read())
+
+    # Find Android app ID for com.zovexapp
+    apps = api(f'https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps')
+    app_id = next((a['appId'] for a in apps.get('apps', [])
+                   if a.get('packageName') == 'com.zovexapp'), None)
+    if not app_id:
+        raise RuntimeError('Android app com.zovexapp not found in Firebase')
+    print(f'Firebase appId: {app_id}')
+
+    # Register SHA-1 (ignore 409 = already registered)
+    try:
+        api(f'https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha',
+            data=json.dumps({'shaHash': sha1, 'certType': 'SHA_1'}).encode())
+        print('SHA-1 registered with Firebase')
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            print('SHA-1 already registered')
+        else:
+            raise
+
+    # Download the now-updated google-services.json
+    cfg = api(f'https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/config')
+    gs_json = base64.b64decode(cfg['configFileContents']).decode()
+    open('android/app/google-services.json', 'w').write(gs_json)
+    print('Updated google-services.json written from Firebase API')
+
+except Exception as exc:
+    print(f'Firebase step failed ({exc}) — falling back to static google-services.json')
+    b64 = os.environ.get('GOOGLE_SERVICES_JSON_BASE64', '')
+    if b64:
+        open('android/app/google-services.json', 'wb').write(base64.b64decode(b64))
+PYEOF
 
       - name: Build Release APK
         run: |
