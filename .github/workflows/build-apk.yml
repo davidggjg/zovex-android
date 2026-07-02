@@ -31,6 +31,13 @@ jobs:
       - name: Ensure gradle-plugin at top-level node_modules
         run: |
           PLUGIN_DIR="node_modules/@react-native/gradle-plugin"
+
+          echo "=== @react-native scope ==="
+          ls node_modules/@react-native/ 2>/dev/null || echo "(empty or missing)"
+
+          echo "=== find gradle-plugin ==="
+          find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -5
+
           if [ ! -d "$PLUGIN_DIR" ]; then
             NESTED=$(find node_modules -path "*/@react-native/gradle-plugin" -type d 2>/dev/null | head -1)
             if [ -n "$NESTED" ]; then
@@ -38,19 +45,32 @@ jobs:
               cp -r "$NESTED" node_modules/@react-native/gradle-plugin
               echo "Copied $NESTED → $PLUGIN_DIR"
             else
-              echo "ERROR: @react-native/gradle-plugin not found anywhere in node_modules"
-              find node_modules -maxdepth 3 -name "gradle-plugin" -type d 2>/dev/null || true
+              echo "ERROR: @react-native/gradle-plugin not found anywhere"
               exit 1
             fi
-          else
-            echo "$PLUGIN_DIR already at top-level"
           fi
-          echo "--- $PLUGIN_DIR contents ---"
-          ls -la "$PLUGIN_DIR/"
-          # Gradle 8 composite builds require a settings.gradle
+
+          echo "=== $PLUGIN_DIR top-level ==="
+          ls -1 "$PLUGIN_DIR/" 2>/dev/null
+
+          echo "=== build files ==="
+          for f in build.gradle.kts build.gradle settings.gradle settings.gradle.kts; do
+            [ -f "$PLUGIN_DIR/$f" ] && echo "FOUND: $f" || echo "MISSING: $f"
+          done
+
+          echo "=== build.gradle.kts ==="
+          cat "$PLUGIN_DIR/build.gradle.kts" 2>/dev/null || echo "(not found)"
+
+          echo "=== gradle/ dir ==="
+          ls "$PLUGIN_DIR/gradle/" 2>/dev/null || echo "(no gradle/ dir)"
+
+          echo "=== gradle/libs.versions.toml ==="
+          cat "$PLUGIN_DIR/gradle/libs.versions.toml" 2>/dev/null || echo "(not found)"
+
+          # Add settings.gradle if missing
           if [ ! -f "$PLUGIN_DIR/settings.gradle" ] && [ ! -f "$PLUGIN_DIR/settings.gradle.kts" ]; then
             echo "rootProject.name = 'react-native-gradle-plugin'" > "$PLUGIN_DIR/settings.gradle"
-            echo "Created missing settings.gradle in gradle-plugin"
+            echo "Created settings.gradle"
           fi
 
       - name: Setup Android SDK
