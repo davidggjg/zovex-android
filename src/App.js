@@ -14,6 +14,8 @@ import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import messaging from '@react-native-firebase/messaging';
 
 const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
+// Web client ID from Firebase project zovex-6757d (will be updated after
+// Google Sign-In is enabled in Firebase Authentication)
 const WEB_CLIENT_ID =
   '537028202942-tra1klpqsbu6uo475gshp5r43m68h47m.apps.googleusercontent.com';
 
