@@ -1,0 +1,8 @@
+{
+  "active": false,
+  "title": "עדכון זמין",
+  "message": "גרסה חדשה של האפליקציה זמינה. אנא עדכנו כדי להמשיך.",
+  "target_versions": [],
+  "join_url": "https://t.me/zovex",
+  "update_url": "https://github.com/davidggjg/zovex-android/releases"
+}
