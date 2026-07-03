@@ -314,6 +314,8 @@ export default function App() {
     }
   };
 
+  const videoPlayingRef = useRef(false);
+
   const onMainMsg = e => {
     try {
       const m = JSON.parse(e.nativeEvent.data);
@@ -326,6 +328,14 @@ export default function App() {
         } else {
           Linking.openURL(m.url).catch(() => {});
         }
+      } else if (m.type === 'player_open') {
+        // Hide status bar when video player opens for immersive experience
+        StatusBar.setHidden(m.value, 'fade');
+        if (!m.value) StatusBar.setBarStyle('light-content', true);
+      } else if (m.type === 'fullscreen') {
+        StatusBar.setHidden(m.enter, 'fade');
+      } else if (m.type === 'video_playing') {
+        videoPlayingRef.current = !!m.value;
       }
     } catch (_) {}
   };
