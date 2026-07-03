@@ -15,23 +15,12 @@ class MainActivity : ReactActivity() {
     override fun createReactActivityDelegate(): ReactActivityDelegate =
         DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
 
-    override fun onResume() {
-        super.onResume()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+: auto-enter PiP when user swipes home
-            val params = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9))
-                .setAutoEnterEnabled(true)
-                .build()
-            setPictureInPictureParams(params)
-        }
-    }
-
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        // Android 8–11: enter PiP when user presses home
+        if (!PipModule.videoActive) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            // Android 8–11: manually enter PiP when user presses home, only if video is playing
             val params = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
                 .build()

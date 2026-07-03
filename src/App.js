@@ -4,6 +4,7 @@ import {
   AppState,
   BackHandler,
   Linking,
+  NativeModules,
   PermissionsAndroid,
   Platform,
   StatusBar,
@@ -12,6 +13,8 @@ import {
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import messaging from '@react-native-firebase/messaging';
+
+const {PipModule} = NativeModules;
 
 const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
 
@@ -240,6 +243,19 @@ export default function App() {
           }
         }, 1500);
       }
+      if (state === 'background' && videoPlayingRef.current) {
+        // Override document.hidden so the video player doesn't pause on background
+        webviewRef.current?.injectJavaScript(`
+          (function(){
+            try {
+              Object.defineProperty(document,'visibilityState',{get:()=>'visible',configurable:true});
+              Object.defineProperty(document,'hidden',{get:()=>false,configurable:true});
+              var v=document.querySelector('video');
+              if(v&&v.paused){v.play().catch(()=>{});}
+            }catch(e){}
+          })(); true;
+        `);
+      }
     });
     return () => {
       backSub.remove();
@@ -329,13 +345,19 @@ export default function App() {
           Linking.openURL(m.url).catch(() => {});
         }
       } else if (m.type === 'player_open') {
-        // Hide status bar when video player opens for immersive experience
         StatusBar.setHidden(m.value, 'fade');
         if (!m.value) StatusBar.setBarStyle('light-content', true);
       } else if (m.type === 'fullscreen') {
         StatusBar.setHidden(m.enter, 'fade');
       } else if (m.type === 'video_playing') {
-        videoPlayingRef.current = !!m.value;
+        const playing = !!m.value;
+        videoPlayingRef.current = playing;
+        // Tell native PiP module so auto-PiP only activates when video is playing
+        PipModule?.setVideoPlaying(playing);
+        if (!playing) {
+          // Restore status bar when video stops
+          StatusBar.setHidden(false, 'fade');
+        }
       }
     } catch (_) {}
   };
