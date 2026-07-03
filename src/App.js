@@ -345,18 +345,18 @@ export default function App() {
           Linking.openURL(m.url).catch(() => {});
         }
       } else if (m.type === 'player_open') {
-        StatusBar.setHidden(m.value, 'fade');
+        // Hide both status bar + nav bar for immersive player
+        PipModule?.setFullscreen(!!m.value);
         if (!m.value) StatusBar.setBarStyle('light-content', true);
       } else if (m.type === 'fullscreen') {
-        StatusBar.setHidden(m.enter, 'fade');
+        // Fullscreen button tapped inside player
+        PipModule?.setFullscreen(!!m.enter);
       } else if (m.type === 'video_playing') {
         const playing = !!m.value;
         videoPlayingRef.current = playing;
-        // Tell native PiP module so auto-PiP only activates when video is playing
         PipModule?.setVideoPlaying(playing);
         if (!playing) {
-          // Restore status bar when video stops
-          StatusBar.setHidden(false, 'fade');
+          PipModule?.setFullscreen(false);
         }
       }
     } catch (_) {}
