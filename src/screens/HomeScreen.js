@@ -27,8 +27,9 @@ import {
 import {getUserId} from '../api/userStore';
 
 const {width: SW} = Dimensions.get('window');
-const CARD_W = SW * 0.32;
-const CARD_H = CARD_W * 1.48;
+// 3 cards + 5px margin each side + 8px grid padding each side = 3*CARD_W + 30 + 16 = SW
+const CARD_W = Math.floor((SW - 46) / 3);
+const CARD_H = Math.floor(CARD_W * 1.48);
 
 const GOOGLE_CLIENT_ID =
   '537028202942-tra1klpqsbu6uo475gshp5r43m68h47m.apps.googleusercontent.com';
@@ -36,81 +37,14 @@ const ADMIN_TRIGGER = 'ZovexAdmin2026';
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 
-// Inline HTML page that uses Google Identity Services SDK (same as the website)
-const GOOGLE_SIGN_IN_HTML = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,sans-serif;direction:rtl}
-.wrap{text-align:center;padding:24px}
-.logo{color:#e50914;font-size:36px;font-weight:900;letter-spacing:4px;margin-bottom:16px}
-.msg{color:#666;font-size:14px;margin-bottom:28px}
-.btn{background:#fff;border:1.5px solid #ddd;border-radius:12px;padding:14px 24px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;width:100%;max-width:320px;margin:0 auto 16px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
-.skip{color:#aaa;font-size:13px;border:none;background:none;cursor:pointer;padding:8px}
-.err{color:#e50914;font-size:13px;margin-top:12px}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="logo">ZOVEX</div>
-  <div class="msg">התחבר לחשבון Google שלך</div>
-  <button class="btn" id="signInBtn" onclick="doSignIn()">
-    <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.7 2.4 30.2 0 24 0 14.8 0 6.9 5.4 2.8 13.3l7.8 6.1C12.5 13 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.5 2.9-2.2 5.3-4.7 6.9l7.3 5.7c4.3-4 6.3-9.9 7.3-16.6z"/><path fill="#FBBC05" d="M10.6 28.6A14.7 14.7 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6L2.5 13.3A23.8 23.8 0 0 0 0 24c0 3.8.9 7.4 2.5 10.6l8.1-6z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.3-5.7c-2 1.4-4.6 2.2-7.9 2.2-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.9 42.6 14.8 48 24 48z"/></svg>
-    התחבר עם Google
-  </button>
-  <button class="skip" onclick="doSkip()">דלג — צפה בלי חשבון</button>
-  <div class="err" id="errMsg"></div>
-</div>
-<script>
-var tokenClient = null;
-var CLIENT_ID = '537028202942-tra1klpqsbu6uo475gshp5r43m68h47m.apps.googleusercontent.com';
-
-function loadGSI() {
-  var s = document.createElement('script');
-  s.src = 'https://accounts.google.com/gsi/client';
-  s.onload = function() {
-    if (!window.google || !window.google.accounts) {
-      document.getElementById('errMsg').textContent = 'שגיאה בטעינת Google — נסה שוב';
-      return;
-    }
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: CLIENT_ID,
-      scope: 'openid email profile',
-      callback: function(resp) {
-        if (resp.error || !resp.access_token) {
-          document.getElementById('errMsg').textContent = 'שגיאה: ' + (resp.error || 'לא ידוע');
-          document.getElementById('signInBtn').disabled = false;
-          document.getElementById('signInBtn').textContent = 'נסה שוב';
-          return;
-        }
-        window.ReactNativeWebView.postMessage(JSON.stringify({type:'token',access_token:resp.access_token}));
-      }
-    });
-  };
-  s.onerror = function() {
-    document.getElementById('errMsg').textContent = 'אין חיבור — בדוק אינטרנט';
-  };
-  document.head.appendChild(s);
-}
-
-function doSignIn() {
-  if (!tokenClient) { document.getElementById('errMsg').textContent = 'הספרייה עדיין נטענת...'; return; }
-  document.getElementById('signInBtn').disabled = true;
-  document.getElementById('signInBtn').textContent = 'מתחבר...';
-  tokenClient.requestAccessToken({ prompt: 'select_account' });
-}
-
-function doSkip() {
-  window.ReactNativeWebView.postMessage(JSON.stringify({type:'skip'}));
-}
-
-loadGSI();
-</script>
-</body>
-</html>`;
+// Google OAuth URL — loads directly in WebView; token intercepted via onShouldStartLoadWithRequest
+const GOOGLE_AUTH_URL =
+  `https://accounts.google.com/o/oauth2/v2/auth?` +
+  `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}&` +
+  `redirect_uri=${encodeURIComponent('http://localhost')}&` +
+  `response_type=token&` +
+  `scope=${encodeURIComponent('openid profile email')}&` +
+  `prompt=select_account`;
 
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
@@ -375,30 +309,34 @@ export default function HomeScreen({navigation}) {
     setShowGoogleWebView(true);
   }, []);
 
-  const handleGoogleMessage = useCallback(async event => {
+  const handleGoogleToken = useCallback(async accessToken => {
+    setShowGoogleWebView(false);
     try {
-      const msg = JSON.parse(event.nativeEvent.data);
-      if (msg.type === 'skip') {
-        setShowGoogleWebView(false);
+      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: {Authorization: `Bearer ${accessToken}`},
+      });
+      const info = await res.json();
+      if (info?.id) {
+        setUser(info);
         setShowSignIn(false);
+        await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
         await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
-        return;
-      }
-      if (msg.type === 'token' && msg.access_token) {
-        const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: {Authorization: `Bearer ${msg.access_token}`},
-        });
-        const info = await res.json();
-        if (info?.id) {
-          setUser(info);
-          setShowGoogleWebView(false);
-          setShowSignIn(false);
-          await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
-          await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
-        }
       }
     } catch {}
   }, []);
+
+  const handleGoogleNavigation = useCallback(request => {
+    if (request.url.startsWith('http://localhost')) {
+      const m = request.url.match(/[#&?]access_token=([^&#\s]+)/);
+      if (m) {
+        handleGoogleToken(decodeURIComponent(m[1]));
+      } else {
+        setShowGoogleWebView(false);
+      }
+      return false; // block WebView from loading localhost
+    }
+    return true;
+  }, [handleGoogleToken]);
 
   // Load saved user; auto-show sign-in for first-time users
   useEffect(() => {
@@ -548,10 +486,11 @@ export default function HomeScreen({navigation}) {
               <Text style={{color: '#fff', fontSize: 18}}>✕</Text>
             </TouchableOpacity>
             <WebView
-              source={{html: GOOGLE_SIGN_IN_HTML}}
+              source={{uri: GOOGLE_AUTH_URL}}
               javaScriptEnabled
               domStorageEnabled
-              onMessage={handleGoogleMessage}
+              thirdPartyCookiesEnabled
+              onShouldStartLoadWithRequest={handleGoogleNavigation}
               style={{flex: 1}}
             />
           </View>

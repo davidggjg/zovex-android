@@ -22,8 +22,41 @@ function buildEmbedUrl(movie) {
   if (type === 'drive') {
     return `https://drive.google.com/file/d/${video_id}/preview`;
   }
-  if (type === 'direct') return null;
+  if (type === 'direct') return video_url || video_id || null;
   return video_url || '';
+}
+
+function buildDirectHtml(url, startTime = 0) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; background:#000; }
+  video { width:100vw; height:100vh; object-fit:contain; }
+</style>
+</head>
+<body>
+<video id="v" controls autoplay playsinline>
+  <source src="${url}">
+</video>
+<script>
+  var v = document.getElementById('v');
+  var startAt = ${startTime};
+  v.addEventListener('loadedmetadata', function() {
+    if (startAt > 0) v.currentTime = startAt;
+    v.play().catch(function(){});
+    setInterval(function(){
+      if (!v.paused && v.duration) {
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+          JSON.stringify({type:'progress', position: Math.floor(v.currentTime), duration: Math.floor(v.duration)})
+        );
+      }
+    }, 10000);
+  });
+</script>
+</body>
+</html>`;
 }
 
 function buildHlsHtml(url, startTime = 0) {
@@ -74,10 +107,11 @@ export default function PlayerScreen({route}) {
   const userId = getUserId();
   const progressRef = useRef({position: startTime, duration: 0});
 
+  const directSrc = movie.video_url || movie.video_id || '';
   const isDirectHls =
     movie.type === 'direct' &&
-    ((movie.video_id || '').includes('.m3u8') ||
-      (movie.video_url || '').includes('.m3u8'));
+    (directSrc.includes('.m3u8'));
+  const isDirectVideo = movie.type === 'direct' && !isDirectHls;
 
   // Save history entry when player opens
   useEffect(() => {
@@ -106,7 +140,23 @@ export default function PlayerScreen({route}) {
     return (
       <View style={styles.container}>
         <WebView
-          source={{html: buildHlsHtml(movie.video_id || movie.video_url, startTime)}}
+          source={{html: buildHlsHtml(directSrc, startTime)}}
+          style={styles.player}
+          allowsInlineMediaPlayback
+          mediaPlaybackRequiresUserAction={false}
+          allowsFullscreenVideo
+          javaScriptEnabled
+          onMessage={onMessage}
+        />
+      </View>
+    );
+  }
+
+  if (isDirectVideo) {
+    return (
+      <View style={styles.container}>
+        <WebView
+          source={{html: buildDirectHtml(directSrc, startTime)}}
           style={styles.player}
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}

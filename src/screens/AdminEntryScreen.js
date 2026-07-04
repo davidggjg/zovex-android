@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 const PIN_CODE = '123456';
-const LETTERS_CODE = 'zivex';
+const LETTERS_CODE = 'zovix';
 
 export default function AdminEntryScreen({navigation}) {
   const [pin, setPin] = useState('');
