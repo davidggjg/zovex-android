@@ -303,21 +303,28 @@ export default function HomeScreen({navigation}) {
     try {
       await GoogleSignin.hasPlayServices();
       const result = await GoogleSignin.signIn();
-      // v11+ returns {data: {user: {...}}, type: 'success'}; v10 returns {user: {...}}
+      // v11 wraps in { type: 'success', data: { user, idToken } }
+      // cancelled → { type: 'cancelled' }
+      if (!result || result.type === 'cancelled') return;
       const u = result?.data?.user ?? result?.user;
       if (!u) return;
       const info = {
-        id: String(u.id || ''),
-        name: u.name || '',
+        id: String(u.id || u.userId || ''),
+        name: u.name || u.displayName || '',
         email: u.email || '',
-        given_name: u.givenName || '',
-        picture: u.photo || '',
+        given_name: u.givenName || u.familyName || '',
+        picture: u.photo || u.photoUrl || '',
       };
       setUser(info);
       setShowSignIn(false);
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
       await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
-    } catch (_) {}
+    } catch (e) {
+      // Silently ignore sign-in cancellation errors (code 12501)
+      if (e?.code !== '12501') {
+        console.warn('Google Sign-In error:', e?.code, e?.message);
+      }
+    }
   }, []);
 
   // Load saved user; auto-show sign-in for first-time users
