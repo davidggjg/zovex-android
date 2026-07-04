@@ -31,17 +31,19 @@ const {width: SW} = Dimensions.get('window');
 const CARD_W = Math.floor((SW - 46) / 3);
 const CARD_H = Math.floor(CARD_W * 1.48);
 
-const GOOGLE_CLIENT_ID =
-  '537028202942-tra1klpqsbu6uo475gshp5r43m68h47m.apps.googleusercontent.com';
+// iOS-type (installed-app) OAuth client from Firebase — allows custom-scheme redirect URIs.
+// This ID is also registered in AndroidManifest.xml intent-filter; replaced at build time.
+const GOOGLE_CLIENT_ID = '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com';
+const GOOGLE_REDIRECT_SCHEME = 'com.googleusercontent.apps.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v';
 const ADMIN_TRIGGER = 'ZovexAdmin2026';
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 
-// Google OAuth URL — loads directly in WebView; token intercepted via onShouldStartLoadWithRequest
+// Loaded as a URI in WebView; token intercepted via onShouldStartLoadWithRequest
 const GOOGLE_AUTH_URL =
   `https://accounts.google.com/o/oauth2/v2/auth?` +
   `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}&` +
-  `redirect_uri=${encodeURIComponent('http://localhost')}&` +
+  `redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_SCHEME + ':/')}&` +
   `response_type=token&` +
   `scope=${encodeURIComponent('openid profile email')}&` +
   `prompt=select_account`;
@@ -326,14 +328,15 @@ export default function HomeScreen({navigation}) {
   }, []);
 
   const handleGoogleNavigation = useCallback(request => {
-    if (request.url.startsWith('http://localhost')) {
+    // Google redirects to com.googleusercontent.apps.{CLIENT_ID}:/ after sign-in
+    if (request.url.startsWith('com.googleusercontent.apps.')) {
       const m = request.url.match(/[#&?]access_token=([^&#\s]+)/);
       if (m) {
         handleGoogleToken(decodeURIComponent(m[1]));
       } else {
         setShowGoogleWebView(false);
       }
-      return false; // block WebView from loading localhost
+      return false; // prevent WebView from following the custom scheme
     }
     return true;
   }, [handleGoogleToken]);
@@ -490,6 +493,7 @@ export default function HomeScreen({navigation}) {
               javaScriptEnabled
               domStorageEnabled
               thirdPartyCookiesEnabled
+              originWhitelist={['https://*', 'http://*', 'com.googleusercontent.apps.*']}
               onShouldStartLoadWithRequest={handleGoogleNavigation}
               style={{flex: 1}}
             />
