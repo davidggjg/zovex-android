@@ -18,6 +18,7 @@ import messaging from '@react-native-firebase/messaging';
 import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
+import AdminScreen from './screens/AdminScreen';
 import {initUserId} from './api/userStore';
 
 const APP_VERSION = '1.0';
@@ -184,6 +185,7 @@ export default function App() {
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Player" component={PlayerScreen} />
         <Stack.Screen name="Series" component={SeriesScreen} />
+        <Stack.Screen name="Admin" component={AdminScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
