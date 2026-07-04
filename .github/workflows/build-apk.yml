@@ -134,20 +134,6 @@ jobs:
           pip install google-auth --quiet
           python3 scripts/register_sha.py
 
-      - name: Apply iOS OAuth client ID to HomeScreen
-        run: |
-          if [ -f ios_oauth.txt ]; then
-            IOS_CLIENT_ID=$(sed -n '1p' ios_oauth.txt | tr -d '[:space:]')
-            IOS_SCHEME=$(sed -n '2p' ios_oauth.txt | tr -d '[:space:]')
-            echo "iOS CLIENT_ID: $IOS_CLIENT_ID"
-            echo "iOS scheme:    $IOS_SCHEME"
-            sed -i "s|1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v\.apps\.googleusercontent\.com|${IOS_CLIENT_ID}|g" src/screens/HomeScreen.js
-            sed -i "s|com\.googleusercontent\.apps\.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v|${IOS_SCHEME}|g" src/screens/HomeScreen.js
-            echo "Applied iOS OAuth client ID to HomeScreen.js"
-          else
-            echo "ios_oauth.txt not found — using hardcoded fallback iOS client ID"
-          fi
-
       - name: Build Release APK
         run: |
           cd android

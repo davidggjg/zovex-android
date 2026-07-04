@@ -13,9 +13,8 @@ import {
   Dimensions,
   ImageBackground,
   Animated,
-  Modal,
 } from 'react-native';
-import {WebView} from 'react-native-webview';
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
@@ -31,22 +30,16 @@ const {width: SW} = Dimensions.get('window');
 const CARD_W = Math.floor((SW - 46) / 3);
 const CARD_H = Math.floor(CARD_W * 1.48);
 
-// iOS-type (installed-app) OAuth client from Firebase — allows custom-scheme redirect URIs.
-// This ID is also registered in AndroidManifest.xml intent-filter; replaced at build time.
-const GOOGLE_CLIENT_ID = '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com';
-const GOOGLE_REDIRECT_SCHEME = 'com.googleusercontent.apps.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v';
 const ADMIN_TRIGGER = 'ZovexAdmin2026';
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 
-// Loaded as a URI in WebView; token intercepted via onShouldStartLoadWithRequest
-const GOOGLE_AUTH_URL =
-  `https://accounts.google.com/o/oauth2/v2/auth?` +
-  `client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}&` +
-  `redirect_uri=${encodeURIComponent(GOOGLE_REDIRECT_SCHEME + ':/')}&` +
-  `response_type=token&` +
-  `scope=${encodeURIComponent('openid profile email')}&` +
-  `prompt=select_account`;
+GoogleSignin.configure({
+  // WEB client ID from Firebase — used only to verify idToken, not as redirect target
+  webClientId: '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com',
+  scopes: ['profile', 'email'],
+  offlineAccess: false,
+});
 
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
@@ -305,41 +298,27 @@ export default function HomeScreen({navigation}) {
   const [detailItem, setDetailItem] = useState(null);
   const [user, setUser] = useState(null);
   const [showSignIn, setShowSignIn] = useState(false);
-  const [showGoogleWebView, setShowGoogleWebView] = useState(false);
 
-  const startSignIn = useCallback(() => {
-    setShowGoogleWebView(true);
-  }, []);
-
-  const handleGoogleToken = useCallback(async accessToken => {
-    setShowGoogleWebView(false);
+  const startSignIn = useCallback(async () => {
     try {
-      const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: {Authorization: `Bearer ${accessToken}`},
-      });
-      const info = await res.json();
-      if (info?.id) {
-        setUser(info);
-        setShowSignIn(false);
-        await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
-        await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
-      }
-    } catch {}
+      await GoogleSignin.hasPlayServices();
+      const result = await GoogleSignin.signIn();
+      // v11+ returns {data: {user: {...}}, type: 'success'}; v10 returns {user: {...}}
+      const u = result?.data?.user ?? result?.user;
+      if (!u) return;
+      const info = {
+        id: String(u.id || ''),
+        name: u.name || '',
+        email: u.email || '',
+        given_name: u.givenName || '',
+        picture: u.photo || '',
+      };
+      setUser(info);
+      setShowSignIn(false);
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
+      await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
+    } catch (_) {}
   }, []);
-
-  const handleGoogleNavigation = useCallback(request => {
-    // Google redirects to com.googleusercontent.apps.{CLIENT_ID}:/ after sign-in
-    if (request.url.startsWith('com.googleusercontent.apps.')) {
-      const m = request.url.match(/[#&?]access_token=([^&#\s]+)/);
-      if (m) {
-        handleGoogleToken(decodeURIComponent(m[1]));
-      } else {
-        setShowGoogleWebView(false);
-      }
-      return false; // prevent WebView from following the custom scheme
-    }
-    return true;
-  }, [handleGoogleToken]);
 
   // Load saved user; auto-show sign-in for first-time users
   useEffect(() => {
@@ -355,6 +334,7 @@ export default function HomeScreen({navigation}) {
   const signOut = useCallback(async () => {
     setUser(null);
     await AsyncStorage.removeItem(USER_KEY).catch(() => {});
+    try { await GoogleSignin.signOut(); } catch {}
   }, []);
 
   // ── Data loading ──
@@ -481,24 +461,6 @@ export default function HomeScreen({navigation}) {
           }}>
           <Text style={styles.skipBtnText}>המשך ללא כניסה</Text>
         </TouchableOpacity>
-        <Modal visible={showGoogleWebView} animationType="slide" onRequestClose={() => setShowGoogleWebView(false)}>
-          <View style={{flex: 1, backgroundColor: '#000'}}>
-            <TouchableOpacity
-              style={{padding: 16, alignItems: 'flex-end'}}
-              onPress={() => setShowGoogleWebView(false)}>
-              <Text style={{color: '#fff', fontSize: 18}}>✕</Text>
-            </TouchableOpacity>
-            <WebView
-              source={{uri: GOOGLE_AUTH_URL}}
-              javaScriptEnabled
-              domStorageEnabled
-              thirdPartyCookiesEnabled
-              originWhitelist={['https://*', 'http://*', 'com.googleusercontent.apps.*']}
-              onShouldStartLoadWithRequest={handleGoogleNavigation}
-              style={{flex: 1}}
-            />
-          </View>
-        </Modal>
       </View>
     );
   }
@@ -630,22 +592,6 @@ export default function HomeScreen({navigation}) {
         />
       )}
 
-      <Modal visible={showGoogleWebView} animationType="slide" onRequestClose={() => setShowGoogleWebView(false)}>
-        <View style={{flex: 1, backgroundColor: '#000'}}>
-          <TouchableOpacity
-            style={{padding: 16, alignItems: 'flex-end'}}
-            onPress={() => setShowGoogleWebView(false)}>
-            <Text style={{color: '#fff', fontSize: 18}}>✕</Text>
-          </TouchableOpacity>
-          <WebView
-            source={{html: GOOGLE_SIGN_IN_HTML}}
-            javaScriptEnabled
-            domStorageEnabled
-            onMessage={handleGoogleMessage}
-            style={{flex: 1}}
-          />
-        </View>
-      </Modal>
     </View>
   );
 }
