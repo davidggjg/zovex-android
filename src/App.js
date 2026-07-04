@@ -19,6 +19,8 @@ import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
 import AdminScreen from './screens/AdminScreen';
+import AdminEntryScreen from './screens/AdminEntryScreen';
+import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import {initUserId} from './api/userStore';
 
 const APP_VERSION = '1.0';
@@ -186,6 +188,8 @@ export default function App() {
         <Stack.Screen name="Player" component={PlayerScreen} />
         <Stack.Screen name="Series" component={SeriesScreen} />
         <Stack.Screen name="Admin" component={AdminScreen} />
+        <Stack.Screen name="AdminEntry" component={AdminEntryScreen} />
+        <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
