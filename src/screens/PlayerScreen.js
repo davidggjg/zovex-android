@@ -2,7 +2,6 @@ import React, {useEffect, useRef, useMemo} from 'react';
 import {View, StyleSheet} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
-import {getUserId} from '../api/userStore';
 
 const TG_PROXY = 'https://telegram-bot-8528.onrender.com';
 
@@ -200,7 +199,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
         <div id="prog"><div id="progfill"></div><div id="progdot"></div></div></div>`}
       <div class="brow">
         <div class="bleft">
-          <button class="ibtn" id="mutebtn" onclick="toggleMute()">🔊</button>
+          <button class="ibtn" id="mutebtn" onclick="toggleMute()" title="השתק"></button>
           ${isLive
             ? '<div class="livedot"><span></span>LIVE</div>'
             : '<div id="timestr">0:00 / 0:00</div>'}
@@ -258,7 +257,7 @@ function updateUI(){
   if(!IS_LIVE&&timestr)timestr.textContent=fmt(ct)+' / '+fmt(dur);
   playIcon.style.display=vid.paused?'block':'none';
   pauseIcon.style.display=vid.paused?'none':'block';
-  mutebtn.textContent=vid.muted?'🔇':'🔊';
+  renderMuteIcon(vid.muted);
 }
 
 function showCtrls(){
@@ -278,7 +277,20 @@ overlay.addEventListener('click',function(e){if(e.target===overlay)toggleCtrls()
 showCtrls();
 
 function togglePlay(){if(!vid)return;vid.paused?vid.play():vid.pause();}
-function toggleMute(){if(!vid)return;vid.muted=!vid.muted;updateUI();}
+function toggleMute(){
+  if(!vid)return;
+  vid.muted=!vid.muted;
+  updateUI();
+}
+function renderMuteIcon(muted){
+  var btn=document.getElementById('mutebtn');
+  if(!btn)return;
+  if(muted){
+    btn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>';
+  } else {
+    btn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
+  }
+}
 function skip(s){
   if(!vid)return;
   vid.currentTime=Math.max(0,vid.currentTime+s);
@@ -292,9 +304,14 @@ function skip(s){
   setTimeout(function(){anim.style.display='none';},700);
 }
 function toggleFS(){
-  var el=document.getElementById('wrap');
-  if(document.fullscreenElement){document.exitFullscreen&&document.exitFullscreen();}
-  else{el.requestFullscreen&&el.requestFullscreen();}
+  // Use video element fullscreen (webkitEnterFullscreen for WebKit/Android)
+  if(!vid)return;
+  if(document.fullscreenElement||document.webkitFullscreenElement){
+    (document.exitFullscreen||document.webkitExitFullscreen)?.call(document);
+  } else {
+    var fn=vid.requestFullscreen||vid.webkitRequestFullscreen||vid.webkitEnterFullscreen;
+    if(fn)fn.call(vid);
+  }
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
@@ -318,6 +335,7 @@ if(progwrap){
 
 function initVideo(el){
   vid=el;
+  renderMuteIcon(false);
   updateUI();
   vid.addEventListener('timeupdate',updateUI);
   vid.addEventListener('loadedmetadata',updateUI);
@@ -381,9 +399,8 @@ if(IS_HLS){
 </body></html>`;
 }
 
-export default function PlayerScreen({route}) {
-  const {movie, startTime = 0} = route.params;
-  const userId = getUserId();
+export default function PlayerScreen({route, navigation}) {
+  const {movie, startTime = 0, userId = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
   const isLive = !!movie.is_live;
 
@@ -399,8 +416,9 @@ export default function PlayerScreen({route}) {
   }, [movie, startTime, isLive]);
 
   useEffect(() => {
-    saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
+    if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
+      if (!userId) return;
       const {position, duration} = progressRef.current;
       if (position > 5 && duration > 0)
         saveProgress(movie.id, position, duration, userId);
@@ -410,7 +428,9 @@ export default function PlayerScreen({route}) {
   const onMessage = event => {
     try {
       const m = JSON.parse(event.nativeEvent.data);
-      if (m.type === 'progress') {
+      if (m.type === 'close') {
+        navigation.goBack();
+      } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
       }

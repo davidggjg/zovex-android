@@ -346,18 +346,19 @@ export default function HomeScreen({navigation}) {
 
   const signOut = useCallback(async () => {
     setUser(null);
+    setHistory([]);
     await AsyncStorage.removeItem(USER_KEY).catch(() => {});
     try { await GoogleSignin.signOut(); } catch {}
   }, []);
 
   // ── Data loading ──
-  const load = useCallback(async (refresh = false) => {
+  const load = useCallback(async (refresh = false, loggedInUser = null) => {
     if (refresh) { clearCache(); setRefreshing(true); }
     try {
       const [data, live, hist] = await Promise.all([
         fetchMovies(),
         fetchLiveChannels(),
-        fetchHistory(getUserId()),
+        loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]),
       ]);
       setMovies(data);
       setLiveChannels(live);
@@ -367,7 +368,7 @@ export default function HomeScreen({navigation}) {
     setRefreshing(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(false, user); }, [load, user]);
 
   const seriesMap = useMemo(() => buildSeriesMap(movies), [movies]);
 
@@ -424,23 +425,26 @@ export default function HomeScreen({navigation}) {
     if (item.is_live) {
       navigation.navigate('Player', {
         movie: {id: item.id, type: 'direct', video_url: item.video_url || item.url || '', title: item.title || item.name || 'שידור חי'},
+        userId: user?.id || null,
       });
     } else {
       setDetailItem(item);
     }
-  }, [navigation]);
+  }, [navigation, user]);
 
   const handlePlayDirect = useCallback(async item => {
     setDetailItem(null);
+    const userId = user?.id || null;
     if (item.is_live) {
       navigation.navigate('Player', {
         movie: {id: item.id, type: 'direct', video_url: item.video_url || item.url || '', title: item.title || item.name || 'שידור חי'},
+        userId,
       });
     } else {
-      const startTime = await loadProgress(item.id, getUserId());
-      navigation.navigate('Player', {movie: item, startTime: startTime || 0});
+      const startTime = userId ? await loadProgress(item.id, userId) : 0;
+      navigation.navigate('Player', {movie: item, startTime: startTime || 0, userId});
     }
-  }, [navigation]);
+  }, [navigation, user]);
 
   const handleHeroPlay = useCallback(movie => {
     setDetailItem(movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie);
@@ -553,7 +557,7 @@ export default function HomeScreen({navigation}) {
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor="#e50914" />
+            <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
           }>
           {TopBar}
           <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />
@@ -579,7 +583,7 @@ export default function HomeScreen({navigation}) {
             windowSize={5}
             removeClippedSubviews
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={() => load(true)} tintColor="#e50914" />
+              <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
             }
             renderItem={({item}) => <MovieCard item={item} onPress={handleItemPress} />}
             ListEmptyComponent={
