@@ -1,10 +1,11 @@
-import React, {useMemo} from 'react';
+import React, {useMemo, useEffect, useRef} from 'react';
 import {View, StyleSheet, Text} from 'react-native';
 import {WebView} from 'react-native-webview';
+import {saveProgress, saveHistory} from '../api/movies';
+import {getUserId} from '../api/userStore';
 
 function buildEmbedUrl(movie) {
   const {type, video_id, video_url} = movie;
-
   if (type === 'youtube') {
     return `https://www.youtube.com/embed/${video_id}?autoplay=1&playsinline=1`;
   }
@@ -21,13 +22,11 @@ function buildEmbedUrl(movie) {
   if (type === 'drive') {
     return `https://drive.google.com/file/d/${video_id}/preview`;
   }
-  if (type === 'direct') {
-    return null;
-  }
+  if (type === 'direct') return null;
   return video_url || '';
 }
 
-function buildHlsHtml(url) {
+function buildHlsHtml(url, startTime = 0) {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -43,14 +42,26 @@ function buildHlsHtml(url) {
 <script>
   var v = document.getElementById('v');
   var src = "${url}";
+  var startAt = ${startTime};
+  function onReady() {
+    if (startAt > 0) v.currentTime = startAt;
+    v.play();
+    setInterval(function(){
+      if (!v.paused && v.duration) {
+        window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
+          JSON.stringify({type:'progress', position: Math.floor(v.currentTime), duration: Math.floor(v.duration)})
+        );
+      }
+    }, 10000);
+  }
   if (Hls.isSupported()) {
     var hls = new Hls();
     hls.loadSource(src);
     hls.attachMedia(v);
-    hls.on(Hls.Events.MANIFEST_PARSED, function() { v.play(); });
+    hls.on(Hls.Events.MANIFEST_PARSED, onReady);
   } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
     v.src = src;
-    v.play();
+    v.addEventListener('loadedmetadata', onReady);
   }
 </script>
 </body>
@@ -58,24 +69,50 @@ function buildHlsHtml(url) {
 }
 
 export default function PlayerScreen({route}) {
-  const {movie} = route.params;
+  const {movie, startTime = 0} = route.params;
   const embedUrl = useMemo(() => buildEmbedUrl(movie), [movie]);
+  const userId = getUserId();
+  const progressRef = useRef({position: startTime, duration: 0});
 
   const isDirectHls =
     movie.type === 'direct' &&
     ((movie.video_id || '').includes('.m3u8') ||
       (movie.video_url || '').includes('.m3u8'));
 
+  // Save history entry when player opens
+  useEffect(() => {
+    saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
+    return () => {
+      // Save final progress on unmount
+      const {position, duration} = progressRef.current;
+      if (position > 5 && duration > 0) {
+        saveProgress(movie.id, position, duration, userId);
+      }
+    };
+  }, [movie.id, movie.title, movie.thumbnail_url, userId]);
+
+  const onMessage = event => {
+    try {
+      const m = JSON.parse(event.nativeEvent.data);
+      if (m.type === 'progress') {
+        progressRef.current = {position: m.position, duration: m.duration};
+        // Auto-save progress every 10s (from the interval in the injected JS)
+        saveProgress(movie.id, m.position, m.duration, userId);
+      }
+    } catch (_) {}
+  };
+
   if (isDirectHls) {
     return (
       <View style={styles.container}>
         <WebView
-          source={{html: buildHlsHtml(movie.video_id || movie.video_url)}}
+          source={{html: buildHlsHtml(movie.video_id || movie.video_url, startTime)}}
           style={styles.player}
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}
           allowsFullscreenVideo
           javaScriptEnabled
+          onMessage={onMessage}
         />
       </View>
     );
@@ -100,6 +137,7 @@ export default function PlayerScreen({route}) {
         javaScriptEnabled
         domStorageEnabled
         startInLoadingState
+        onMessage={onMessage}
       />
     </View>
   );
