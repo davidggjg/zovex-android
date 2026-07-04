@@ -2,6 +2,7 @@ import React, {useEffect, useState, useMemo, useCallback, useRef, memo} from 're
 import {
   View,
   Text,
+  Alert,
   FlatList,
   TextInput,
   TouchableOpacity,
@@ -35,8 +36,6 @@ const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 
 GoogleSignin.configure({
-  // WEB client ID from Firebase — used only to verify idToken, not as redirect target
-  webClientId: '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com',
   scopes: ['profile', 'email'],
   offlineAccess: false,
 });
@@ -303,11 +302,15 @@ export default function HomeScreen({navigation}) {
     try {
       await GoogleSignin.hasPlayServices();
       const result = await GoogleSignin.signIn();
-      // v11 wraps in { type: 'success', data: { user, idToken } }
-      // cancelled → { type: 'cancelled' }
-      if (!result || result.type === 'cancelled') return;
-      const u = result?.data?.user ?? result?.user;
-      if (!u) return;
+      // v11: { type: 'success', data: { user, idToken } } | { type: 'cancelled' }
+      if (!result) return;
+      if (result.type === 'cancelled') return;
+      // Flatten both v10 and v11 shapes
+      const u = result?.data?.user ?? result?.user ?? result;
+      if (!u?.email) {
+        Alert.alert('Google Sign-In', `תוצאה לא צפויה:\n${JSON.stringify(result).slice(0, 200)}`);
+        return;
+      }
       const info = {
         id: String(u.id || u.userId || ''),
         name: u.name || u.displayName || '',
@@ -320,10 +323,13 @@ export default function HomeScreen({navigation}) {
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
       await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
     } catch (e) {
-      // Silently ignore sign-in cancellation errors (code 12501)
-      if (e?.code !== '12501') {
-        console.warn('Google Sign-In error:', e?.code, e?.message);
-      }
+      const code = String(e?.code ?? '');
+      // 12501 = user cancelled, -5 = cancelled — ignore silently
+      if (code === '12501' || code === '-5') return;
+      Alert.alert(
+        'שגיאת כניסה',
+        `קוד: ${code}\n${e?.message ?? String(e)}`,
+      );
     }
   }, []);
 
