@@ -13,8 +13,9 @@ import {
   Dimensions,
   ImageBackground,
   Animated,
-  Linking,
+  Modal,
 } from 'react-native';
+import {WebView} from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
@@ -29,79 +30,87 @@ const {width: SW} = Dimensions.get('window');
 const CARD_W = SW * 0.32;
 const CARD_H = CARD_W * 1.48;
 
-const ANDROID_CLIENT_ID =
-  '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com';
-const REDIRECT_URI =
-  'com.googleusercontent.apps.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v:/oauth2redirect/google';
+const GOOGLE_CLIENT_ID =
+  '537028202942-tra1klpqsbu6uo475gshp5r43m68h47m.apps.googleusercontent.com';
 const ADMIN_TRIGGER = 'ZovexAdmin2026';
-const PKCE_KEY = 'zovex_pkce_cv';
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 
-// ── SHA-256 (pure JS, needed for PKCE S256 — RN 0.73 Hermes lacks crypto.subtle) ──
+// Inline HTML page that uses Google Identity Services SDK (same as the website)
+const GOOGLE_SIGN_IN_HTML = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:-apple-system,sans-serif;direction:rtl}
+.wrap{text-align:center;padding:24px}
+.logo{color:#e50914;font-size:36px;font-weight:900;letter-spacing:4px;margin-bottom:16px}
+.msg{color:#666;font-size:14px;margin-bottom:28px}
+.btn{background:#fff;border:1.5px solid #ddd;border-radius:12px;padding:14px 24px;font-size:15px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;width:100%;max-width:320px;margin:0 auto 16px;box-shadow:0 2px 8px rgba(0,0,0,.08)}
+.skip{color:#aaa;font-size:13px;border:none;background:none;cursor:pointer;padding:8px}
+.err{color:#e50914;font-size:13px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">ZOVEX</div>
+  <div class="msg">התחבר לחשבון Google שלך</div>
+  <button class="btn" id="signInBtn" onclick="doSignIn()">
+    <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.2l6.7-6.7C35.7 2.4 30.2 0 24 0 14.8 0 6.9 5.4 2.8 13.3l7.8 6.1C12.5 13 17.8 9.5 24 9.5z"/><path fill="#4285F4" d="M46.6 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h12.7c-.5 2.9-2.2 5.3-4.7 6.9l7.3 5.7c4.3-4 6.3-9.9 7.3-16.6z"/><path fill="#FBBC05" d="M10.6 28.6A14.7 14.7 0 0 1 9.5 24c0-1.6.3-3.2.8-4.6L2.5 13.3A23.8 23.8 0 0 0 0 24c0 3.8.9 7.4 2.5 10.6l8.1-6z"/><path fill="#34A853" d="M24 48c6.2 0 11.4-2 15.2-5.5l-7.3-5.7c-2 1.4-4.6 2.2-7.9 2.2-6.2 0-11.5-4.2-13.4-9.9l-7.9 6.1C6.9 42.6 14.8 48 24 48z"/></svg>
+    התחבר עם Google
+  </button>
+  <button class="skip" onclick="doSkip()">דלג — צפה בלי חשבון</button>
+  <div class="err" id="errMsg"></div>
+</div>
+<script>
+var tokenClient = null;
+var CLIENT_ID = '537028202942-tra1klpqsbu6uo475gshp5r43m68h47m.apps.googleusercontent.com';
 
-function sha256Hex(str) {
-  function rr(n, x) { return (x >>> n) | (x << (32 - n)); }
-  const K = [
-    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
-  ];
-  const bytes = [];
-  for (let i = 0; i < str.length; i++) {
-    const c = str.charCodeAt(i);
-    if (c < 0x80) bytes.push(c);
-    else if (c < 0x800) { bytes.push((c >> 6) | 0xc0); bytes.push((c & 0x3f) | 0x80); }
-    else { bytes.push((c >> 12) | 0xe0); bytes.push(((c >> 6) & 0x3f) | 0x80); bytes.push((c & 0x3f) | 0x80); }
-  }
-  const bitLen = bytes.length * 8;
-  bytes.push(0x80);
-  while (bytes.length % 64 !== 56) bytes.push(0);
-  bytes.push(0,0,0,0,(bitLen>>>24)&0xff,(bitLen>>>16)&0xff,(bitLen>>>8)&0xff,bitLen&0xff);
-  let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a;
-  let h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
-  for (let i = 0; i < bytes.length; i += 64) {
-    const W = new Array(64);
-    for (let j = 0; j < 16; j++)
-      W[j]=((bytes[i+j*4]<<24)|(bytes[i+j*4+1]<<16)|(bytes[i+j*4+2]<<8)|bytes[i+j*4+3])>>>0;
-    for (let j = 16; j < 64; j++) {
-      const s0=rr(7,W[j-15])^rr(18,W[j-15])^(W[j-15]>>>3);
-      const s1=rr(17,W[j-2])^rr(19,W[j-2])^(W[j-2]>>>10);
-      W[j]=(W[j-16]+s0+W[j-7]+s1)>>>0;
+function loadGSI() {
+  var s = document.createElement('script');
+  s.src = 'https://accounts.google.com/gsi/client';
+  s.onload = function() {
+    if (!window.google || !window.google.accounts) {
+      document.getElementById('errMsg').textContent = 'שגיאה בטעינת Google — נסה שוב';
+      return;
     }
-    let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
-    for (let j = 0; j < 64; j++) {
-      const S1=rr(6,e)^rr(11,e)^rr(25,e), ch=(e&f)^(~e&g);
-      const T1=(h+S1+ch+K[j]+W[j])>>>0;
-      const S0=rr(2,a)^rr(13,a)^rr(22,a), maj=(a&b)^(a&c)^(b&c);
-      const T2=(S0+maj)>>>0;
-      h=g;g=f;f=e;e=(d+T1)>>>0;d=c;c=b;b=a;a=(T1+T2)>>>0;
-    }
-    h0=(h0+a)>>>0;h1=(h1+b)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;
-    h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+h)>>>0;
-  }
-  return [h0,h1,h2,h3,h4,h5,h6,h7].map(n=>n.toString(16).padStart(8,'0')).join('');
+    tokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: 'openid email profile',
+      callback: function(resp) {
+        if (resp.error || !resp.access_token) {
+          document.getElementById('errMsg').textContent = 'שגיאה: ' + (resp.error || 'לא ידוע');
+          document.getElementById('signInBtn').disabled = false;
+          document.getElementById('signInBtn').textContent = 'נסה שוב';
+          return;
+        }
+        window.ReactNativeWebView.postMessage(JSON.stringify({type:'token',access_token:resp.access_token}));
+      }
+    });
+  };
+  s.onerror = function() {
+    document.getElementById('errMsg').textContent = 'אין חיבור — בדוק אינטרנט';
+  };
+  document.head.appendChild(s);
 }
 
-function hexToBase64Url(hex) {
-  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  const bytes=[];
-  for (let i=0;i<hex.length;i+=2) bytes.push(parseInt(hex.substr(i,2),16));
-  let b64='';
-  for (let i=0;i<bytes.length;i+=3) {
-    const b0=bytes[i],b1=bytes[i+1]||0,b2=bytes[i+2]||0;
-    b64+=chars[b0>>2];
-    b64+=chars[((b0&3)<<4)|(b1>>4)];
-    b64+=i+1<bytes.length?chars[((b1&15)<<2)|(b2>>6)]:'=';
-    b64+=i+2<bytes.length?chars[b2&63]:'=';
-  }
-  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
+function doSignIn() {
+  if (!tokenClient) { document.getElementById('errMsg').textContent = 'הספרייה עדיין נטענת...'; return; }
+  document.getElementById('signInBtn').disabled = true;
+  document.getElementById('signInBtn').textContent = 'מתחבר...';
+  tokenClient.requestAccessToken({ prompt: 'select_account' });
 }
+
+function doSkip() {
+  window.ReactNativeWebView.postMessage(JSON.stringify({type:'skip'}));
+}
+
+loadGSI();
+</script>
+</body>
+</html>`;
 
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
@@ -360,72 +369,36 @@ export default function HomeScreen({navigation}) {
   const [detailItem, setDetailItem] = useState(null);
   const [user, setUser] = useState(null);
   const [showSignIn, setShowSignIn] = useState(false);
-  const [signingIn, setSigningIn] = useState(false);
+  const [showGoogleWebView, setShowGoogleWebView] = useState(false);
 
-  // ── Google Sign-In via Linking (Chrome Custom Tabs) ──
-  const handleOAuthCallback = useCallback(async url => {
-    if (!url || !url.startsWith(REDIRECT_URI)) return;
-    const m = url.match(/[?&]code=([^&\s#]+)/);
-    if (!m) return;
-    const code = decodeURIComponent(m[1]);
-    const cv = await AsyncStorage.getItem(PKCE_KEY).catch(() => null);
-    if (!cv) return;
-    await AsyncStorage.removeItem(PKCE_KEY).catch(() => {});
-    setSigningIn(true);
+  const startSignIn = useCallback(() => {
+    setShowGoogleWebView(true);
+  }, []);
+
+  const handleGoogleMessage = useCallback(async event => {
     try {
-      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: [
-          `code=${encodeURIComponent(code)}`,
-          `client_id=${encodeURIComponent(ANDROID_CLIENT_ID)}`,
-          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
-          'grant_type=authorization_code',
-          `code_verifier=${encodeURIComponent(cv)}`,
-        ].join('&'),
-      });
-      const tokens = await tokenRes.json();
-      if (tokens.access_token) {
-        const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: {Authorization: `Bearer ${tokens.access_token}`},
-        });
-        const info = await userRes.json();
-        setUser(info);
+      const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === 'skip') {
+        setShowGoogleWebView(false);
         setShowSignIn(false);
-        await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
         await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
+        return;
+      }
+      if (msg.type === 'token' && msg.access_token) {
+        const res = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: {Authorization: `Bearer ${msg.access_token}`},
+        });
+        const info = await res.json();
+        if (info?.id) {
+          setUser(info);
+          setShowGoogleWebView(false);
+          setShowSignIn(false);
+          await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
+          await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
+        }
       }
     } catch {}
-    setSigningIn(false);
   }, []);
-
-  const startSignIn = useCallback(async () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-    let cv = '';
-    for (let i = 0; i < 64; i++) cv += chars[Math.floor(Math.random() * chars.length)];
-    const challenge = hexToBase64Url(sha256Hex(cv));
-    await AsyncStorage.setItem(PKCE_KEY, cv).catch(() => {});
-    const params = [
-      `client_id=${encodeURIComponent(ANDROID_CLIENT_ID)}`,
-      `redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
-      'response_type=code',
-      `scope=${encodeURIComponent('openid profile email')}`,
-      `code_challenge=${encodeURIComponent(challenge)}`,
-      'code_challenge_method=S256',
-      'prompt=select_account',
-    ].join('&');
-    Linking.openURL(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
-  }, []);
-
-  useEffect(() => {
-    // Cold start — app opened via OAuth deep link
-    Linking.getInitialURL().then(url => {
-      if (url) handleOAuthCallback(url);
-    }).catch(() => {});
-    // Warm start — app resumed via OAuth deep link
-    const sub = Linking.addEventListener('url', ({url}) => handleOAuthCallback(url));
-    return () => sub.remove();
-  }, [handleOAuthCallback]);
 
   // Load saved user; auto-show sign-in for first-time users
   useEffect(() => {
@@ -556,16 +529,8 @@ export default function HomeScreen({navigation}) {
         <Text style={styles.signInLogo}>ZOVEX</Text>
         <Text style={styles.signInTitle}>ברוכים הבאים</Text>
         <Text style={styles.signInSub}>כניסה לחשבון לחוויה מלאה</Text>
-        <TouchableOpacity
-          style={[styles.googleBtn, signingIn && {opacity: 0.6}]}
-          onPress={startSignIn}
-          disabled={signingIn}
-          activeOpacity={0.8}>
-          {signingIn ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.googleBtnText}>🔑 כניסה עם Google</Text>
-          )}
+        <TouchableOpacity style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}>
+          <Text style={styles.googleBtnText}>🔑 כניסה עם Google</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.skipBtn}
@@ -575,6 +540,22 @@ export default function HomeScreen({navigation}) {
           }}>
           <Text style={styles.skipBtnText}>המשך ללא כניסה</Text>
         </TouchableOpacity>
+        <Modal visible={showGoogleWebView} animationType="slide" onRequestClose={() => setShowGoogleWebView(false)}>
+          <View style={{flex: 1, backgroundColor: '#000'}}>
+            <TouchableOpacity
+              style={{padding: 16, alignItems: 'flex-end'}}
+              onPress={() => setShowGoogleWebView(false)}>
+              <Text style={{color: '#fff', fontSize: 18}}>✕</Text>
+            </TouchableOpacity>
+            <WebView
+              source={{html: GOOGLE_SIGN_IN_HTML}}
+              javaScriptEnabled
+              domStorageEnabled
+              onMessage={handleGoogleMessage}
+              style={{flex: 1}}
+            />
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -705,6 +686,23 @@ export default function HomeScreen({navigation}) {
           onPlayDirect={handlePlayDirect}
         />
       )}
+
+      <Modal visible={showGoogleWebView} animationType="slide" onRequestClose={() => setShowGoogleWebView(false)}>
+        <View style={{flex: 1, backgroundColor: '#000'}}>
+          <TouchableOpacity
+            style={{padding: 16, alignItems: 'flex-end'}}
+            onPress={() => setShowGoogleWebView(false)}>
+            <Text style={{color: '#fff', fontSize: 18}}>✕</Text>
+          </TouchableOpacity>
+          <WebView
+            source={{html: GOOGLE_SIGN_IN_HTML}}
+            javaScriptEnabled
+            domStorageEnabled
+            onMessage={handleGoogleMessage}
+            style={{flex: 1}}
+          />
+        </View>
+      </Modal>
     </View>
   );
 }
