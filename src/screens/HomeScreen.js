@@ -13,9 +13,8 @@ import {
   Dimensions,
   ImageBackground,
   Animated,
-  Modal,
+  Linking,
 } from 'react-native';
-import {WebView} from 'react-native-webview';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
@@ -34,10 +33,12 @@ const ANDROID_CLIENT_ID =
   '1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v.apps.googleusercontent.com';
 const REDIRECT_URI =
   'com.googleusercontent.apps.1095467813314-d3fn8ad1roao5qk3gtilg9hhq8drn85v:/oauth2redirect/google';
-
 const ADMIN_TRIGGER = 'ZovexAdmin2026';
+const PKCE_KEY = 'zovex_pkce_cv';
+const USER_KEY = 'zovex_google_user';
+const SEEN_LOGIN_KEY = 'zovex_seen_login';
 
-// ── Pure-JS SHA-256 (needed for PKCE S256, since RN 0.73 Hermes lacks crypto.subtle) ──
+// ── SHA-256 (pure JS, needed for PKCE S256 — RN 0.73 Hermes lacks crypto.subtle) ──
 
 function sha256Hex(str) {
   function rr(n, x) { return (x >>> n) | (x << (32 - n)); }
@@ -51,7 +52,6 @@ function sha256Hex(str) {
     0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
     0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2,
   ];
-  // UTF-8 encode
   const bytes = [];
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
@@ -62,163 +62,46 @@ function sha256Hex(str) {
   const bitLen = bytes.length * 8;
   bytes.push(0x80);
   while (bytes.length % 64 !== 56) bytes.push(0);
-  bytes.push(0, 0, 0, 0, (bitLen >>> 24) & 0xff, (bitLen >>> 16) & 0xff, (bitLen >>> 8) & 0xff, bitLen & 0xff);
+  bytes.push(0,0,0,0,(bitLen>>>24)&0xff,(bitLen>>>16)&0xff,(bitLen>>>8)&0xff,bitLen&0xff);
   let h0=0x6a09e667,h1=0xbb67ae85,h2=0x3c6ef372,h3=0xa54ff53a;
   let h4=0x510e527f,h5=0x9b05688c,h6=0x1f83d9ab,h7=0x5be0cd19;
   for (let i = 0; i < bytes.length; i += 64) {
     const W = new Array(64);
-    for (let j = 0; j < 16; j++) {
-      W[j] = ((bytes[i+j*4]<<24)|(bytes[i+j*4+1]<<16)|(bytes[i+j*4+2]<<8)|bytes[i+j*4+3]) >>> 0;
-    }
+    for (let j = 0; j < 16; j++)
+      W[j]=((bytes[i+j*4]<<24)|(bytes[i+j*4+1]<<16)|(bytes[i+j*4+2]<<8)|bytes[i+j*4+3])>>>0;
     for (let j = 16; j < 64; j++) {
-      const s0 = rr(7,W[j-15]) ^ rr(18,W[j-15]) ^ (W[j-15] >>> 3);
-      const s1 = rr(17,W[j-2]) ^ rr(19,W[j-2]) ^ (W[j-2] >>> 10);
-      W[j] = (W[j-16] + s0 + W[j-7] + s1) >>> 0;
+      const s0=rr(7,W[j-15])^rr(18,W[j-15])^(W[j-15]>>>3);
+      const s1=rr(17,W[j-2])^rr(19,W[j-2])^(W[j-2]>>>10);
+      W[j]=(W[j-16]+s0+W[j-7]+s1)>>>0;
     }
     let a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
     for (let j = 0; j < 64; j++) {
-      const S1 = rr(6,e) ^ rr(11,e) ^ rr(25,e);
-      const ch = (e & f) ^ (~e & g);
-      const T1 = (h + S1 + ch + K[j] + W[j]) >>> 0;
-      const S0 = rr(2,a) ^ rr(13,a) ^ rr(22,a);
-      const maj = (a & b) ^ (a & c) ^ (b & c);
-      const T2 = (S0 + maj) >>> 0;
-      h=g; g=f; f=e; e=(d+T1)>>>0; d=c; c=b; b=a; a=(T1+T2)>>>0;
+      const S1=rr(6,e)^rr(11,e)^rr(25,e), ch=(e&f)^(~e&g);
+      const T1=(h+S1+ch+K[j]+W[j])>>>0;
+      const S0=rr(2,a)^rr(13,a)^rr(22,a), maj=(a&b)^(a&c)^(b&c);
+      const T2=(S0+maj)>>>0;
+      h=g;g=f;f=e;e=(d+T1)>>>0;d=c;c=b;b=a;a=(T1+T2)>>>0;
     }
-    h0=(h0+a)>>>0; h1=(h1+b)>>>0; h2=(h2+c)>>>0; h3=(h3+d)>>>0;
-    h4=(h4+e)>>>0; h5=(h5+f)>>>0; h6=(h6+g)>>>0; h7=(h7+h)>>>0;
+    h0=(h0+a)>>>0;h1=(h1+b)>>>0;h2=(h2+c)>>>0;h3=(h3+d)>>>0;
+    h4=(h4+e)>>>0;h5=(h5+f)>>>0;h6=(h6+g)>>>0;h7=(h7+h)>>>0;
   }
-  return [h0,h1,h2,h3,h4,h5,h6,h7]
-    .map(n => n.toString(16).padStart(8,'0')).join('');
+  return [h0,h1,h2,h3,h4,h5,h6,h7].map(n=>n.toString(16).padStart(8,'0')).join('');
 }
 
 function hexToBase64Url(hex) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  const bytes = [];
-  for (let i = 0; i < hex.length; i += 2) bytes.push(parseInt(hex.substr(i, 2), 16));
-  let b64 = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const b0=bytes[i], b1=bytes[i+1]||0, b2=bytes[i+2]||0;
-    b64 += chars[b0>>2];
-    b64 += chars[((b0&3)<<4)|(b1>>4)];
-    b64 += i+1 < bytes.length ? chars[((b1&15)<<2)|(b2>>6)] : '=';
-    b64 += i+2 < bytes.length ? chars[b2&63] : '=';
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const bytes=[];
+  for (let i=0;i<hex.length;i+=2) bytes.push(parseInt(hex.substr(i,2),16));
+  let b64='';
+  for (let i=0;i<bytes.length;i+=3) {
+    const b0=bytes[i],b1=bytes[i+1]||0,b2=bytes[i+2]||0;
+    b64+=chars[b0>>2];
+    b64+=chars[((b0&3)<<4)|(b1>>4)];
+    b64+=i+1<bytes.length?chars[((b1&15)<<2)|(b2>>6)]:'=';
+    b64+=i+2<bytes.length?chars[b2&63]:'=';
   }
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
 }
-
-// ── Google Sign-In Modal ──────────────────────────────────────────────────────
-
-function GoogleSignInModal({visible, onSuccess, onClose}) {
-  const codeVerifierRef = useRef('');
-  const handledRef = useRef(false);
-
-  const authUrl = useMemo(() => {
-    if (!visible) return '';
-    handledRef.current = false;
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-    let cv = '';
-    for (let i = 0; i < 64; i++) cv += chars[Math.floor(Math.random() * chars.length)];
-    codeVerifierRef.current = cv;
-    const challenge = hexToBase64Url(sha256Hex(cv));
-    const params = [
-      `client_id=${encodeURIComponent(ANDROID_CLIENT_ID)}`,
-      `redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
-      'response_type=code',
-      `scope=${encodeURIComponent('openid profile email')}`,
-      `code_challenge=${encodeURIComponent(challenge)}`,
-      'code_challenge_method=S256',
-      'prompt=select_account',
-    ].join('&');
-    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
-  }, [visible]);
-
-  const handleRedirect = useCallback(async url => {
-    if (handledRef.current || !url) return;
-    if (!url.startsWith('com.googleusercontent.apps.')) return;
-    handledRef.current = true;
-    try {
-      const m = url.match(/[?&]code=([^&\s#]+)/);
-      if (!m) { onClose(); return; }
-      const code = decodeURIComponent(m[1]);
-      const cv = codeVerifierRef.current;
-      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: [
-          `code=${encodeURIComponent(code)}`,
-          `client_id=${encodeURIComponent(ANDROID_CLIENT_ID)}`,
-          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
-          'grant_type=authorization_code',
-          `code_verifier=${encodeURIComponent(cv)}`,
-        ].join('&'),
-      });
-      const tokens = await tokenRes.json();
-      if (tokens.access_token) {
-        const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: {Authorization: `Bearer ${tokens.access_token}`},
-        });
-        const userInfo = await userRes.json();
-        onSuccess(userInfo);
-      } else {
-        onClose();
-      }
-    } catch {
-      onClose();
-    }
-  }, [onSuccess, onClose]);
-
-  if (!visible) return null;
-
-  return (
-    <Modal visible animationType="slide" onRequestClose={onClose}>
-      <View style={gsiStyles.container}>
-        <View style={gsiStyles.header}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={gsiStyles.closeTxt}>✕</Text>
-          </TouchableOpacity>
-          <Text style={gsiStyles.title}>כניסה עם Google</Text>
-          <View style={{width: 36}} />
-        </View>
-        <WebView
-          source={{uri: authUrl}}
-          onShouldStartLoadWithRequest={req => {
-            if (req.url.startsWith('com.googleusercontent.apps.')) {
-              handleRedirect(req.url);
-              return false;
-            }
-            return true;
-          }}
-          onNavigationStateChange={state => {
-            if (state.url && state.url.startsWith('com.googleusercontent.apps.')) {
-              handleRedirect(state.url);
-            }
-          }}
-          onError={() => {}}
-          javaScriptEnabled
-          domStorageEnabled
-          startInLoadingState
-        />
-      </View>
-    </Modal>
-  );
-}
-
-const gsiStyles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#0a0a0a'},
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
-  },
-  closeTxt: {color: '#aaa', fontSize: 20, padding: 4},
-  title: {color: '#fff', fontSize: 16, fontWeight: '700'},
-});
 
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
@@ -235,77 +118,71 @@ function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
   }, [item, allMovies]);
 
   if (!item) return null;
-
   const displayTitle = item.series_name || item.title || item.name || '';
   const firstEp = episodes.length > 0 ? episodes[0] : null;
 
   return (
-    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
-      <View style={mdStyles.overlay}>
-        <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
-        <View style={mdStyles.sheet}>
-          <TouchableOpacity style={mdStyles.closeBtn} onPress={onClose}>
-            <Text style={mdStyles.closeTxt}>✕</Text>
-          </TouchableOpacity>
-          <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-            {item.thumbnail_url ? (
-              <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
-            ) : (
-              <View style={mdStyles.noThumb}>
-                <Text style={{fontSize: 52}}>{item.is_live ? '📡' : '🎬'}</Text>
-              </View>
-            )}
-            <View style={mdStyles.body}>
-              <Text style={mdStyles.title}>{displayTitle}</Text>
-              {!!item.description && (
-                <Text style={mdStyles.desc} numberOfLines={5}>{item.description}</Text>
-              )}
-              <TouchableOpacity
-                style={mdStyles.playBtn}
-                activeOpacity={0.8}
-                onPress={() => onPlayDirect(firstEp || item)}>
-                <Text style={mdStyles.playTxt}>▶ הפעל</Text>
-              </TouchableOpacity>
+    <View style={mdStyles.overlay}>
+      <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
+      <View style={mdStyles.sheet}>
+        <TouchableOpacity style={mdStyles.closeBtn} onPress={onClose}>
+          <Text style={mdStyles.closeTxt}>✕</Text>
+        </TouchableOpacity>
+        <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+          {item.thumbnail_url ? (
+            <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
+          ) : (
+            <View style={mdStyles.noThumb}>
+              <Text style={{fontSize: 52}}>{item.is_live ? '📡' : '🎬'}</Text>
             </View>
-
-            {episodes.length > 1 && (
-              <View style={mdStyles.epsSection}>
-                <Text style={mdStyles.epsHeader}>פרקים ({episodes.length})</Text>
-                {episodes.map(ep => (
-                  <TouchableOpacity
-                    key={ep.id}
-                    style={mdStyles.epRow}
-                    activeOpacity={0.75}
-                    onPress={() => onPlayDirect(ep)}>
-                    {ep.thumbnail_url ? (
-                      <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
-                    ) : (
-                      <View style={mdStyles.epThumbEmpty}>
-                        <Text style={{fontSize: 16, color: '#aaa'}}>▶</Text>
-                      </View>
-                    )}
-                    <View style={mdStyles.epInfo}>
-                      <Text style={mdStyles.epNum}>
-                        {ep.season_number ? `עונה ${ep.season_number} · ` : ''}פרק {ep.episode_number}
-                      </Text>
-                      <Text style={mdStyles.epTitle} numberOfLines={2}>
-                        {ep.episode_title || ep.title}
-                      </Text>
-                    </View>
-                    <Text style={mdStyles.epPlayIcon}>▶</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+          )}
+          <View style={mdStyles.body}>
+            <Text style={mdStyles.title}>{displayTitle}</Text>
+            {!!item.description && (
+              <Text style={mdStyles.desc} numberOfLines={5}>{item.description}</Text>
             )}
-          </ScrollView>
-        </View>
+            <TouchableOpacity style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
+              <Text style={mdStyles.playTxt}>▶ הפעל</Text>
+            </TouchableOpacity>
+          </View>
+          {episodes.length > 1 && (
+            <View style={mdStyles.epsSection}>
+              <Text style={mdStyles.epsHeader}>פרקים ({episodes.length})</Text>
+              {episodes.map(ep => (
+                <TouchableOpacity key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
+                  {ep.thumbnail_url ? (
+                    <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
+                  ) : (
+                    <View style={mdStyles.epThumbEmpty}>
+                      <Text style={{fontSize: 16, color: '#aaa'}}>▶</Text>
+                    </View>
+                  )}
+                  <View style={mdStyles.epInfo}>
+                    <Text style={mdStyles.epNum}>
+                      {ep.season_number ? `עונה ${ep.season_number} · ` : ''}פרק {ep.episode_number}
+                    </Text>
+                    <Text style={mdStyles.epTitle} numberOfLines={2}>
+                      {ep.episode_title || ep.title}
+                    </Text>
+                  </View>
+                  <Text style={mdStyles.epPlayIcon}>▶</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </ScrollView>
       </View>
-    </Modal>
+    </View>
   );
 }
 
 const mdStyles = StyleSheet.create({
-  overlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'flex-end'},
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+    zIndex: 100,
+  },
   sheet: {backgroundColor: '#111', borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '88%', overflow: 'hidden'},
   closeBtn: {
     position: 'absolute', top: 12, right: 14, zIndex: 10,
@@ -321,10 +198,7 @@ const mdStyles = StyleSheet.create({
   playBtn: {backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
   epsSection: {paddingHorizontal: 16, paddingBottom: 24},
-  epsHeader: {
-    color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10,
-    borderTopWidth: 1, borderTopColor: '#222', paddingTop: 14,
-  },
+  epsHeader: {color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10, borderTopWidth: 1, borderTopColor: '#222', paddingTop: 14},
   epRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a'},
   epThumb: {width: 110, height: 62, borderRadius: 6, resizeMode: 'cover'},
   epThumbEmpty: {width: 110, height: 62, borderRadius: 6, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center'},
@@ -338,34 +212,12 @@ const mdStyles = StyleSheet.create({
 
 function HeroBanner({movies, onPlay, onInfo}) {
   const heroMovies = useMemo(() => {
-    const now = Date.now();
-    const WEEK = 7 * 24 * 60 * 60 * 1000;
     const seen = {};
-    const recent = movies
-      .filter(m => {
-        if (!m.created_date) return false;
-        const t = new Date(m.created_date).getTime();
-        if (isNaN(t) || now - t > WEEK) return false;
-        if (m.series_name) {
-          if (seen[m.series_name]) return false;
-          seen[m.series_name] = true;
-        }
-        return true;
-      })
-      .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))
-      .slice(0, 6);
-    // If no recent movies, use first 6 from the full list
-    if (recent.length === 0) {
-      const fallbackSeen = {};
-      return movies.filter(m => {
-        if (m.series_name) {
-          if (fallbackSeen[m.series_name]) return false;
-          fallbackSeen[m.series_name] = true;
-        }
-        return true;
-      }).slice(0, 6);
-    }
-    return recent;
+    const result = movies.filter(m => {
+      if (m.series_name) { if (seen[m.series_name]) return false; seen[m.series_name] = true; }
+      return true;
+    }).slice(0, 6);
+    return result;
   }, [movies]);
 
   const [index, setIndex] = useState(0);
@@ -383,7 +235,6 @@ function HeroBanner({movies, onPlay, onInfo}) {
   }, [heroMovies.length, fadeAnim]);
 
   if (heroMovies.length === 0) return null;
-
   const movie = heroMovies[index % heroMovies.length];
 
   return (
@@ -392,12 +243,8 @@ function HeroBanner({movies, onPlay, onInfo}) {
         <ImageBackground source={{uri: movie.thumbnail_url}} style={styles.heroBg} resizeMode="cover">
           <View style={styles.heroGradient} />
           <View style={styles.heroContent}>
-            <Text style={styles.heroTitle} numberOfLines={2}>
-              {movie.series_name || movie.title}
-            </Text>
-            {!!movie.description && (
-              <Text style={styles.heroDesc} numberOfLines={2}>{movie.description}</Text>
-            )}
+            <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
+            {!!movie.description && <Text style={styles.heroDesc} numberOfLines={2}>{movie.description}</Text>}
             <View style={styles.heroBtns}>
               <TouchableOpacity style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
                 <Text style={styles.heroBtnPlayText}>▶ צפה</Text>
@@ -447,48 +294,33 @@ function buildSeriesMap(movies) {
         thumbnail_url: m.thumbnail_url,
         description: m.description,
         category: m.category,
-        episodes: [],
       };
     }
-    map[m.series_name].episodes.push(m);
   });
   return map;
 }
 
-// ── MovieCard (memoized for performance) ──────────────────────────────────────
+// ── MovieCard ─────────────────────────────────────────────────────────────────
 
 const MovieCard = memo(function MovieCard({item, onPress}) {
   const isLive = !!item.is_live;
   return (
-    <TouchableOpacity
-      style={[styles.card, {width: CARD_W}]}
-      onPress={() => onPress(item)}
-      activeOpacity={0.8}>
+    <TouchableOpacity style={[styles.card, {width: CARD_W}]} onPress={() => onPress(item)} activeOpacity={0.8}>
       <View style={[styles.cardImg, {height: CARD_H, borderColor: isLive ? '#e50914' : 'transparent', borderWidth: isLive ? 2 : 0}]}>
         {item.thumbnail_url ? (
-          <Image
-            source={{uri: item.thumbnail_url}}
-            style={styles.cardImgInner}
-            fadeDuration={200}
-          />
+          <Image source={{uri: item.thumbnail_url}} style={styles.cardImgInner} fadeDuration={200} />
         ) : (
-          <View style={styles.noThumb}>
-            <Text style={styles.thumbEmoji}>{isLive ? '📡' : '🎬'}</Text>
-          </View>
+          <View style={styles.noThumb}><Text style={styles.thumbEmoji}>{isLive ? '📡' : '🎬'}</Text></View>
         )}
-        {item.isSeries && (
-          <View style={styles.badge}><Text style={styles.badgeText}>סדרה</Text></View>
-        )}
-        {isLive && (
-          <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>
-        )}
+        {item.isSeries && <View style={styles.badge}><Text style={styles.badgeText}>סדרה</Text></View>}
+        {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
       </View>
       <Text style={styles.cardTitle} numberOfLines={2}>{item.name || item.title}</Text>
     </TouchableOpacity>
   );
 });
 
-// ── NetflixRow (memoized for performance) ─────────────────────────────────────
+// ── NetflixRow ────────────────────────────────────────────────────────────────
 
 const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) {
   if (!items || items.length === 0) return null;
@@ -526,15 +358,92 @@ export default function HomeScreen({navigation}) {
   const [category, setCategory] = useState('הכל');
   const [showCategories, setShowCategories] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
-  const [showLogin, setShowLogin] = useState(false);
   const [user, setUser] = useState(null);
+  const [showSignIn, setShowSignIn] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
 
-  useEffect(() => {
-    AsyncStorage.getItem('zovex_google_user')
-      .then(s => { if (s) setUser(JSON.parse(s)); })
-      .catch(() => {});
+  // ── Google Sign-In via Linking (Chrome Custom Tabs) ──
+  const handleOAuthCallback = useCallback(async url => {
+    if (!url || !url.startsWith(REDIRECT_URI)) return;
+    const m = url.match(/[?&]code=([^&\s#]+)/);
+    if (!m) return;
+    const code = decodeURIComponent(m[1]);
+    const cv = await AsyncStorage.getItem(PKCE_KEY).catch(() => null);
+    if (!cv) return;
+    await AsyncStorage.removeItem(PKCE_KEY).catch(() => {});
+    setSigningIn(true);
+    try {
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: [
+          `code=${encodeURIComponent(code)}`,
+          `client_id=${encodeURIComponent(ANDROID_CLIENT_ID)}`,
+          `redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
+          'grant_type=authorization_code',
+          `code_verifier=${encodeURIComponent(cv)}`,
+        ].join('&'),
+      });
+      const tokens = await tokenRes.json();
+      if (tokens.access_token) {
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: {Authorization: `Bearer ${tokens.access_token}`},
+        });
+        const info = await userRes.json();
+        setUser(info);
+        setShowSignIn(false);
+        await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
+        await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
+      }
+    } catch {}
+    setSigningIn(false);
   }, []);
 
+  const startSignIn = useCallback(async () => {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+    let cv = '';
+    for (let i = 0; i < 64; i++) cv += chars[Math.floor(Math.random() * chars.length)];
+    const challenge = hexToBase64Url(sha256Hex(cv));
+    await AsyncStorage.setItem(PKCE_KEY, cv).catch(() => {});
+    const params = [
+      `client_id=${encodeURIComponent(ANDROID_CLIENT_ID)}`,
+      `redirect_uri=${encodeURIComponent(REDIRECT_URI)}`,
+      'response_type=code',
+      `scope=${encodeURIComponent('openid profile email')}`,
+      `code_challenge=${encodeURIComponent(challenge)}`,
+      'code_challenge_method=S256',
+      'prompt=select_account',
+    ].join('&');
+    Linking.openURL(`https://accounts.google.com/o/oauth2/v2/auth?${params}`);
+  }, []);
+
+  useEffect(() => {
+    // Cold start — app opened via OAuth deep link
+    Linking.getInitialURL().then(url => {
+      if (url) handleOAuthCallback(url);
+    }).catch(() => {});
+    // Warm start — app resumed via OAuth deep link
+    const sub = Linking.addEventListener('url', ({url}) => handleOAuthCallback(url));
+    return () => sub.remove();
+  }, [handleOAuthCallback]);
+
+  // Load saved user; auto-show sign-in for first-time users
+  useEffect(() => {
+    Promise.all([
+      AsyncStorage.getItem(USER_KEY),
+      AsyncStorage.getItem(SEEN_LOGIN_KEY),
+    ]).then(([saved, seen]) => {
+      if (saved) { setUser(JSON.parse(saved)); return; }
+      if (!seen) setShowSignIn(true);
+    }).catch(() => { setShowSignIn(true); });
+  }, []);
+
+  const signOut = useCallback(async () => {
+    setUser(null);
+    await AsyncStorage.removeItem(USER_KEY).catch(() => {});
+  }, []);
+
+  // ── Data loading ──
   const load = useCallback(async (refresh = false) => {
     if (refresh) { clearCache(); setRefreshing(true); }
     try {
@@ -578,11 +487,8 @@ export default function HomeScreen({navigation}) {
     const seen = {};
     const result = [];
     movies.forEach(m => {
-      const matchQ =
-        (m.title || '').toLowerCase().includes(q) ||
-        (m.series_name || '').toLowerCase().includes(q);
-      const matchC = cat === 'הכל' || m.category === cat;
-      if (!matchQ || !matchC) return;
+      const matchQ = (m.title||'').toLowerCase().includes(q) || (m.series_name||'').toLowerCase().includes(q);
+      if (!matchQ || (cat !== 'הכל' && m.category !== cat)) return;
       if (m.series_name) {
         if (!seen[m.series_name]) { seen[m.series_name] = true; result.push({...seriesMap[m.series_name]}); }
       } else {
@@ -594,16 +500,16 @@ export default function HomeScreen({navigation}) {
 
   const netflixRows = useMemo(() => {
     const rows = [];
-    if (liveChannels.length > 0) {
+    if (liveChannels.length > 0)
       rows.push({title: 'שידורים חיים', isLiveRow: true, items: liveChannels.map(ch => ({...ch, is_live: true, id: ch.id || ch.name}))});
-    }
-    const historyItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
-    if (historyItems.length > 0) rows.push({title: '▶ המשך צפייה', items: historyItems});
-    const cats = allCategories.filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה');
-    cats.forEach(cat => {
-      const items = getItemsForCategory(cat);
-      if (items.length > 0) rows.push({title: cat, items});
-    });
+    const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
+    if (histItems.length > 0) rows.push({title: '▶ המשך צפייה', items: histItems});
+    allCategories
+      .filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה')
+      .forEach(cat => {
+        const items = getItemsForCategory(cat);
+        if (items.length > 0) rows.push({title: cat, items});
+      });
     return rows;
   }, [liveChannels, history, movies, allCategories, getItemsForCategory]);
 
@@ -630,41 +536,48 @@ export default function HomeScreen({navigation}) {
   }, [navigation]);
 
   const handleHeroPlay = useCallback(movie => {
-    setDetailItem(
-      movie.series_name
-        ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description}
-        : movie,
-    );
+    setDetailItem(movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie);
   }, [seriesMap]);
 
   const handleHeroInfo = useCallback(movie => {
-    setDetailItem(
-      movie.series_name
-        ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description}
-        : movie,
-    );
+    setDetailItem(movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie);
   }, [seriesMap]);
 
   const handleSearchChange = useCallback(v => {
-    if (v === ADMIN_TRIGGER) {
-      setSearch('');
-      navigation.navigate('AdminEntry');
-      return;
-    }
+    if (v === ADMIN_TRIGGER) { setSearch(''); navigation.navigate('AdminEntry'); return; }
     setSearch(v);
     if (!v) setCategory('הכל');
   }, [navigation]);
 
-  const handleGoogleSuccess = useCallback(async userInfo => {
-    setUser(userInfo);
-    setShowLogin(false);
-    try { await AsyncStorage.setItem('zovex_google_user', JSON.stringify(userInfo)); } catch {}
-  }, []);
-
-  const handleSignOut = useCallback(async () => {
-    setUser(null);
-    try { await AsyncStorage.removeItem('zovex_google_user'); } catch {}
-  }, []);
+  // ── First-launch sign-in screen ──
+  if (!loading && showSignIn) {
+    return (
+      <View style={styles.signInScreen}>
+        <Text style={styles.signInLogo}>ZOVEX</Text>
+        <Text style={styles.signInTitle}>ברוכים הבאים</Text>
+        <Text style={styles.signInSub}>כניסה לחשבון לחוויה מלאה</Text>
+        <TouchableOpacity
+          style={[styles.googleBtn, signingIn && {opacity: 0.6}]}
+          onPress={startSignIn}
+          disabled={signingIn}
+          activeOpacity={0.8}>
+          {signingIn ? (
+            <ActivityIndicator color="#fff" />
+          ) : (
+            <Text style={styles.googleBtnText}>🔑 כניסה עם Google</Text>
+          )}
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.skipBtn}
+          onPress={async () => {
+            await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
+            setShowSignIn(false);
+          }}>
+          <Text style={styles.skipBtnText}>המשך ללא כניסה</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -682,7 +595,7 @@ export default function HomeScreen({navigation}) {
     <View style={styles.topBar}>
       <Text style={styles.appTitle}>ZOVEX</Text>
       {user ? (
-        <TouchableOpacity onPress={handleSignOut} style={styles.userBtn}>
+        <TouchableOpacity onPress={signOut} style={styles.userBtn}>
           {user.picture ? (
             <Image source={{uri: user.picture}} style={styles.userAvatar} />
           ) : (
@@ -694,7 +607,7 @@ export default function HomeScreen({navigation}) {
           )}
         </TouchableOpacity>
       ) : (
-        <TouchableOpacity onPress={() => setShowLogin(true)} style={styles.signInBtn}>
+        <TouchableOpacity onPress={startSignIn} style={styles.signInBtn}>
           <Text style={styles.signInTxt}>כניסה</Text>
         </TouchableOpacity>
       )}
@@ -722,11 +635,7 @@ export default function HomeScreen({navigation}) {
   );
 
   const CategoriesBar = showCategories ? (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      style={styles.catsScroll}
-      contentContainerStyle={styles.catsContent}>
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catsScroll} contentContainerStyle={styles.catsContent}>
       {allCategories.map(c => (
         <TouchableOpacity
           key={c}
@@ -752,13 +661,7 @@ export default function HomeScreen({navigation}) {
           {SearchRow}
           {CategoriesBar}
           {netflixRows.map(row => (
-            <NetflixRow
-              key={row.title}
-              title={row.title}
-              items={row.items}
-              isLiveRow={row.isLiveRow}
-              onPress={handleItemPress}
-            />
+            <NetflixRow key={row.title} title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
           ))}
           {netflixRows.length === 0 && <Text style={styles.empty}>אין תוכן זמין</Text>}
         </ScrollView>
@@ -802,12 +705,6 @@ export default function HomeScreen({navigation}) {
           onPlayDirect={handlePlayDirect}
         />
       )}
-
-      <GoogleSignInModal
-        visible={showLogin}
-        onSuccess={handleGoogleSuccess}
-        onClose={() => setShowLogin(false)}
-      />
     </View>
   );
 }
@@ -817,6 +714,23 @@ const styles = StyleSheet.create({
   center: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a'},
   loadingText: {color: '#aaa', marginTop: 12, fontSize: 14},
 
+  // ── First-launch sign-in screen ──
+  signInScreen: {
+    flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center',
+    alignItems: 'center', paddingHorizontal: 32,
+  },
+  signInLogo: {color: '#e50914', fontSize: 42, fontWeight: '900', letterSpacing: 8, marginBottom: 28},
+  signInTitle: {color: '#fff', fontSize: 26, fontWeight: '800', marginBottom: 8},
+  signInSub: {color: '#666', fontSize: 14, marginBottom: 40, textAlign: 'center'},
+  googleBtn: {
+    width: '100%', backgroundColor: '#4285f4', borderRadius: 14,
+    paddingVertical: 16, alignItems: 'center', marginBottom: 14,
+  },
+  googleBtnText: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  skipBtn: {paddingVertical: 12, paddingHorizontal: 24},
+  skipBtnText: {color: '#555', fontSize: 14},
+
+  // ── Top bar ──
   topBar: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8,
@@ -834,11 +748,12 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
 
+  // ── HeroBanner ──
   hero: {width: '100%', height: 360},
   heroBg: {width: '100%', height: 360, justifyContent: 'flex-end'},
   heroGradient: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'transparent',
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
   heroContent: {padding: 16, paddingBottom: 36},
   heroTitle: {
@@ -860,51 +775,43 @@ const styles = StyleSheet.create({
   heroDot: {width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.35)'},
   heroDotActive: {backgroundColor: '#fff', width: 18},
 
-  searchRow: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 10, paddingVertical: 6, gap: 8,
-  },
+  // ── Search + Categories ──
+  searchRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, gap: 8},
   search: {
     flex: 1, backgroundColor: '#1a1a1a', borderRadius: 10,
     paddingHorizontal: 12, paddingVertical: 10,
     color: '#fff', fontSize: 14, borderWidth: 1, borderColor: '#333',
   },
-  catsToggleBtn: {
-    paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10,
-    backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
-  },
+  catsToggleBtn: {paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333'},
   catsToggleBtnActive: {backgroundColor: '#e50914', borderColor: '#e50914'},
   catsToggleTxt: {color: '#aaa', fontSize: 13, fontWeight: '600'},
   catsToggleTxtActive: {color: '#fff'},
   catsScroll: {flexGrow: 0, marginBottom: 6},
   catsContent: {paddingHorizontal: 8, paddingVertical: 4},
-  catBtn: {
-    paddingHorizontal: 14, paddingVertical: 7, marginHorizontal: 4,
-    borderRadius: 20, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
-  },
+  catBtn: {paddingHorizontal: 14, paddingVertical: 7, marginHorizontal: 4, borderRadius: 20, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333'},
   catBtnActive: {backgroundColor: '#e50914', borderColor: '#e50914'},
   catText: {color: '#aaa', fontSize: 13, fontWeight: '600'},
   catTextActive: {color: '#fff'},
 
+  // ── Netflix rows ──
   rowWrap: {marginBottom: 24},
   rowHeader: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10, justifyContent: 'flex-end'},
   liveIcon: {color: '#e50914', fontSize: 10, marginLeft: 6},
   rowTitle: {color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'right'},
   rowList: {paddingHorizontal: 10},
 
+  // ── Card ──
   card: {marginHorizontal: 5, borderRadius: 10, overflow: 'hidden'},
   cardImg: {width: '100%', borderRadius: 10, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1c1c1e'},
   thumbEmoji: {fontSize: 28},
   cardTitle: {color: '#f2f2f2', fontSize: 11, fontWeight: '700', paddingTop: 5, paddingHorizontal: 2, textAlign: 'right'},
-  badge: {
-    position: 'absolute', top: 7, right: 7,
-    backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2,
-  },
+  badge: {position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2},
   liveBadge: {backgroundColor: '#e50914'},
   badgeText: {color: '#fff', fontSize: 9, fontWeight: '800'},
 
+  // ── Grid ──
   grid: {paddingHorizontal: 8, paddingBottom: 20, paddingTop: 4},
   empty: {color: '#555', textAlign: 'center', marginTop: 60, fontSize: 16},
   historyEmpty: {alignItems: 'center', marginTop: 80, paddingHorizontal: 30},
