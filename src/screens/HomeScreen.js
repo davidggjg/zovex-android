@@ -16,6 +16,7 @@ import {
   fetchMovies,
   fetchLiveChannels,
   fetchHistory,
+  loadProgress,
   clearCache,
 } from '../api/movies';
 import {getUserId} from '../api/userStore';
@@ -208,7 +209,7 @@ export default function HomeScreen({navigation}) {
   }, [liveChannels, history, movies, allCategories, getItemsForCategory]);
 
   const handleItemPress = useCallback(
-    item => {
+    async item => {
       if (item.is_live) {
         navigation.navigate('Player', {
           movie: {
@@ -224,7 +225,8 @@ export default function HomeScreen({navigation}) {
           movies,
         });
       } else {
-        navigation.navigate('Player', {movie: item});
+        const startTime = await loadProgress(item.id, getUserId());
+        navigation.navigate('Player', {movie: item, startTime: startTime || 0});
       }
     },
     [navigation, movies],
