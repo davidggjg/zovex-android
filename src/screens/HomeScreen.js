@@ -44,6 +44,10 @@ GoogleSignin.configure({
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
 function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
+  const [selectedSeason, setSelectedSeason] = useState(null);
+  const [showSeasonPicker, setShowSeasonPicker] = useState(false);
+  const [seasonLoading, setSeasonLoading] = useState(false);
+
   const episodes = useMemo(() => {
     if (!item?.series_name) return [];
     return allMovies
@@ -55,9 +59,27 @@ function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
       });
   }, [item, allMovies]);
 
+  const seasons = useMemo(
+    () => [...new Set(episodes.map(e => e.season_number).filter(Boolean))].sort((a, b) => a - b),
+    [episodes],
+  );
+  const activeSeason = selectedSeason ?? (seasons.length > 0 ? seasons[0] : null);
+
+  const visibleEpisodes = useMemo(
+    () => (activeSeason ? episodes.filter(e => e.season_number === activeSeason) : episodes),
+    [episodes, activeSeason],
+  );
+
+  const handleSeasonSelect = useCallback((s) => {
+    setShowSeasonPicker(false);
+    if (s === activeSeason) return;
+    setSeasonLoading(true);
+    setTimeout(() => { setSelectedSeason(s); setSeasonLoading(false); }, 600);
+  }, [activeSeason]);
+
   if (!item) return null;
   const displayTitle = item.series_name || item.title || item.name || '';
-  const firstEp = episodes.length > 0 ? episodes[0] : null;
+  const firstEp = visibleEpisodes.length > 0 ? visibleEpisodes[0] : null;
 
   return (
     <View style={mdStyles.overlay}>
@@ -85,31 +107,58 @@ function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
           </View>
           {episodes.length > 1 && (
             <View style={mdStyles.epsSection}>
-              <Text style={mdStyles.epsHeader}>פרקים ({episodes.length})</Text>
-              {episodes.map(ep => (
-                <TouchableOpacity key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
-                  {ep.thumbnail_url ? (
-                    <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
-                  ) : (
-                    <View style={mdStyles.epThumbEmpty}>
-                      <Text style={{fontSize: 16, color: '#aaa'}}>▶</Text>
+              {seasons.length > 1 && (
+                <View style={mdStyles.seasonRow}>
+                  <TouchableOpacity style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
+                    <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+              <Text style={mdStyles.epsHeader}>פרקים ({visibleEpisodes.length})</Text>
+              {seasonLoading ? (
+                <View style={{alignItems: 'center', paddingVertical: 30}}>
+                  <ActivityIndicator size="large" color="#e50914" />
+                </View>
+              ) : (
+                visibleEpisodes.map(ep => (
+                  <TouchableOpacity key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
+                    {ep.thumbnail_url ? (
+                      <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
+                    ) : (
+                      <View style={mdStyles.epThumbEmpty}>
+                        <Text style={{fontSize: 16, color: '#aaa'}}>▶</Text>
+                      </View>
+                    )}
+                    <View style={mdStyles.epInfo}>
+                      <Text style={mdStyles.epNum}>
+                        {ep.season_number ? `עונה ${ep.season_number} · ` : ''}פרק {ep.episode_number}
+                      </Text>
+                      <Text style={mdStyles.epTitle} numberOfLines={2}>
+                        {ep.episode_title || ep.title}
+                      </Text>
                     </View>
-                  )}
-                  <View style={mdStyles.epInfo}>
-                    <Text style={mdStyles.epNum}>
-                      {ep.season_number ? `עונה ${ep.season_number} · ` : ''}פרק {ep.episode_number}
-                    </Text>
-                    <Text style={mdStyles.epTitle} numberOfLines={2}>
-                      {ep.episode_title || ep.title}
-                    </Text>
-                  </View>
-                  <Text style={mdStyles.epPlayIcon}>▶</Text>
-                </TouchableOpacity>
-              ))}
+                    <Text style={mdStyles.epPlayIcon}>▶</Text>
+                  </TouchableOpacity>
+                ))
+              )}
             </View>
           )}
         </ScrollView>
       </View>
+
+      {showSeasonPicker && (
+        <Modal transparent animationType="fade" visible={showSeasonPicker} onRequestClose={() => setShowSeasonPicker(false)}>
+          <TouchableOpacity style={mdStyles.seasonPickerOverlay} activeOpacity={1} onPress={() => setShowSeasonPicker(false)}>
+            <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
+              {seasons.map(s => (
+                <TouchableOpacity key={s} style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]} onPress={() => handleSeasonSelect(s)}>
+                  <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
     </View>
   );
 }
@@ -136,7 +185,16 @@ const mdStyles = StyleSheet.create({
   playBtn: {backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
   epsSection: {paddingHorizontal: 16, paddingBottom: 24},
-  epsHeader: {color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10, borderTopWidth: 1, borderTopColor: '#222', paddingTop: 14},
+  seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: '#222'},
+  seasonBtn: {backgroundColor: '#2a2a2a', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
+  seasonBtnTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
+  seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
+  seasonPickerBox: {backgroundColor: '#1c1c1e', borderRadius: 16, overflow: 'hidden', minWidth: 180},
+  seasonPickerItem: {paddingVertical: 18, paddingHorizontal: 28, alignItems: 'center'},
+  seasonPickerItemActive: {backgroundColor: '#2a2a2a'},
+  seasonPickerTxt: {color: '#ccc', fontSize: 16, fontWeight: '600'},
+  seasonPickerTxtActive: {color: '#e50914', fontSize: 17, fontWeight: '800'},
+  epsHeader: {color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10, paddingTop: 10},
   epRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a'},
   epThumb: {width: 110, height: 62, borderRadius: 6, resizeMode: 'cover'},
   epThumbEmpty: {width: 110, height: 62, borderRadius: 6, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center'},
@@ -581,47 +639,33 @@ export default function HomeScreen({navigation}) {
     </View>
   );
 
-  // ── Wheel picker modal ──
-  const ITEM_H = 52;
+  // ── Netflix-style category overlay ──
   const CatModal = (
     <Modal
       visible={showCatModal}
       transparent
       animationType="fade"
       onRequestClose={() => setShowCatModal(false)}>
-      <TouchableOpacity
-        style={styles.modalOverlay}
-        activeOpacity={1}
-        onPress={() => setShowCatModal(false)}>
-        <View style={styles.catModalBox} onStartShouldSetResponder={() => true}>
-          <Text style={styles.catModalTitle}>בחר קטגוריה</Text>
-          {/* top + bottom fade strips */}
-          <View pointerEvents="none" style={styles.wheelFadeTop} />
-          <View pointerEvents="none" style={styles.wheelFadeBottom} />
-          {/* center selection highlight */}
-          <View pointerEvents="none" style={[styles.wheelHighlight, {top: ITEM_H * 2}]} />
-          <ScrollView
-            showsVerticalScrollIndicator={false}
-            snapToInterval={ITEM_H}
-            decelerationRate="fast"
-            contentContainerStyle={{paddingVertical: ITEM_H * 2}}
-            onMomentumScrollEnd={e => {
-              const idx = Math.round(e.nativeEvent.contentOffset.y / ITEM_H);
-              const c = allCategories[Math.max(0, Math.min(idx, allCategories.length - 1))];
-              if (c) { setCategory(c); setSearch(''); setTimeout(() => setShowCatModal(false), 120); }
-            }}
-            style={{height: ITEM_H * 5}}>
-            {allCategories.map(c => (
-              <TouchableOpacity
-                key={c}
-                onPress={() => { setCategory(c); setSearch(''); setShowCatModal(false); }}
-                style={[styles.wheelItem, {height: ITEM_H}, category === c && styles.wheelItemActive]}>
-                <Text style={[styles.wheelItemText, category === c && styles.wheelItemTextActive]}>{c}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      </TouchableOpacity>
+      <View style={styles.catOverlay}>
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={styles.catScrollContent}>
+          {allCategories.map(c => (
+            <TouchableOpacity
+              key={c}
+              onPress={() => { setCategory(c); setSearch(''); setShowCatModal(false); }}
+              style={styles.catOverlayItem}
+              activeOpacity={0.65}>
+              <Text style={[styles.catOverlayText, category === c && styles.catOverlayTextActive]}>
+                {c}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <TouchableOpacity style={styles.catCloseBtn} onPress={() => setShowCatModal(false)} activeOpacity={0.85}>
+          <Text style={styles.catCloseTxt}>✕</Text>
+        </TouchableOpacity>
+      </View>
     </Modal>
   );
 
@@ -824,36 +868,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
 
-  // ── Category wheel modal ──
-  catModalBox: {
-    backgroundColor: '#111', borderRadius: 20, width: SW * 0.82,
-    paddingTop: 18, overflow: 'hidden',
+  // ── Netflix-style category overlay ──
+  catOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.88)',
+    alignItems: 'center',
   },
-  catModalTitle: {
-    color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'center',
-    marginBottom: 10,
+  catScrollContent: {
+    alignItems: 'center', paddingTop: 60, paddingBottom: 120, width: SW,
   },
-  wheelFadeTop: {
-    position: 'absolute', top: 54, left: 0, right: 0, height: 52,
-    backgroundColor: 'transparent',
-    zIndex: 5,
+  catOverlayItem: {
+    paddingVertical: 14, paddingHorizontal: 40, width: SW, alignItems: 'center',
   },
-  wheelFadeBottom: {
-    position: 'absolute', bottom: 0, left: 0, right: 0, height: 52,
-    backgroundColor: 'transparent',
-    zIndex: 5,
+  catOverlayText: {
+    color: 'rgba(255,255,255,0.45)', fontSize: 22, fontWeight: '400', textAlign: 'center',
   },
-  wheelHighlight: {
-    position: 'absolute', left: 0, right: 0, height: 52,
-    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#e50914',
-    zIndex: 4,
+  catOverlayTextActive: {
+    color: '#fff', fontSize: 26, fontWeight: '800',
   },
-  wheelItem: {
+  catCloseBtn: {
+    position: 'absolute', bottom: 40,
+    width: 58, height: 58, borderRadius: 29,
+    backgroundColor: '#fff',
     justifyContent: 'center', alignItems: 'center',
   },
-  wheelItemActive: {},
-  wheelItemText: {color: '#888', fontSize: 16},
-  wheelItemTextActive: {color: '#fff', fontSize: 18, fontWeight: '800'},
+  catCloseTxt: {color: '#000', fontSize: 22, fontWeight: '700'},
 
   // ── User menu modal ──
   userMenuBox: {

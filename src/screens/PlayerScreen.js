@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useMemo} from 'react';
-import {View, StyleSheet} from 'react-native';
+import {View, Text, TouchableOpacity, StyleSheet} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
 
@@ -136,9 +136,6 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #loader{position:absolute;inset:0;z-index:5;background:#000;display:flex;align-items:center;justify-content:center}
 .spin{width:44px;height:44px;border:4px solid rgba(255,255,255,.2);border-top:4px solid #e91e8c;border-radius:50%;animation:spin 1s linear infinite}
 #overlay{position:absolute;inset:0;z-index:10}
-#always-x{position:absolute;top:12px;left:14px;z-index:200;background:rgba(0,0,0,.55);
-  border:none;border-radius:20px;width:40px;height:40px;color:#fff;font-size:22px;cursor:pointer;
-  display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;outline:none}
 #topbar{position:absolute;top:0;left:0;right:0;z-index:30;padding:14px 16px 40px;
   background:linear-gradient(to bottom,rgba(0,0,0,.82) 0%,transparent 100%);
   display:flex;align-items:flex-start;justify-content:space-between;direction:rtl;
@@ -176,8 +173,6 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 </head><body>
 <div id="wrap">
   <div id="loader"><div class="spin"></div></div>
-  <!-- Always-visible X button that ignores control visibility -->
-  <button id="always-x" onclick="postMsg({type:'close'})">✕</button>
   <div id="overlay">
     <div id="topbar">
       <div style="width:42px"></div>
@@ -309,17 +304,17 @@ function skip(s){
   setTimeout(function(){anim.style.display='none';},700);
 }
 function toggleFS(){
-  if(document.fullscreenElement||document.webkitFullscreenElement){
-    var exit=document.exitFullscreen||document.webkitExitFullscreen;
-    if(exit)exit.call(document);
-    return;
-  }
-  // Try document-level fullscreen first (works on modern Android WebView)
-  var el=document.documentElement;
-  var req=el.requestFullscreen||el.webkitRequestFullscreen;
-  if(req){req.call(el);return;}
-  // Fall back to video element fullscreen (older WebKit)
-  if(vid){var fn=vid.requestFullscreen||vid.webkitRequestFullscreen||vid.webkitEnterFullscreen;if(fn)fn.call(vid);}
+  if(!vid)return;
+  try{
+    if(vid.webkitDisplayingFullscreen){
+      (vid.webkitExitFullscreen||document.webkitExitFullscreen||document.exitFullscreen)?.call(vid.webkitDisplayingFullscreen?vid:document);
+      return;
+    }
+    // webkitEnterFullscreen is most reliable on Android WebView for <video>
+    if(vid.webkitEnterFullscreen){vid.webkitEnterFullscreen();return;}
+    var fn=vid.requestFullscreen||vid.webkitRequestFullscreen;
+    if(fn)fn.call(vid);
+  }catch(e){}
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
@@ -470,6 +465,11 @@ export default function PlayerScreen({route, navigation}) {
         mixedContentMode="always"
         originWhitelist={['*']}
       />
+      {!isIframe && (
+        <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()} activeOpacity={0.85}>
+          <Text style={styles.closeTxt}>✕</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -477,6 +477,14 @@ export default function PlayerScreen({route, navigation}) {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
+  closeBtn: {
+    position: 'absolute', top: 14, left: 14,
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    justifyContent: 'center', alignItems: 'center',
+    zIndex: 10,
+  },
+  closeTxt: {color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22},
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
