@@ -31,6 +31,8 @@ const {width: SW} = Dimensions.get('window');
 // 3 cards + 5px margin each side + 8px grid padding each side = 3*CARD_W + 30 + 16 = SW
 const CARD_W = Math.floor((SW - 46) / 3);
 const CARD_H = Math.floor(CARD_W * 1.48);
+// Hero banner: tall enough to show portrait thumbnails (2:3) with contain mode
+const HERO_H = Math.round(SW * 1.25);
 
 const ADMIN_TRIGGER = 'ZovexAdmin2026';
 const USER_KEY = 'zovex_google_user';
@@ -166,19 +168,18 @@ function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
 const mdStyles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    justifyContent: 'flex-end',
+    backgroundColor: '#0a0a0a',
     zIndex: 100,
   },
-  sheet: {backgroundColor: '#111', borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '88%', overflow: 'hidden'},
+  sheet: {flex: 1, overflow: 'hidden', backgroundColor: '#0a0a0a'},
   closeBtn: {
-    position: 'absolute', top: 12, right: 14, zIndex: 10,
-    backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 16,
-    width: 32, height: 32, justifyContent: 'center', alignItems: 'center',
+    position: 'absolute', top: 14, right: 14, zIndex: 10,
+    backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 20,
+    width: 38, height: 38, justifyContent: 'center', alignItems: 'center',
   },
   closeTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
-  thumb: {width: '100%', height: 210, resizeMode: 'cover'},
-  noThumb: {width: '100%', height: 180, backgroundColor: '#1c1c1e', justifyContent: 'center', alignItems: 'center'},
+  thumb: {width: '100%', height: 260, resizeMode: 'cover'},
+  noThumb: {width: '100%', height: 200, backgroundColor: '#1c1c1e', justifyContent: 'center', alignItems: 'center'},
   body: {padding: 18},
   title: {color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8},
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
@@ -236,7 +237,7 @@ function HeroBanner({movies, onPlay, onInfo}) {
   return (
     <Animated.View style={[styles.hero, {opacity: fadeAnim}]}>
       {movie.thumbnail_url ? (
-        <ImageBackground source={{uri: movie.thumbnail_url}} style={styles.heroBg} resizeMode="cover">
+        <ImageBackground source={{uri: movie.thumbnail_url}} style={styles.heroBg} resizeMode="contain">
           <View style={styles.heroGradient} />
           <View style={styles.heroContent}>
             <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
@@ -811,11 +812,11 @@ const styles = StyleSheet.create({
   },
 
   // ── HeroBanner ──
-  hero: {width: '100%', height: 360},
-  heroBg: {width: '100%', height: 360, justifyContent: 'flex-end'},
+  hero: {width: '100%', height: HERO_H, backgroundColor: '#0a0a0a'},
+  heroBg: {width: '100%', height: HERO_H, justifyContent: 'flex-end'},
   heroGradient: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.3)',
   },
   heroContent: {padding: 16, paddingBottom: 36},
   heroTitle: {

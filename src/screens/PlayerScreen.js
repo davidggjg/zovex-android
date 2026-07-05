@@ -1,5 +1,5 @@
-import React, {useEffect, useRef, useMemo} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet} from 'react-native';
+import React, {useEffect, useRef, useMemo, useState} from 'react';
+import {View, Text, TouchableOpacity, StyleSheet, StatusBar} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
 
@@ -303,18 +303,10 @@ function skip(s){
   anim.style.animation='none';anim.offsetHeight;anim.style.animation='fadeInOut .7s ease forwards';
   setTimeout(function(){anim.style.display='none';},700);
 }
+var isFs=false;
 function toggleFS(){
-  if(!vid)return;
-  try{
-    if(vid.webkitDisplayingFullscreen){
-      (vid.webkitExitFullscreen||document.webkitExitFullscreen||document.exitFullscreen)?.call(vid.webkitDisplayingFullscreen?vid:document);
-      return;
-    }
-    // webkitEnterFullscreen is most reliable on Android WebView for <video>
-    if(vid.webkitEnterFullscreen){vid.webkitEnterFullscreen();return;}
-    var fn=vid.requestFullscreen||vid.webkitRequestFullscreen;
-    if(fn)fn.call(vid);
-  }catch(e){}
+  isFs=!isFs;
+  postMsg({type:'fullscreen',value:isFs});
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
@@ -406,6 +398,7 @@ export default function PlayerScreen({route, navigation}) {
   const {movie, startTime = 0, userId = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
   const isLive = !!movie.is_live;
+  const [fsActive, setFsActive] = useState(false);
 
   const {src, html, isIframe} = useMemo(() => {
     const s = buildSrc(movie, isLive ? 0 : startTime);
@@ -421,6 +414,7 @@ export default function PlayerScreen({route, navigation}) {
   useEffect(() => {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
+      StatusBar.setHidden(false, 'fade');
       if (!userId) return;
       const {position, duration} = progressRef.current;
       if (position > 5 && duration > 0)
@@ -433,6 +427,9 @@ export default function PlayerScreen({route, navigation}) {
       const m = JSON.parse(event.nativeEvent.data);
       if (m.type === 'close') {
         navigation.goBack();
+      } else if (m.type === 'fullscreen') {
+        StatusBar.setHidden(m.value, 'fade');
+        setFsActive(m.value);
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
