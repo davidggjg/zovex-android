@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useMemo, useState, useCallback} from 'react';
+import React, {useEffect, useRef, useMemo} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
@@ -122,7 +122,7 @@ function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.pos
 </body></html>`;
   }
 
-  // Native video (HLS via Shaka/HLS.js, or direct MP4/stream)
+  // Native video (HLS via HLS.js, or direct MP4/stream)
   return `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <style>
@@ -148,6 +148,10 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #bottombar{position:absolute;bottom:0;left:0;right:0;z-index:30;padding:40px 20px 20px;
   background:linear-gradient(to top,rgba(0,0,0,.55) 0%,transparent 100%);
   transition:opacity .3s;opacity:1;direction:ltr}
+#progwrap{width:100%;padding:8px 0;margin-bottom:12px;cursor:pointer;touch-action:none}
+#progtrack{position:relative;height:3px;background:rgba(255,255,255,.25);border-radius:3px}
+#progfill{position:absolute;top:0;left:0;height:100%;width:0%;background:#e91e8c;border-radius:3px}
+#progdot{position:absolute;top:50%;left:0%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;background:#e91e8c;box-shadow:0 0 6px rgba(233,30,140,.7)}
 .brow{display:flex;align-items:center;justify-content:space-between}
 .bleft{display:flex;align-items:center;gap:16px}
 .bright{display:flex;align-items:center;gap:8px}
@@ -191,14 +195,17 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
         <span class="num">10</span></button>`}
     </div>
     <div id="bottombar">
+      ${isLive ? '' : `<div id="progwrap"><div id="progtrack"><div id="progfill"></div><div id="progdot"></div></div></div>`}
       <div class="brow">
         <div class="bleft">
-          <button class="ibtn" id="mutebtn" onclick="toggleMute()" title="השתק"></button>
+          <button class="ibtn" id="mutebtn" onclick="toggleMute()"></button>
           ${isLive
             ? '<div class="livedot"><span></span>LIVE</div>'
             : '<div id="timestr">0:00 / 0:00</div>'}
         </div>
-        <div class="bright"></div>
+        <div class="bright">
+          <button class="ibtn" id="fsbtn" onclick="goFullscreen()"></button>
+        </div>
       </div>
     </div>
     <div id="skipanim"><div class="skipbox"><span id="skipicon"></span><span id="skiptext"></span></div></div>
@@ -214,23 +221,19 @@ var IS_HLS = ${hls ? 'true' : 'false'};
 
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
 
-var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true;
+var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true, isFullscreen=false;
 
-window._rn_seek=function(t){if(vid)vid.currentTime=t;};
-setInterval(function(){
-  if(vid&&!IS_LIVE){var dur=usableDur(vid);if(dur>0)postMsg({type:'timeupdate',position:vid.currentTime,duration:dur});}
-},500);
 var overlay=document.getElementById('overlay');
 var loader=document.getElementById('loader');
 var ctrls=document.getElementById('ctrls');
 var topbar=document.getElementById('topbar');
 var bottombar=document.getElementById('bottombar');
+var progwrap=document.getElementById('progwrap');
 var progfill=document.getElementById('progfill');
 var progdot=document.getElementById('progdot');
 var timestr=document.getElementById('timestr');
 var playIcon=document.getElementById('playIcon');
 var pauseIcon=document.getElementById('pauseIcon');
-var mutebtn=document.getElementById('mutebtn');
 var skipanim=document.getElementById('skipanim');
 var NEAR_END=60, NEAR_RATIO=0.95;
 
@@ -250,7 +253,7 @@ function updateUI(){
   if(!vid)return;
   var dur=usableDur(vid);
   var ct=vid.currentTime;
-  if(!IS_LIVE&&progfill&&dur>0){var pct=(ct/dur)*100;progfill.style.width=pct+'%';progdot.style.left=pct+'%';}
+  if(!IS_LIVE&&progfill&&dur>0){var pct=(ct/dur)*100;progfill.style.width=pct+'%';if(progdot)progdot.style.left=pct+'%';}
   if(!IS_LIVE&&timestr)timestr.textContent=fmt(ct)+' / '+fmt(dur);
   playIcon.style.display=vid.paused?'block':'none';
   pauseIcon.style.display=vid.paused?'none':'block';
@@ -288,6 +291,28 @@ function renderMuteIcon(muted){
     btn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>';
   }
 }
+
+function goFullscreen(){
+  if(isFullscreen){
+    isFullscreen=false;
+    postMsg({type:'fullscreen',enter:false});
+    renderFsIcon(false);
+  } else {
+    isFullscreen=true;
+    postMsg({type:'fullscreen',enter:true});
+    renderFsIcon(true);
+  }
+}
+function renderFsIcon(fs){
+  var btn=document.getElementById('fsbtn');
+  if(!btn)return;
+  if(fs){
+    btn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>';
+  } else {
+    btn.innerHTML='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+  }
+}
+
 function skip(s){
   if(!vid)return;
   vid.currentTime=Math.max(0,vid.currentTime+s);
@@ -302,20 +327,20 @@ function skip(s){
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
-// Seek
-var progwrap=document.getElementById('progwrap');
+// Seek bar
 function doSeek(e){
-  if(!vid)return;
+  if(!vid||!progwrap)return;
   var dur=usableDur(vid);if(!dur)return;
   var rect=progwrap.getBoundingClientRect();
   var x=(e.clientX!=null?e.clientX:(e.touches&&e.touches[0]?e.touches[0].clientX:0))-rect.left;
   var ratio=Math.max(0,Math.min(1,x/rect.width));
   vid.currentTime=ratio*dur;updateUI();
 }
-function seekStart(e){dragging=true;doSeek(e);}
 if(progwrap){
+  progwrap.addEventListener('mousedown',function(e){dragging=true;doSeek(e);});
   document.addEventListener('mousemove',function(e){if(dragging)doSeek(e);});
   document.addEventListener('mouseup',function(){dragging=false;});
+  progwrap.addEventListener('touchstart',function(e){e.preventDefault();dragging=true;doSeek(e);},{passive:false,capture:true});
   progwrap.addEventListener('touchmove',function(e){if(dragging){e.preventDefault();doSeek(e);}},{passive:false});
   progwrap.addEventListener('touchend',function(){dragging=false;});
 }
@@ -323,6 +348,7 @@ if(progwrap){
 function initVideo(el){
   vid=el;
   renderMuteIcon(false);
+  renderFsIcon(false);
   updateUI();
   vid.addEventListener('timeupdate',updateUI);
   vid.addEventListener('loadedmetadata',updateUI);
@@ -336,37 +362,30 @@ function initVideo(el){
 }
 
 if(IS_HLS){
-  var scripts=[
-    'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js'
-  ];
-  var loaded=0;
-  scripts.forEach(function(url){
-    var s=document.createElement('script');s.src=url;
-    s.onload=function(){
-      loaded++;
-      if(loaded<scripts.length)return;
-      var v=document.createElement('video');
-      v.setAttribute('playsinline','');v.setAttribute('autoplay','');
-      v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
-      document.getElementById('wrap').insertBefore(v,loader);
-      initVideo(v);
-      if(window.Hls&&Hls.isSupported()){
-        var hls=new Hls();hls.loadSource(SRC);hls.attachMedia(v);
-        hls.on(Hls.Events.MANIFEST_PARSED,function(){
-          if(START>1){try{v.currentTime=START;}catch{}}
-          v.play().catch(function(){});loader.style.display='none';
-        });
-        hls.on(Hls.Events.ERROR,function(e,d){if(d.fatal)loader.style.display='none';});
-      } else if(v.canPlayType('application/vnd.apple.mpegurl')){
-        v.src=SRC;
-        v.addEventListener('loadedmetadata',function(){
-          if(START>1){try{v.currentTime=START;}catch{}}
-          v.play().catch(function(){});loader.style.display='none';
-        });
-      }
-    };
-    document.head.appendChild(s);
-  });
+  var s=document.createElement('script');
+  s.src='https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js';
+  s.onload=function(){
+    var v=document.createElement('video');
+    v.setAttribute('playsinline','');v.setAttribute('autoplay','');
+    v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
+    document.getElementById('wrap').insertBefore(v,loader);
+    initVideo(v);
+    if(window.Hls&&Hls.isSupported()){
+      var hls=new Hls();hls.loadSource(SRC);hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED,function(){
+        if(START>1){try{v.currentTime=START;}catch{}}
+        v.play().catch(function(){});loader.style.display='none';
+      });
+      hls.on(Hls.Events.ERROR,function(e,d){if(d.fatal)loader.style.display='none';});
+    } else if(v.canPlayType('application/vnd.apple.mpegurl')){
+      v.src=SRC;
+      v.addEventListener('loadedmetadata',function(){
+        if(START>1){try{v.currentTime=START;}catch{}}
+        v.play().catch(function(){});loader.style.display='none';
+      });
+    }
+  };
+  document.head.appendChild(s);
 } else {
   // Direct video (MP4, stream, telegram proxy, etc.)
   var v=document.createElement('video');
@@ -390,10 +409,6 @@ export default function PlayerScreen({route, navigation}) {
   const {movie, startTime = 0, userId = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
   const isLive = !!movie.is_live;
-  const [fsActive, setFsActive] = useState(false);
-  const [position, setPosition] = useState(startTime || 0);
-  const [duration, setDuration] = useState(0);
-  const [barWidth, setBarWidth] = useState(300);
   const webViewRef = useRef(null);
 
   const {src, html, isIframe} = useMemo(() => {
@@ -418,36 +433,13 @@ export default function PlayerScreen({route, navigation}) {
     };
   }, [movie.id, movie.title, movie.thumbnail_url, userId]);
 
-  const seekTo = useCallback((ratio) => {
-    if (!duration) return;
-    const t = Math.max(0, Math.min(duration, ratio * duration));
-    setPosition(t);
-    webViewRef.current?.injectJavaScript(`window._rn_seek(${t}); true;`);
-  }, [duration]);
-
-  const toggleFullscreen = useCallback(() => {
-    const next = !fsActive;
-    StatusBar.setHidden(next, 'fade');
-    setFsActive(next);
-    if (next) {
-      webViewRef.current?.injectJavaScript(
-        `try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();}catch(e){} true;`
-      );
-    } else {
-      webViewRef.current?.injectJavaScript(
-        `try{document.exitFullscreen&&document.exitFullscreen();}catch(e){} true;`
-      );
-    }
-  }, [fsActive]);
-
   const onMessage = event => {
     try {
       const m = JSON.parse(event.nativeEvent.data);
       if (m.type === 'close') {
         navigation.goBack();
-      } else if (m.type === 'timeupdate') {
-        setPosition(m.position);
-        setDuration(m.duration);
+      } else if (m.type === 'fullscreen') {
+        StatusBar.setHidden(m.enter, 'fade');
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
@@ -464,8 +456,6 @@ export default function PlayerScreen({route, navigation}) {
       </View>
     );
   }
-
-  const pct = duration > 0 ? Math.min(1, position / duration) : 0;
 
   return (
     <View style={styles.container}>
@@ -488,27 +478,6 @@ export default function PlayerScreen({route, navigation}) {
           <Text style={styles.closeTxt}>✕</Text>
         </TouchableOpacity>
       )}
-      {!isIframe && (
-        <TouchableOpacity style={styles.fsBtn} onPress={toggleFullscreen} activeOpacity={0.85}>
-          <Text style={styles.fsTxt}>{fsActive ? '⤓' : '⛶'}</Text>
-        </TouchableOpacity>
-      )}
-      {!isIframe && !isLive && (
-        <View style={styles.seekContainer}>
-          <View
-            style={styles.seekTrack}
-            onLayout={evt => setBarWidth(evt.nativeEvent.layout.width)}
-            onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => true}
-            onResponderGrant={evt => seekTo(evt.nativeEvent.locationX / barWidth)}
-            onResponderMove={evt => seekTo(evt.nativeEvent.locationX / barWidth)}
-          >
-            <View style={styles.seekBg} />
-            <View style={[styles.seekFill, {width: pct * barWidth}]} />
-            <View style={[styles.seekDot, {left: Math.max(0, pct * barWidth - 6.5)}]} />
-          </View>
-        </View>
-      )}
     </View>
   );
 }
@@ -524,31 +493,6 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   closeTxt: {color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22},
-  fsBtn: {
-    position: 'absolute', top: 14, right: 14,
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'center', alignItems: 'center',
-    zIndex: 10,
-  },
-  fsTxt: {color: '#fff', fontSize: 20, lineHeight: 24},
-  seekContainer: {
-    position: 'absolute', bottom: 58, left: 20, right: 20, zIndex: 20,
-  },
-  seekTrack: {height: 20, justifyContent: 'center'},
-  seekBg: {
-    position: 'absolute', left: 0, right: 0, height: 3,
-    backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 3,
-  },
-  seekFill: {
-    position: 'absolute', left: 0, height: 3,
-    backgroundColor: '#e91e8c', borderRadius: 3,
-  },
-  seekDot: {
-    position: 'absolute', top: 3.5,
-    width: 13, height: 13, borderRadius: 6.5,
-    backgroundColor: '#e91e8c',
-  },
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
