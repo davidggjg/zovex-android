@@ -432,6 +432,12 @@ export default function HomeScreen({navigation}) {
 
   useEffect(() => { load(false, user); }, [load, user]);
 
+  // Clear detail modal when returning from Player so no flash on back-navigate
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => setDetailItem(null));
+    return unsub;
+  }, [navigation]);
+
   const seriesMap = useMemo(() => buildSeriesMap(movies), [movies]);
 
   const allCategories = useMemo(() => {
@@ -506,7 +512,6 @@ export default function HomeScreen({navigation}) {
   }, [navigation, user]);
 
   const handlePlayDirect = useCallback(async item => {
-    setDetailItem(null);
     const userId = user?.id || null;
     if (item.is_live) {
       navigation.navigate('Player', {

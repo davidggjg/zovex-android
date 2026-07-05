@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useMemo, useState} from 'react';
+import React, {useEffect, useRef, useMemo, useState, useCallback} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
@@ -148,10 +148,6 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #bottombar{position:absolute;bottom:0;left:0;right:0;z-index:30;padding:40px 20px 20px;
   background:linear-gradient(to top,rgba(0,0,0,.55) 0%,transparent 100%);
   transition:opacity .3s;opacity:1;direction:ltr}
-#progwrap{margin-bottom:16px;padding:8px 0;cursor:pointer;position:relative}
-#prog{width:100%;height:3px;background:rgba(255,255,255,.25);border-radius:3px;position:relative}
-#progfill{position:absolute;top:0;left:0;height:100%;width:0%;background:#e91e8c;border-radius:3px}
-#progdot{position:absolute;top:50%;left:0%;transform:translate(-50%,-50%);width:13px;height:13px;border-radius:50%;background:#e91e8c;box-shadow:0 0 6px rgba(233,30,140,.7)}
 .brow{display:flex;align-items:center;justify-content:space-between}
 .bleft{display:flex;align-items:center;gap:16px}
 .bright{display:flex;align-items:center;gap:8px}
@@ -195,8 +191,6 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
         <span class="num">10</span></button>`}
     </div>
     <div id="bottombar">
-      ${isLive ? '' : `<div id="progwrap" onmousedown="seekStart(event)" ontouchstart="seekStart(event)">
-        <div id="prog"><div id="progfill"></div><div id="progdot"></div></div></div>`}
       <div class="brow">
         <div class="bleft">
           <button class="ibtn" id="mutebtn" onclick="toggleMute()" title="השתק"></button>
@@ -221,6 +215,11 @@ var IS_HLS = ${hls ? 'true' : 'false'};
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
 
 var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true;
+
+window._rn_seek=function(t){if(vid)vid.currentTime=t;};
+setInterval(function(){
+  if(vid&&!IS_LIVE){var dur=usableDur(vid);if(dur>0)postMsg({type:'timeupdate',position:vid.currentTime,duration:dur});}
+},500);
 var overlay=document.getElementById('overlay');
 var loader=document.getElementById('loader');
 var ctrls=document.getElementById('ctrls');
@@ -392,6 +391,10 @@ export default function PlayerScreen({route, navigation}) {
   const progressRef = useRef({position: startTime, duration: 0});
   const isLive = !!movie.is_live;
   const [fsActive, setFsActive] = useState(false);
+  const [position, setPosition] = useState(startTime || 0);
+  const [duration, setDuration] = useState(0);
+  const [barWidth, setBarWidth] = useState(300);
+  const webViewRef = useRef(null);
 
   const {src, html, isIframe} = useMemo(() => {
     const s = buildSrc(movie, isLive ? 0 : startTime);
@@ -415,14 +418,36 @@ export default function PlayerScreen({route, navigation}) {
     };
   }, [movie.id, movie.title, movie.thumbnail_url, userId]);
 
+  const seekTo = useCallback((ratio) => {
+    if (!duration) return;
+    const t = Math.max(0, Math.min(duration, ratio * duration));
+    setPosition(t);
+    webViewRef.current?.injectJavaScript(`window._rn_seek(${t}); true;`);
+  }, [duration]);
+
+  const toggleFullscreen = useCallback(() => {
+    const next = !fsActive;
+    StatusBar.setHidden(next, 'fade');
+    setFsActive(next);
+    if (next) {
+      webViewRef.current?.injectJavaScript(
+        `try{document.documentElement.requestFullscreen&&document.documentElement.requestFullscreen();}catch(e){} true;`
+      );
+    } else {
+      webViewRef.current?.injectJavaScript(
+        `try{document.exitFullscreen&&document.exitFullscreen();}catch(e){} true;`
+      );
+    }
+  }, [fsActive]);
+
   const onMessage = event => {
     try {
       const m = JSON.parse(event.nativeEvent.data);
       if (m.type === 'close') {
         navigation.goBack();
-      } else if (m.type === 'fullscreen') {
-        StatusBar.setHidden(m.value, 'fade');
-        setFsActive(m.value);
+      } else if (m.type === 'timeupdate') {
+        setPosition(m.position);
+        setDuration(m.duration);
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
@@ -440,9 +465,12 @@ export default function PlayerScreen({route, navigation}) {
     );
   }
 
+  const pct = duration > 0 ? Math.min(1, position / duration) : 0;
+
   return (
     <View style={styles.container}>
       <WebView
+        ref={webViewRef}
         source={{html}}
         style={styles.player}
         allowsInlineMediaPlayback
@@ -461,16 +489,25 @@ export default function PlayerScreen({route, navigation}) {
         </TouchableOpacity>
       )}
       {!isIframe && (
-        <TouchableOpacity
-          style={styles.fsBtn}
-          onPress={() => {
-            const next = !fsActive;
-            StatusBar.setHidden(next, 'fade');
-            setFsActive(next);
-          }}
-          activeOpacity={0.85}>
+        <TouchableOpacity style={styles.fsBtn} onPress={toggleFullscreen} activeOpacity={0.85}>
           <Text style={styles.fsTxt}>{fsActive ? '⤓' : '⛶'}</Text>
         </TouchableOpacity>
+      )}
+      {!isIframe && !isLive && (
+        <View style={styles.seekContainer}>
+          <View
+            style={styles.seekTrack}
+            onLayout={evt => setBarWidth(evt.nativeEvent.layout.width)}
+            onStartShouldSetResponder={() => true}
+            onMoveShouldSetResponder={() => true}
+            onResponderGrant={evt => seekTo(evt.nativeEvent.locationX / barWidth)}
+            onResponderMove={evt => seekTo(evt.nativeEvent.locationX / barWidth)}
+          >
+            <View style={styles.seekBg} />
+            <View style={[styles.seekFill, {width: pct * barWidth}]} />
+            <View style={[styles.seekDot, {left: Math.max(0, pct * barWidth - 6.5)}]} />
+          </View>
+        </View>
       )}
     </View>
   );
@@ -488,13 +525,30 @@ const styles = StyleSheet.create({
   },
   closeTxt: {color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22},
   fsBtn: {
-    position: 'absolute', bottom: 14, right: 14,
+    position: 'absolute', top: 14, right: 14,
     width: 42, height: 42, borderRadius: 21,
     backgroundColor: 'rgba(0,0,0,0.65)',
     justifyContent: 'center', alignItems: 'center',
     zIndex: 10,
   },
   fsTxt: {color: '#fff', fontSize: 20, lineHeight: 24},
+  seekContainer: {
+    position: 'absolute', bottom: 58, left: 20, right: 20, zIndex: 20,
+  },
+  seekTrack: {height: 20, justifyContent: 'center'},
+  seekBg: {
+    position: 'absolute', left: 0, right: 0, height: 3,
+    backgroundColor: 'rgba(255,255,255,0.25)', borderRadius: 3,
+  },
+  seekFill: {
+    position: 'absolute', left: 0, height: 3,
+    backgroundColor: '#e91e8c', borderRadius: 3,
+  },
+  seekDot: {
+    position: 'absolute', top: 3.5,
+    width: 13, height: 13, borderRadius: 6.5,
+    backgroundColor: '#e91e8c',
+  },
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
