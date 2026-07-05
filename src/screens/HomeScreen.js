@@ -480,6 +480,19 @@ export default function HomeScreen({navigation}) {
     if (!v) setCategory('הכל');
   }, [navigation]);
 
+  const onSearchFocus = useCallback(() => {
+    Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
+  }, [searchAnim]);
+
+  const onSearchBlur = useCallback(() => {
+    Animated.timing(searchAnim, {toValue: 0, duration: 220, useNativeDriver: false}).start();
+  }, [searchAnim]);
+
+  const searchBorderColor = searchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['rgba(255,255,255,0.08)', '#e50914'],
+  });
+
   // ── First-launch sign-in screen ──
   if (!loading && showSignIn) {
     return (
@@ -513,19 +526,6 @@ export default function HomeScreen({navigation}) {
 
   const isNetflixMode = category === 'הכל' && !search;
   const gridItems = isNetflixMode ? [] : getItemsForCategory(category);
-
-  const onSearchFocus = useCallback(() => {
-    Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
-  }, [searchAnim]);
-
-  const onSearchBlur = useCallback(() => {
-    Animated.timing(searchAnim, {toValue: 0, duration: 220, useNativeDriver: false}).start();
-  }, [searchAnim]);
-
-  const searchBorderColor = searchAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['rgba(255,255,255,0.08)', '#e50914'],
-  });
 
   const TopBar = (
     <View style={styles.topBar}>
