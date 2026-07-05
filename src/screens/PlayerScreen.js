@@ -292,15 +292,30 @@ function renderMuteIcon(muted){
   }
 }
 
+document.addEventListener('fullscreenchange',function(){
+  var inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  isFullscreen=inFs;renderFsIcon(inFs);postMsg({type:'fullscreen',enter:inFs});
+});
+document.addEventListener('webkitfullscreenchange',function(){
+  var inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
+  isFullscreen=inFs;renderFsIcon(inFs);postMsg({type:'fullscreen',enter:inFs});
+});
+
 function goFullscreen(){
   if(isFullscreen){
     isFullscreen=false;
     postMsg({type:'fullscreen',enter:false});
     renderFsIcon(false);
+    try{(document.exitFullscreen||document.webkitExitFullscreen)&&(document.exitFullscreen||document.webkitExitFullscreen).call(document);}catch{}
   } else {
     isFullscreen=true;
     postMsg({type:'fullscreen',enter:true});
     renderFsIcon(true);
+    try{
+      var el=document.getElementById('wrap');
+      var rfs=el.requestFullscreen||el.webkitRequestFullscreen;
+      if(rfs)rfs.call(el);
+    }catch{}
   }
 }
 function renderFsIcon(fs){
@@ -362,30 +377,59 @@ function initVideo(el){
 }
 
 if(IS_HLS){
-  var s=document.createElement('script');
-  s.src='https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js';
-  s.onload=function(){
+  function startWithHlsJs(){
     var v=document.createElement('video');
     v.setAttribute('playsinline','');v.setAttribute('autoplay','');
     v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
     document.getElementById('wrap').insertBefore(v,loader);
     initVideo(v);
     if(window.Hls&&Hls.isSupported()){
-      var hls=new Hls();hls.loadSource(SRC);hls.attachMedia(v);
+      var hls=new Hls({maxBufferLength:30,enableWorker:false});
+      hls.loadSource(SRC);hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED,function(){
         if(START>1){try{v.currentTime=START;}catch{}}
         v.play().catch(function(){});loader.style.display='none';
       });
-      hls.on(Hls.Events.ERROR,function(e,d){if(d.fatal)loader.style.display='none';});
+      hls.on(Hls.Events.ERROR,function(ev,d){if(d.fatal)loader.style.display='none';});
     } else if(v.canPlayType('application/vnd.apple.mpegurl')){
       v.src=SRC;
       v.addEventListener('loadedmetadata',function(){
         if(START>1){try{v.currentTime=START;}catch{}}
         v.play().catch(function(){});loader.style.display='none';
       });
+    } else {
+      loader.style.display='none';
     }
-  };
-  document.head.appendChild(s);
+  }
+  function tryLoadScript(url,onOk,onFail){
+    var s=document.createElement('script');s.src=url;
+    s.onload=onOk;s.onerror=onFail;
+    document.head.appendChild(s);
+  }
+  tryLoadScript(
+    'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js',
+    startWithHlsJs,
+    function(){
+      tryLoadScript(
+        'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js',
+        startWithHlsJs,
+        function(){
+          // Both CDNs failed — try native HLS (Safari/iOS native)
+          var v=document.createElement('video');
+          v.setAttribute('playsinline','');v.setAttribute('autoplay','');
+          v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
+          v.src=SRC;
+          document.getElementById('wrap').insertBefore(v,loader);
+          initVideo(v);
+          v.addEventListener('loadedmetadata',function(){
+            if(START>1){try{v.currentTime=START;}catch{}}
+            v.play().catch(function(){});loader.style.display='none';
+          });
+          v.addEventListener('error',function(){loader.style.display='none';});
+        }
+      );
+    }
+  );
 } else {
   // Direct video (MP4, stream, telegram proxy, etc.)
   var v=document.createElement('video');
