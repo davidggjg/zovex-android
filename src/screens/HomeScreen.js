@@ -3,6 +3,7 @@ import {
   View,
   Text,
   Alert,
+  Modal,
   FlatList,
   TextInput,
   TouchableOpacity,
@@ -293,10 +294,12 @@ export default function HomeScreen({navigation}) {
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('הכל');
-  const [showCategories, setShowCategories] = useState(false);
   const [detailItem, setDetailItem] = useState(null);
   const [user, setUser] = useState(null);
   const [showSignIn, setShowSignIn] = useState(false);
+  const [showCatModal, setShowCatModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const searchAnim = useRef(new Animated.Value(0)).current;
 
   const startSignIn = useCallback(async () => {
     try {
@@ -408,8 +411,13 @@ export default function HomeScreen({navigation}) {
 
   const netflixRows = useMemo(() => {
     const rows = [];
-    if (liveChannels.length > 0)
-      rows.push({title: 'שידורים חיים', isLiveRow: true, items: liveChannels.map(ch => ({...ch, is_live: true, id: ch.id || ch.name}))});
+    const liveMov = movies.filter(m => m.is_live);
+    const allLiveItems = [
+      ...liveChannels.map(ch => ({...ch, is_live: true, id: ch.id || ch.name})),
+      ...liveMov.filter(m => !liveChannels.find(ch => (ch.id || ch.name) === m.id)),
+    ];
+    if (allLiveItems.length > 0)
+      rows.push({title: 'שידורים חיים', isLiveRow: true, items: allLiveItems});
     const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
     if (histItems.length > 0) rows.push({title: '▶ המשך צפייה', items: histItems});
     allCategories
@@ -424,7 +432,13 @@ export default function HomeScreen({navigation}) {
   const handleItemPress = useCallback(item => {
     if (item.is_live) {
       navigation.navigate('Player', {
-        movie: {id: item.id, type: 'direct', video_url: item.video_url || item.url || '', title: item.title || item.name || 'שידור חי'},
+        movie: {
+          ...item,
+          is_live: true,
+          type: item.type || 'direct',
+          video_url: item.video_url || item.url || '',
+          title: item.title || item.name || 'שידור חי',
+        },
         userId: user?.id || null,
       });
     } else {
@@ -437,7 +451,13 @@ export default function HomeScreen({navigation}) {
     const userId = user?.id || null;
     if (item.is_live) {
       navigation.navigate('Player', {
-        movie: {id: item.id, type: 'direct', video_url: item.video_url || item.url || '', title: item.title || item.name || 'שידור חי'},
+        movie: {
+          ...item,
+          is_live: true,
+          type: item.type || 'direct',
+          video_url: item.video_url || item.url || '',
+          title: item.title || item.name || 'שידור חי',
+        },
         userId,
       });
     } else {
@@ -494,11 +514,38 @@ export default function HomeScreen({navigation}) {
   const isNetflixMode = category === 'הכל' && !search;
   const gridItems = isNetflixMode ? [] : getItemsForCategory(category);
 
+  const onSearchFocus = useCallback(() => {
+    Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
+  }, [searchAnim]);
+
+  const onSearchBlur = useCallback(() => {
+    Animated.timing(searchAnim, {toValue: 0, duration: 220, useNativeDriver: false}).start();
+  }, [searchAnim]);
+
+  const searchBorderColor = searchAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['rgba(255,255,255,0.08)', '#e50914'],
+  });
+
   const TopBar = (
     <View style={styles.topBar}>
       <Text style={styles.appTitle}>ZOVEX</Text>
+
+      <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="חיפוש..."
+          placeholderTextColor="rgba(255,255,255,0.3)"
+          value={search}
+          onChangeText={handleSearchChange}
+          onFocus={onSearchFocus}
+          onBlur={onSearchBlur}
+          textAlign="right"
+        />
+      </Animated.View>
+
       {user ? (
-        <TouchableOpacity onPress={signOut} style={styles.userBtn}>
+        <TouchableOpacity onPress={() => setShowUserMenu(true)} style={styles.userBtn}>
           {user.picture ? (
             <Image source={{uri: user.picture}} style={styles.userAvatar} />
           ) : (
@@ -517,38 +564,105 @@ export default function HomeScreen({navigation}) {
     </View>
   );
 
-  const SearchRow = (
-    <View style={styles.searchRow}>
-      <TextInput
-        style={styles.search}
-        placeholder="חיפוש סרט או סדרה..."
-        placeholderTextColor="#555"
-        value={search}
-        onChangeText={handleSearchChange}
-        textAlign="right"
-      />
+  const CatsButton = (
+    <View style={styles.catsRow}>
+      {category !== 'הכל' && (
+        <TouchableOpacity
+          onPress={() => { setCategory('הכל'); setSearch(''); }}
+          style={styles.activeCatChip}>
+          <Text style={styles.activeCatChipTxt}>✕  {category}</Text>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity
-        onPress={() => setShowCategories(s => !s)}
-        style={[styles.catsToggleBtn, showCategories && styles.catsToggleBtnActive]}>
-        <Text style={[styles.catsToggleTxt, showCategories && styles.catsToggleTxtActive]}>
-          קטגוריות {showCategories ? '▲' : '▼'}
-        </Text>
+        onPress={() => setShowCatModal(true)}
+        style={styles.catsModalBtn}>
+        <Text style={styles.catsModalBtnTxt}>≡  קטגוריות</Text>
       </TouchableOpacity>
     </View>
   );
 
-  const CategoriesBar = showCategories ? (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catsScroll} contentContainerStyle={styles.catsContent}>
-      {allCategories.map(c => (
-        <TouchableOpacity
-          key={c}
-          onPress={() => { setCategory(c); setShowCategories(false); }}
-          style={[styles.catBtn, category === c && styles.catBtnActive]}>
-          <Text style={[styles.catText, category === c && styles.catTextActive]}>{c}</Text>
-        </TouchableOpacity>
-      ))}
-    </ScrollView>
-  ) : null;
+  // ── Wheel picker modal ──
+  const ITEM_H = 52;
+  const CatModal = (
+    <Modal
+      visible={showCatModal}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowCatModal(false)}>
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={() => setShowCatModal(false)}>
+        <View style={styles.catModalBox} onStartShouldSetResponder={() => true}>
+          <Text style={styles.catModalTitle}>בחר קטגוריה</Text>
+          {/* top + bottom fade strips */}
+          <View pointerEvents="none" style={styles.wheelFadeTop} />
+          <View pointerEvents="none" style={styles.wheelFadeBottom} />
+          {/* center selection highlight */}
+          <View pointerEvents="none" style={[styles.wheelHighlight, {top: ITEM_H * 2}]} />
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            snapToInterval={ITEM_H}
+            decelerationRate="fast"
+            contentContainerStyle={{paddingVertical: ITEM_H * 2}}
+            onMomentumScrollEnd={e => {
+              const idx = Math.round(e.nativeEvent.contentOffset.y / ITEM_H);
+              const c = allCategories[Math.max(0, Math.min(idx, allCategories.length - 1))];
+              if (c) { setCategory(c); setSearch(''); setTimeout(() => setShowCatModal(false), 120); }
+            }}
+            style={{height: ITEM_H * 5}}>
+            {allCategories.map(c => (
+              <TouchableOpacity
+                key={c}
+                onPress={() => { setCategory(c); setSearch(''); setShowCatModal(false); }}
+                style={[styles.wheelItem, {height: ITEM_H}, category === c && styles.wheelItemActive]}>
+                <Text style={[styles.wheelItemText, category === c && styles.wheelItemTextActive]}>{c}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+
+  // ── User menu modal ──
+  const UserMenu = (
+    <Modal
+      visible={showUserMenu}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowUserMenu(false)}>
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={() => setShowUserMenu(false)}>
+        <View style={styles.userMenuBox} onStartShouldSetResponder={() => true}>
+          {user?.picture ? (
+            <Image source={{uri: user.picture}} style={styles.menuAvatar} />
+          ) : (
+            <View style={styles.menuAvatarFallback}>
+              <Text style={{color:'#fff', fontSize:22, fontWeight:'800'}}>
+                {(user?.given_name || user?.name || '?')[0]}
+              </Text>
+            </View>
+          )}
+          <Text style={styles.menuName}>{user?.name || user?.given_name || ''}</Text>
+          <Text style={styles.menuEmail}>{user?.email || ''}</Text>
+          <View style={styles.menuDivider} />
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); setSearch(''); }}>
+            <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => { setShowUserMenu(false); signOut(); }}>
+            <Text style={[styles.menuItemText, {color: '#e50914'}]}>🚪  יציאה מהחשבון</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
 
   return (
     <View style={styles.container}>
@@ -560,9 +674,8 @@ export default function HomeScreen({navigation}) {
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
           }>
           {TopBar}
+          {CatsButton}
           <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />
-          {SearchRow}
-          {CategoriesBar}
           {netflixRows.map(row => (
             <NetflixRow key={row.title} title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
           ))}
@@ -571,8 +684,7 @@ export default function HomeScreen({navigation}) {
       ) : (
         <>
           {TopBar}
-          {SearchRow}
-          {CategoriesBar}
+          {CatsButton}
           <FlatList
             data={gridItems}
             keyExtractor={item => String(item.id)}
@@ -609,6 +721,8 @@ export default function HomeScreen({navigation}) {
         />
       )}
 
+      {CatModal}
+      {UserMenu}
     </View>
   );
 }
@@ -679,23 +793,83 @@ const styles = StyleSheet.create({
   heroDot: {width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.35)'},
   heroDotActive: {backgroundColor: '#fff', width: 18},
 
-  // ── Search + Categories ──
-  searchRow: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 6, gap: 8},
-  search: {
-    flex: 1, backgroundColor: '#1a1a1a', borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 10,
-    color: '#fff', fontSize: 14, borderWidth: 1, borderColor: '#333',
+  // ── Top bar search ──
+  searchWrapper: {
+    flex: 1, marginHorizontal: 10, borderRadius: 20, borderWidth: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden',
   },
-  catsToggleBtn: {paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333'},
-  catsToggleBtnActive: {backgroundColor: '#e50914', borderColor: '#e50914'},
-  catsToggleTxt: {color: '#aaa', fontSize: 13, fontWeight: '600'},
-  catsToggleTxtActive: {color: '#fff'},
-  catsScroll: {flexGrow: 0, marginBottom: 6},
-  catsContent: {paddingHorizontal: 8, paddingVertical: 4},
-  catBtn: {paddingHorizontal: 14, paddingVertical: 7, marginHorizontal: 4, borderRadius: 20, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333'},
-  catBtnActive: {backgroundColor: '#e50914', borderColor: '#e50914'},
-  catText: {color: '#aaa', fontSize: 13, fontWeight: '600'},
-  catTextActive: {color: '#fff'},
+  searchInput: {
+    color: '#fff', fontSize: 14, paddingHorizontal: 14, paddingVertical: 8,
+  },
+
+  // ── Category button row ──
+  catsRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end',
+    paddingHorizontal: 14, paddingBottom: 6, gap: 8,
+  },
+  activeCatChip: {
+    backgroundColor: 'rgba(229,9,20,0.18)', borderWidth: 1, borderColor: '#e50914',
+    borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
+  },
+  activeCatChipTxt: {color: '#e50914', fontSize: 13, fontWeight: '700'},
+  catsModalBtn: {
+    backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
+    borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
+  },
+  catsModalBtnTxt: {color: '#ccc', fontSize: 13, fontWeight: '600'},
+
+  // ── Modal shared ──
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+
+  // ── Category wheel modal ──
+  catModalBox: {
+    backgroundColor: '#111', borderRadius: 20, width: SW * 0.82,
+    paddingTop: 18, overflow: 'hidden',
+  },
+  catModalTitle: {
+    color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'center',
+    marginBottom: 10,
+  },
+  wheelFadeTop: {
+    position: 'absolute', top: 54, left: 0, right: 0, height: 52,
+    backgroundColor: 'transparent',
+    zIndex: 5,
+  },
+  wheelFadeBottom: {
+    position: 'absolute', bottom: 0, left: 0, right: 0, height: 52,
+    backgroundColor: 'transparent',
+    zIndex: 5,
+  },
+  wheelHighlight: {
+    position: 'absolute', left: 0, right: 0, height: 52,
+    borderTopWidth: 1, borderBottomWidth: 1, borderColor: '#e50914',
+    zIndex: 4,
+  },
+  wheelItem: {
+    justifyContent: 'center', alignItems: 'center',
+  },
+  wheelItemActive: {},
+  wheelItemText: {color: '#888', fontSize: 16},
+  wheelItemTextActive: {color: '#fff', fontSize: 18, fontWeight: '800'},
+
+  // ── User menu modal ──
+  userMenuBox: {
+    backgroundColor: '#1a1a1a', borderRadius: 20, width: SW * 0.76,
+    paddingVertical: 22, paddingHorizontal: 20, alignItems: 'center',
+  },
+  menuAvatar: {width: 64, height: 64, borderRadius: 32, marginBottom: 10},
+  menuAvatarFallback: {
+    width: 64, height: 64, borderRadius: 32, backgroundColor: '#e50914',
+    justifyContent: 'center', alignItems: 'center', marginBottom: 10,
+  },
+  menuName: {color: '#fff', fontSize: 16, fontWeight: '800', marginBottom: 2},
+  menuEmail: {color: '#888', fontSize: 12, marginBottom: 14},
+  menuDivider: {width: '100%', height: 1, backgroundColor: '#2a2a2a', marginBottom: 10},
+  menuItem: {width: '100%', paddingVertical: 14, alignItems: 'center'},
+  menuItemText: {color: '#e5e5e5', fontSize: 15, fontWeight: '600'},
 
   // ── Netflix rows ──
   rowWrap: {marginBottom: 24},

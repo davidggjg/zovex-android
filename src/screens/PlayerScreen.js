@@ -136,6 +136,9 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #loader{position:absolute;inset:0;z-index:5;background:#000;display:flex;align-items:center;justify-content:center}
 .spin{width:44px;height:44px;border:4px solid rgba(255,255,255,.2);border-top:4px solid #e91e8c;border-radius:50%;animation:spin 1s linear infinite}
 #overlay{position:absolute;inset:0;z-index:10}
+#always-x{position:absolute;top:12px;left:14px;z-index:200;background:rgba(0,0,0,.55);
+  border:none;border-radius:20px;width:40px;height:40px;color:#fff;font-size:22px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;outline:none}
 #topbar{position:absolute;top:0;left:0;right:0;z-index:30;padding:14px 16px 40px;
   background:linear-gradient(to bottom,rgba(0,0,0,.82) 0%,transparent 100%);
   display:flex;align-items:flex-start;justify-content:space-between;direction:rtl;
@@ -173,9 +176,11 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 </head><body>
 <div id="wrap">
   <div id="loader"><div class="spin"></div></div>
+  <!-- Always-visible X button that ignores control visibility -->
+  <button id="always-x" onclick="postMsg({type:'close'})">✕</button>
   <div id="overlay">
     <div id="topbar">
-      <button class="xbtn" onclick="postMsg({type:'close'})">✕</button>
+      <div style="width:42px"></div>
       <div id="ttl">
         <div class="main">${(movie.title || '').replace(/</g, '&lt;')}</div>
         ${episodeLabel ? `<div class="sub">${episodeLabel.replace(/</g, '&lt;')}</div>` : ''}
@@ -304,14 +309,17 @@ function skip(s){
   setTimeout(function(){anim.style.display='none';},700);
 }
 function toggleFS(){
-  // Use video element fullscreen (webkitEnterFullscreen for WebKit/Android)
-  if(!vid)return;
   if(document.fullscreenElement||document.webkitFullscreenElement){
-    (document.exitFullscreen||document.webkitExitFullscreen)?.call(document);
-  } else {
-    var fn=vid.requestFullscreen||vid.webkitRequestFullscreen||vid.webkitEnterFullscreen;
-    if(fn)fn.call(vid);
+    var exit=document.exitFullscreen||document.webkitExitFullscreen;
+    if(exit)exit.call(document);
+    return;
   }
+  // Try document-level fullscreen first (works on modern Android WebView)
+  var el=document.documentElement;
+  var req=el.requestFullscreen||el.webkitRequestFullscreen;
+  if(req){req.call(el);return;}
+  // Fall back to video element fullscreen (older WebKit)
+  if(vid){var fn=vid.requestFullscreen||vid.webkitRequestFullscreen||vid.webkitEnterFullscreen;if(fn)fn.call(vid);}
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
