@@ -204,9 +204,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
             ? '<div class="livedot"><span></span>LIVE</div>'
             : '<div id="timestr">0:00 / 0:00</div>'}
         </div>
-        <div class="bright">
-          <button class="ibtn" onclick="toggleFS()">⛶</button>
-        </div>
+        <div class="bright"></div>
       </div>
     </div>
     <div id="skipanim"><div class="skipbox"><span id="skipicon"></span><span id="skiptext"></span></div></div>
@@ -302,11 +300,6 @@ function skip(s){
   anim.style.display='block';
   anim.style.animation='none';anim.offsetHeight;anim.style.animation='fadeInOut .7s ease forwards';
   setTimeout(function(){anim.style.display='none';},700);
-}
-var isFs=false;
-function toggleFS(){
-  isFs=!isFs;
-  postMsg({type:'fullscreen',value:isFs});
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
@@ -467,6 +460,18 @@ export default function PlayerScreen({route, navigation}) {
           <Text style={styles.closeTxt}>✕</Text>
         </TouchableOpacity>
       )}
+      {!isIframe && (
+        <TouchableOpacity
+          style={styles.fsBtn}
+          onPress={() => {
+            const next = !fsActive;
+            StatusBar.setHidden(next, 'fade');
+            setFsActive(next);
+          }}
+          activeOpacity={0.85}>
+          <Text style={styles.fsTxt}>{fsActive ? '⤓' : '⛶'}</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -482,6 +487,14 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   closeTxt: {color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22},
+  fsBtn: {
+    position: 'absolute', bottom: 14, right: 14,
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    justifyContent: 'center', alignItems: 'center',
+    zIndex: 10,
+  },
+  fsTxt: {color: '#fff', fontSize: 20, lineHeight: 24},
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},

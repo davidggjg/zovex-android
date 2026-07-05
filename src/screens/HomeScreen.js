@@ -711,6 +711,8 @@ export default function HomeScreen({navigation}) {
 
   return (
     <View style={styles.container}>
+      {TopBar}
+      {CatsButton}
       {isNetflixMode ? (
         <ScrollView
           showsVerticalScrollIndicator={false}
@@ -718,8 +720,6 @@ export default function HomeScreen({navigation}) {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
           }>
-          {TopBar}
-          {CatsButton}
           <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />
           {netflixRows.map(row => (
             <NetflixRow key={row.title} title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
@@ -727,10 +727,7 @@ export default function HomeScreen({navigation}) {
           {netflixRows.length === 0 && <Text style={styles.empty}>אין תוכן זמין</Text>}
         </ScrollView>
       ) : (
-        <>
-          {TopBar}
-          {CatsButton}
-          <FlatList
+        <FlatList
             data={gridItems}
             keyExtractor={item => String(item.id)}
             numColumns={3}
@@ -754,7 +751,6 @@ export default function HomeScreen({navigation}) {
               )
             }
           />
-        </>
       )}
 
       {detailItem && (
