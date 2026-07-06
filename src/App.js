@@ -373,6 +373,7 @@ export default function App() {
         domStorageEnabled
         thirdPartyCookiesEnabled
         allowsInlineMediaPlayback
+        allowsFullscreenVideo
         mediaPlaybackRequiresUserAction={false}
         originWhitelist={['*']}
         injectedJavaScriptBeforeContentLoaded={MAIN_INJECT}
