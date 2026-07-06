@@ -1,7 +1,9 @@
 import React, {useEffect, useRef, useMemo} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, StatusBar} from 'react-native';
+import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
+
+const {PipModule} = NativeModules;
 
 const TG_PROXY = 'https://telegram-bot-8528.onrender.com';
 
@@ -470,6 +472,7 @@ export default function PlayerScreen({route, navigation}) {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
       StatusBar.setHidden(false, 'fade');
+      PipModule?.setFullscreen(false);
       if (!userId) return;
       const {position, duration} = progressRef.current;
       if (position > 5 && duration > 0)
@@ -484,6 +487,7 @@ export default function PlayerScreen({route, navigation}) {
         navigation.goBack();
       } else if (m.type === 'fullscreen') {
         StatusBar.setHidden(m.enter, 'fade');
+        PipModule?.setFullscreen(!!m.enter);
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
