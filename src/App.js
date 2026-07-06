@@ -376,7 +376,10 @@ export default function App() {
         mediaPlaybackRequiresUserAction={false}
         originWhitelist={['*']}
         injectedJavaScriptBeforeContentLoaded={MAIN_INJECT}
+        injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
+        injectedJavaScriptForMainFrameOnly={false}
         onMessage={onMainMsg}
+        onMessageForMainFrameOnly={false}
         onNavigationStateChange={s => {
           canGoBackRef.current = s.canGoBack;
           if (s.loading === false) {
