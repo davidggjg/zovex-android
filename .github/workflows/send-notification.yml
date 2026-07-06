@@ -45,6 +45,6 @@ jobs:
             },
             topic: 'allUsers',
           })
-          .then(() => { console.log('Notification sent'); process.exit(0); })
-          .catch(e => { console.error('Error:', e.message); process.exit(1); });
+          .then(() => { console.log('✅ Notification sent to all users'); process.exit(0); })
+          .catch(e => { console.error('❌ Error:', e.message); process.exit(1); });
           "

@@ -1,15 +1,13 @@
 """
 Called during the GitHub Actions build to:
-1. Register the release SHA-1 with Firebase (for google-services.json)
-2. Write google-services.json (from Firebase or static fallback)
-3. Create a Firebase iOS app if missing → extract the iOS OAuth CLIENT_ID
-   so Chrome Custom Tabs sign-in can use a custom-scheme redirect URI that
-   Google actually accepts (unlike the WEB client which rejects custom schemes).
+1. Extract the SHA-1 fingerprint from the release keystore
+2. Delete + re-add it in Firebase (triggers Android OAuth client creation)
+3. Wait up to 90s for the Android OAuth client to appear in google-services.json
+4. Falls back to the static GOOGLE_SERVICES_JSON_BASE64 secret on any error.
 """
 import base64
 import json
 import os
-import re
 import subprocess
 import sys
 import time
@@ -61,7 +59,7 @@ if len(sha1_hex) != 40:
 sha1_formatted = ":".join(sha1_hex[i:i+2] for i in range(0, 40, 2))
 print(f"Release SHA-1: {sha1_formatted}")
 
-# --- 2. Firebase: register SHA-1 + write google-services.json ---
+# --- 2. Firebase: delete existing SHA-1 entry then re-add to trigger OAuth client creation ---
 try:
     from google.auth.transport.requests import Request as GReq
     from google.oauth2 import service_account
@@ -88,7 +86,7 @@ try:
         req = urllib.request.Request(url, data=data, headers=hdrs, method=m)
         return json.loads(urllib.request.urlopen(req).read())
 
-    # Find Android app
+    # Find the Android app ID for com.zovexapp
     resp = api(f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps")
     app_id = next(
         (a["appId"] for a in resp.get("apps", []) if a.get("packageName") == "com.zovexapp"),
@@ -96,99 +94,84 @@ try:
     )
     if not app_id:
         raise RuntimeError("com.zovexapp not found in Firebase project")
-    print(f"Firebase Android appId: {app_id}")
+    print(f"Firebase appId: {app_id}")
 
-    # Register SHA-1 (idempotent — ignore 409)
+    # List existing SHA certificates
     sha_list = api(f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha")
-    already = any(
-        c.get("shaHash", "").replace(":", "").upper() == sha1_hex
-        for c in sha_list.get("certificates", [])
-    )
-    if already:
-        print("SHA-1 already registered")
-    else:
-        try:
-            api(
-                f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha",
-                data=json.dumps({"shaHash": sha1_formatted, "certType": "SHA_1"}).encode(),
-            )
-            print(f"SHA-1 registered: {sha1_formatted}")
-        except urllib.error.HTTPError as e:
-            if e.code == 409:
-                print("SHA-1 already registered (409)")
-            else:
-                raise
+    existing = sha_list.get("certificates", [])
+    print(f"Existing SHA certificates: {len(existing)}")
 
-    # Write google-services.json from Firebase (may or may not have Android OAuth client)
-    cfg = api(
-        f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/config"
-    )
-    gs_json = base64.b64decode(cfg["configFileContents"]).decode()
+    # Delete any existing SHA-1 with our fingerprint (delete+re-add triggers OAuth client creation)
+    for cert in existing:
+        cert_name = cert.get("name", "")
+        cert_hash = cert.get("shaHash", "")
+        cert_normalized = cert_hash.replace(":", "").upper()
+        if cert_normalized == sha1_hex:
+            print(f"Deleting existing SHA-1 entry: {cert_name}")
+            try:
+                req = urllib.request.Request(
+                    f"https://firebase.googleapis.com/v1beta1/{cert_name}",
+                    headers=hdrs,
+                    method="DELETE",
+                )
+                urllib.request.urlopen(req).read()
+                print("Deleted successfully")
+            except Exception as del_exc:
+                print(f"Delete failed: {del_exc}")
+            time.sleep(2)
+            break
+
+    # Add the SHA-1 (this triggers Android OAuth client creation in Google Cloud Console)
+    print(f"Adding SHA-1: {sha1_formatted}")
+    try:
+        result = api(
+            f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/sha",
+            data=json.dumps({"shaHash": sha1_formatted, "certType": "SHA_1"}).encode(),
+        )
+        print(f"SHA-1 added: {result}")
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            print("SHA-1 already registered (409) — will still check for OAuth client")
+        else:
+            raise
+
+    # Wait up to 90 seconds for the Android OAuth client to appear in google-services.json
+    print("Waiting for Android OAuth client to be provisioned...")
+    gs_json = None
+    android_client_found = False
+    for attempt in range(10):
+        wait = 5 if attempt == 0 else 10
+        print(f"  Waiting {wait}s (attempt {attempt + 1}/10)...")
+        time.sleep(wait)
+
+        cfg = api(
+            f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/androidApps/{app_id}/config"
+        )
+        gs_json = base64.b64decode(cfg["configFileContents"]).decode()
+        gs_obj = json.loads(gs_json)
+
+        for client_entry in gs_obj.get("client", []):
+            for oc in client_entry.get("oauth_client", []):
+                ctype = oc.get("client_type")
+                cert = oc.get("android_info", {}).get("certificate_hash", "")
+                cert_norm = cert.replace(":", "").upper()
+                print(f"    oauth type={ctype} cert={cert or '(none)'}")
+                if ctype == 1 and cert_norm == sha1_hex:
+                    android_client_found = True
+                    print("    ^^^ MATCH — Android OAuth client found!")
+
+        if android_client_found:
+            print(f"Android OAuth client provisioned after {attempt + 1} attempts!")
+            break
+
+    if not android_client_found:
+        print("Android OAuth client NOT found after 90s — using fallback google-services.json")
+        fallback()
+        sys.exit(0)
+
     with open("android/app/google-services.json", "w") as f:
         f.write(gs_json)
-    print("google-services.json written from Firebase")
-
-    # --- 3. Create Firebase iOS app if missing → get iOS OAuth CLIENT_ID ---
-    print("=== Setting up iOS OAuth client for Chrome Custom Tabs ===")
-    ios_resp = api(f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/iosApps")
-    ios_apps = ios_resp.get("apps", [])
-    ios_app = next(
-        (a for a in ios_apps if a.get("bundleId") == "com.zovexapp"),
-        None,
-    )
-
-    if not ios_app:
-        print("Creating Firebase iOS app for bundle ID com.zovexapp ...")
-        op = api(
-            f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/iosApps",
-            data=json.dumps({"bundleId": "com.zovexapp", "displayName": "ZOVEX"}).encode(),
-        )
-        op_name = op.get("name", "")
-        print(f"  Operation: {op_name}")
-
-        for attempt in range(24):
-            time.sleep(5)
-            try:
-                op = api(f"https://firebase.googleapis.com/v1beta1/{op_name}")
-            except Exception as poll_err:
-                print(f"  Poll {attempt + 1} error: {poll_err}")
-            print(f"  Poll {attempt + 1}/24 — done={op.get('done', False)}")
-            if op.get("done"):
-                break
-
-        if not op.get("done"):
-            raise RuntimeError("iOS app creation timed out after 2 minutes")
-
-        ios_app = op.get("response", {})
-        print(f"  iOS app created: appId={ios_app.get('appId', '?')}")
-    else:
-        print(f"  iOS app found: appId={ios_app.get('appId', '?')}")
-
-    ios_app_id = ios_app["appId"]
-
-    # Get iOS plist config
-    ios_cfg = api(
-        f"https://firebase.googleapis.com/v1beta1/projects/{project_id}/iosApps/{ios_app_id}/config"
-    )
-    plist_str = base64.b64decode(ios_cfg["configFileContents"]).decode()
-
-    # Extract CLIENT_ID (the iOS OAuth client ID)
-    match = re.search(r"<key>CLIENT_ID</key>\s*<string>(.*?)</string>", plist_str)
-    if not match:
-        raise RuntimeError("CLIENT_ID not found in iOS plist — OAuth client may not be provisioned yet")
-
-    ios_client_id = match.group(1)
-    # CLIENT_ID looks like "1095467813314-xxxx.apps.googleusercontent.com"
-    # Scheme: "com.googleusercontent.apps.1095467813314-xxxx"
-    scheme_id = ios_client_id.replace(".apps.googleusercontent.com", "")
-    ios_scheme = f"com.googleusercontent.apps.{scheme_id}"
-
-    print(f"  iOS CLIENT_ID: {ios_client_id}")
-    print(f"  iOS scheme:    {ios_scheme}")
-
-    with open("ios_oauth.txt", "w") as f:
-        f.write(f"{ios_client_id}\n{ios_scheme}\n")
-    print("  Wrote ios_oauth.txt — build will apply iOS client ID to source files")
+    print("google-services.json written with Android OAuth client — Google Sign-In should work!")
 
 except Exception as exc:
     print(f"Firebase step failed: {exc}")

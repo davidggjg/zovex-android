@@ -1,4 +1,4 @@
-import React, {useMemo, useState} from 'react';
+import React, {useMemo, useState, useCallback} from 'react';
 import {
   View,
   Text,
@@ -9,9 +9,17 @@ import {
   ScrollView,
 } from 'react-native';
 
+import {loadProgress} from '../api/movies';
+import {getUserId} from '../api/userStore';
+
 export default function SeriesScreen({route, navigation}) {
   const {seriesName, movies} = route.params;
   const [selectedSeason, setSelectedSeason] = useState(1);
+
+  const openEpisode = useCallback(async item => {
+    const startTime = await loadProgress(item.id, getUserId());
+    navigation.navigate('Player', {movie: item, startTime: startTime || 0});
+  }, [navigation]);
 
   const episodes = useMemo(
     () => movies.filter(m => m.series_name === seriesName),
@@ -89,7 +97,7 @@ export default function SeriesScreen({route, navigation}) {
           <TouchableOpacity
             style={styles.epRow}
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('Player', {movie: item})}>
+            onPress={() => openEpisode(item)}>
             {item.thumbnail_url ? (
               <Image
                 source={{uri: item.thumbnail_url}}

@@ -12,6 +12,8 @@ rootProject.name = 'ZovexApp'
 include ':app'
 project(':app').projectDir = new File(rootProject.projectDir, './app')
 
+// Manual native module inclusion — project names match what applyNativeModulesAppBuildGradle expects
+// (CLI strips '@' and replaces '/' with '_' for scoped packages)
 include ':react-native-webview'
 project(':react-native-webview').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-webview/android')
 
@@ -20,6 +22,15 @@ project(':react-native-firebase_app').projectDir = new File(rootProject.projectD
 
 include ':react-native-firebase_messaging'
 project(':react-native-firebase_messaging').projectDir = new File(rootProject.projectDir, '../node_modules/@react-native-firebase/messaging/android')
+
+include ':react-native-async-storage_async-storage'
+project(':react-native-async-storage_async-storage').projectDir = new File(rootProject.projectDir, '../node_modules/@react-native-async-storage/async-storage/android')
+
+include ':react-native-screens'
+project(':react-native-screens').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-screens/android')
+
+include ':react-native-safe-area-context'
+project(':react-native-safe-area-context').projectDir = new File(rootProject.projectDir, '../node_modules/react-native-safe-area-context/android')
 
 include ':react-native-google-signin_google-signin'
 project(':react-native-google-signin_google-signin').projectDir = new File(rootProject.projectDir, '../node_modules/@react-native-google-signin/google-signin/android')
