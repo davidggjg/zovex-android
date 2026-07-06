@@ -33,6 +33,18 @@ class PipModule(private val reactContext: ReactApplicationContext) :
     }
 
     @ReactMethod
+    fun setLandscape(enable: Boolean) {
+        val activity = currentActivity ?: return
+        activity.runOnUiThread {
+            activity.requestedOrientation = if (enable) {
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
+        }
+    }
+
+    @ReactMethod
     fun setFullscreen(enter: Boolean) {
         val activity = currentActivity ?: return
         activity.runOnUiThread {
