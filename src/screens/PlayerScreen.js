@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useMemo} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, StatusBar} from 'react-native';
+import {View, Text, TouchableOpacity, StyleSheet, NativeModules} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory} from '../api/movies';
 
@@ -469,7 +469,7 @@ export default function PlayerScreen({route, navigation}) {
   useEffect(() => {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
-      StatusBar.setHidden(false, 'fade');
+      NativeModules.PipModule?.setFullscreen(false);
       if (!userId) return;
       const {position, duration} = progressRef.current;
       if (position > 5 && duration > 0)
@@ -483,7 +483,7 @@ export default function PlayerScreen({route, navigation}) {
       if (m.type === 'close') {
         navigation.goBack();
       } else if (m.type === 'fullscreen') {
-        StatusBar.setHidden(m.enter, 'fade');
+        NativeModules.PipModule?.setFullscreen(m.enter);
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
