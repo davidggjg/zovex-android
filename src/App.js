@@ -23,6 +23,8 @@ import AdminEntryScreen from './screens/AdminEntryScreen';
 import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import {initUserId} from './api/userStore';
 
+const Stack = createNativeStackNavigator();
+
 const APP_VERSION = '1.0';
 const DIALOG_CONFIG_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex-android/main/public/dialog.json';
