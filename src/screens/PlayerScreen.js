@@ -294,31 +294,10 @@ function renderMuteIcon(muted){
   }
 }
 
-document.addEventListener('fullscreenchange',function(){
-  var inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
-  isFullscreen=inFs;renderFsIcon(inFs);postMsg({type:'fullscreen',enter:inFs});
-});
-document.addEventListener('webkitfullscreenchange',function(){
-  var inFs=!!(document.fullscreenElement||document.webkitFullscreenElement);
-  isFullscreen=inFs;renderFsIcon(inFs);postMsg({type:'fullscreen',enter:inFs});
-});
-
 function goFullscreen(){
-  if(isFullscreen){
-    isFullscreen=false;
-    postMsg({type:'fullscreen',enter:false});
-    renderFsIcon(false);
-    try{(document.exitFullscreen||document.webkitExitFullscreen)&&(document.exitFullscreen||document.webkitExitFullscreen).call(document);}catch{}
-  } else {
-    isFullscreen=true;
-    postMsg({type:'fullscreen',enter:true});
-    renderFsIcon(true);
-    try{
-      var el=document.getElementById('wrap');
-      var rfs=el.requestFullscreen||el.webkitRequestFullscreen;
-      if(rfs)rfs.call(el);
-    }catch{}
-  }
+  isFullscreen=!isFullscreen;
+  postMsg({type:'fullscreen',enter:isFullscreen});
+  renderFsIcon(isFullscreen);
 }
 function renderFsIcon(fs){
   var btn=document.getElementById('fsbtn');
