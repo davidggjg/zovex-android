@@ -17,6 +17,7 @@ class PipModule(private val reactContext: ReactApplicationContext) :
 
     companion object {
         @Volatile var videoActive = false
+        @Volatile var isFullscreen = false
     }
 
     @ReactMethod
@@ -46,6 +47,7 @@ class PipModule(private val reactContext: ReactApplicationContext) :
 
     @ReactMethod
     fun setFullscreen(enter: Boolean) {
+        isFullscreen = enter
         val activity = currentActivity ?: return
         activity.runOnUiThread {
             val window = activity.window
