@@ -470,6 +470,7 @@ export default function PlayerScreen({route, navigation}) {
       StatusBar.setHidden(false, 'fade');
       PipModule?.setFullscreen(false);
       PipModule?.setLandscape(false);
+      PipModule?.setVideoPlaying(false);
       if (!userId) return;
       const {position, duration} = progressRef.current;
       if (position > 5 && duration > 0)
@@ -486,6 +487,8 @@ export default function PlayerScreen({route, navigation}) {
         StatusBar.setHidden(m.enter, 'fade');
         PipModule?.setFullscreen(!!m.enter);
         PipModule?.setLandscape(!!m.enter);
+      } else if (m.type === 'video_playing') {
+        PipModule?.setVideoPlaying(!!m.value);
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
