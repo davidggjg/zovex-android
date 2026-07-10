@@ -182,17 +182,17 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
         <div class="main">${(movie.title || '').replace(/</g, '&lt;')}</div>
         ${episodeLabel ? `<div class="sub">${episodeLabel.replace(/</g, '&lt;')}</div>` : ''}
       </div>
-      <button class="xbtn" onclick="doShare()" style="font-size:18px">⤴</button>
+      <button class="xbtn" id="sharebtn" style="font-size:18px">⤴</button>
     </div>
     <div id="ctrls">
-      ${isLive ? '' : `<button class="cbtn" onclick="skip(-10)">
+      ${isLive ? '' : `<button class="cbtn" id="skipback">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 .49-3.51"></path></svg>
         <span class="num">10</span></button>`}
-      <button class="cbtn" style="width:58px;height:58px" onclick="togglePlay()" id="playbtn">
+      <button class="cbtn" style="width:58px;height:58px" id="playbtn">
         <svg id="pauseIcon" width="28" height="28" viewBox="0 0 28 28" fill="white"><rect x="3" y="3" width="8" height="22" rx="2"/><rect x="17" y="3" width="8" height="22" rx="2"/></svg>
         <svg id="playIcon" width="28" height="28" viewBox="0 0 28 28" fill="white" style="display:none"><polygon points="5,2 26,14 5,26"/></svg>
       </button>
-      ${isLive ? '' : `<button class="cbtn" onclick="skip(10)">
+      ${isLive ? '' : `<button class="cbtn" id="skipfwd">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-.49-3.51"></path></svg>
         <span class="num">10</span></button>`}
     </div>
@@ -200,13 +200,13 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
       ${isLive ? '' : `<div id="progwrap"><div id="progtrack"><div id="progfill"></div><div id="progdot"></div></div></div>`}
       <div class="brow">
         <div class="bleft">
-          <button class="ibtn" id="mutebtn" onclick="toggleMute()"></button>
+          <button class="ibtn" id="mutebtn"></button>
           ${isLive
             ? '<div class="livedot"><span></span>LIVE</div>'
             : '<div id="timestr">0:00 / 0:00</div>'}
         </div>
         <div class="bright">
-          <button class="ibtn" id="fsbtn" onclick="goFullscreen()"></button>
+          <button class="ibtn" id="fsbtn"></button>
         </div>
       </div>
     </div>
@@ -322,6 +322,23 @@ function skip(s){
   setTimeout(function(){anim.style.display='none';},700);
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
+
+// Wire up controls here — these buttons used to have inline onclick="..."
+// attributes, but those run in the GLOBAL scope while togglePlay/toggleMute/
+// goFullscreen/skip/doShare are declared inside this IIFE, so every tap
+// threw a silent "not defined" error and did nothing. Binding listeners
+// here, where the functions are actually in scope, fixes play/pause, mute,
+// fullscreen, skip, and share all at once.
+var playbtn=document.getElementById('playbtn');
+var skipbackbtn=document.getElementById('skipback');
+var skipfwdbtn=document.getElementById('skipfwd');
+var sharebtn=document.getElementById('sharebtn');
+if(playbtn)playbtn.addEventListener('click',togglePlay);
+if(skipbackbtn)skipbackbtn.addEventListener('click',function(){skip(-10);});
+if(skipfwdbtn)skipfwdbtn.addEventListener('click',function(){skip(10);});
+if(sharebtn)sharebtn.addEventListener('click',doShare);
+document.getElementById('mutebtn').addEventListener('click',toggleMute);
+document.getElementById('fsbtn').addEventListener('click',goFullscreen);
 
 // Seek bar
 function doSeek(e){
