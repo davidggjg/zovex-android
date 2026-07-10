@@ -3,10 +3,8 @@ package com.zovexapp
 import android.app.PictureInPictureParams
 import android.content.res.Configuration
 import android.os.Build
+import android.os.Bundle
 import android.util.Rational
-import android.view.View
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -18,23 +16,47 @@ class MainActivity : ReactActivity() {
     override fun createReactActivityDelegate(): ReactActivityDelegate =
         DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
 
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Most robust fix: listen for insets being (re)applied at all —
+        // this fires on rotation, fold/unfold, split-screen, keyboard
+        // showing, or the system re-showing bars for any reason — and
+        // instantly re-hides them if we're supposed to be in fullscreen.
+        // This covers cases onWindowFocusChanged/onConfigurationChanged
+        // miss, which is what was still leaving the bar visible on some
+        // large-screen / tablet transitions.
+        window.decorView.setOnApplyWindowInsetsListener { view, insets ->
+            if (PipModule.isFullscreen) {
+                PipModule.applyImmersiveMode(this, true)
+            }
+            view.onApplyWindowInsets(insets)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (PipModule.isFullscreen) {
+            PipModule.applyImmersiveMode(this, true)
+        }
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus || !PipModule.isFullscreen) return
-        val w = window
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val ctrl = w.insetsController ?: return
-            ctrl.hide(WindowInsets.Type.navigationBars() or WindowInsets.Type.statusBars())
-            ctrl.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        } else {
-            @Suppress("DEPRECATION")
-            w.decorView.systemUiVisibility = (
-                View.SYSTEM_UI_FLAG_FULLSCREEN
-                    or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                    or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                    or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                    or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+        PipModule.applyImmersiveMode(this, true)
+    }
+
+    // The manifest declares configChanges for orientation/screenLayout/
+    // screenSize/smallestScreenSize so the Activity is NOT recreated when
+    // those change (rotation, fold/unfold, entering split-screen on a
+    // large screen or tablet). Because of that, onWindowFocusChanged alone
+    // isn't reliably called on every one of those transitions, and the
+    // navigation bar could reappear and stay visible. Re-apply the
+    // immersive state here too so fullscreen sticks on large screens.
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (PipModule.isFullscreen) {
+            PipModule.applyImmersiveMode(this, true)
         }
     }
 
