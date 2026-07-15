@@ -22,7 +22,6 @@ import {
   fetchMovies,
   fetchLiveChannels,
   fetchHistory,
-  loadProgress,
   clearCache,
 } from '../api/movies';
 import {getUserId} from '../api/userStore';
@@ -511,7 +510,7 @@ export default function HomeScreen({navigation}) {
     }
   }, [navigation, user]);
 
-  const handlePlayDirect = useCallback(async item => {
+  const handlePlayDirect = useCallback(item => {
     const userId = user?.id || null;
     if (item.is_live) {
       navigation.navigate('Player', {
@@ -525,8 +524,7 @@ export default function HomeScreen({navigation}) {
         userId,
       });
     } else {
-      const startTime = userId ? await loadProgress(item.id, userId) : 0;
-      navigation.navigate('Player', {movie: item, startTime: startTime || 0, userId});
+      navigation.navigate('Player', {movie: item, startTime: 0, userId});
     }
   }, [navigation, user]);
 

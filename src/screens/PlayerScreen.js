@@ -1,7 +1,7 @@
 import React, {useEffect, useRef, useMemo} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules} from 'react-native';
 import {WebView} from 'react-native-webview';
-import {saveProgress, saveHistory} from '../api/movies';
+import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 
 const {PipModule} = NativeModules;
 
@@ -91,7 +91,7 @@ function isIframeUrl(src, type) {
     .some(d => src.includes(d));
 }
 
-function buildPlayerHtml(movie, src, startTime, isLive) {
+function buildPlayerHtml(movie, src, startTime, isLive, hasNext) {
   const movieJson = JSON.stringify(movie).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   const hls = isHlsUrl(src);
   const iframe = isIframeUrl(src, movie.type || 'direct');
@@ -171,6 +171,13 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 .skipbox{background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border-radius:18px;padding:14px 22px;
   display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.18)}
 .skipbox span{font:700 13px Arial;color:#fff}
+#nextcard{display:none;position:absolute;bottom:88px;right:16px;z-index:40;
+  background:rgba(10,10,10,.92);border:1px solid rgba(255,255,255,.18);border-radius:14px;
+  padding:14px 18px;direction:rtl;min-width:180px}
+#nextcard .nclbl{color:rgba(255,255,255,.55);font:11px Arial;margin-bottom:4px}
+#nextcard .nctitle{color:#fff;font:700 13px/1.3 Arial}
+#nextcard .ncbtn{display:block;margin-top:10px;background:#e91e8c;border:none;color:#fff;
+  padding:8px 0;border-radius:8px;font:700 13px Arial;cursor:pointer;width:100%;text-align:center}
 </style>
 </head><body>
 <div id="wrap">
@@ -211,6 +218,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
       </div>
     </div>
     <div id="skipanim"><div class="skipbox"><span id="skipicon"></span><span id="skiptext"></span></div></div>
+    ${hasNext ? `<div id="nextcard"><div class="nclbl">הפרק הבא</div><div class="nctitle" id="nexttitle"></div><button class="ncbtn" onclick="goNextEp()">המשך לפרק הבא ▶</button></div>` : ''}
   </div>
 </div>
 <script>
@@ -223,7 +231,8 @@ var IS_HLS = ${hls ? 'true' : 'false'};
 
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
 
-var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true, isFullscreen=false;
+var HAS_NEXT=${hasNext ? 'true' : 'false'};
+var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true, isFullscreen=false, nextShown=false;
 
 var overlay=document.getElementById('overlay');
 var loader=document.getElementById('loader');
@@ -260,6 +269,7 @@ function updateUI(){
   playIcon.style.display=vid.paused?'block':'none';
   pauseIcon.style.display=vid.paused?'none':'block';
   renderMuteIcon(vid.muted);
+  checkNextEp();
 }
 
 function showCtrls(){
@@ -274,6 +284,17 @@ function showCtrls(){
 }
 
 function toggleCtrls(){if(ctrlsVisible){clearTimeout(hideTimer);[topbar,bottombar,ctrls].forEach(function(el){el.style.opacity=0;el.style.pointerEvents='none';});ctrlsVisible=false;}else{showCtrls();}}
+function checkNextEp(){
+  if(!HAS_NEXT||nextShown||!vid||IS_LIVE)return;
+  var dur=usableDur(vid);if(!dur||dur<30)return;
+  if(dur-vid.currentTime<=300&&vid.currentTime>0){
+    nextShown=true;
+    var card=document.getElementById('nextcard');
+    if(card)card.style.display='block';
+    showCtrls();
+  }
+}
+function goNextEp(){postMsg({type:'next_episode'});}
 
 overlay.addEventListener('click',function(e){if(e.target===overlay)toggleCtrls();});
 showCtrls();
@@ -360,6 +381,7 @@ if(progwrap){
 
 function initVideo(el){
   vid=el;
+  window._seekTo=function(t){if(!vid)return;if(vid.readyState>=1){try{vid.currentTime=t;}catch{}}else{vid.addEventListener('loadedmetadata',function(){try{vid.currentTime=t;}catch{}},{once:true});}};
   renderMuteIcon(false);
   renderFsIcon(false);
   updateUI();
@@ -448,10 +470,13 @@ if(IS_HLS){
 }
 
 export default function PlayerScreen({route, navigation}) {
-  const {movie, startTime = 0, userId = null} = route.params;
+  const {movie, startTime = 0, userId = null, seriesEpisodes = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
+  const seriesEpisodesRef = useRef(seriesEpisodes);
   const isLive = !!movie.is_live;
   const webViewRef = useRef(null);
+  const nextEpIdx = seriesEpisodes ? seriesEpisodes.findIndex(e => e.id === movie.id) : -1;
+  const hasNext = nextEpIdx >= 0 && nextEpIdx < (seriesEpisodes?.length ?? 0) - 1;
 
   const {src, html, isIframe} = useMemo(() => {
     const s = buildSrc(movie, isLive ? 0 : startTime);
@@ -459,10 +484,10 @@ export default function PlayerScreen({route, navigation}) {
     const iframe = isIframeUrl(s, movie.type || 'direct');
     return {
       src: s,
-      html: buildPlayerHtml(movie, s, isLive ? 0 : startTime, isLive),
+      html: buildPlayerHtml(movie, s, isLive ? 0 : startTime, isLive, hasNext),
       isIframe: iframe,
     };
-  }, [movie, startTime, isLive]);
+  }, [movie, startTime, isLive, hasNext]);
 
   useEffect(() => {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
@@ -478,6 +503,20 @@ export default function PlayerScreen({route, navigation}) {
     };
   }, [movie.id, movie.title, movie.thumbnail_url, userId]);
 
+  // Load saved progress in background and seek once the video is ready
+  useEffect(() => {
+    if (!userId || startTime > 0 || isLive) return;
+    loadProgress(movie.id, userId).then(pos => {
+      if (pos > 5 && webViewRef.current) {
+        progressRef.current.position = pos;
+        webViewRef.current.injectJavaScript(
+          `window._seekTo&&window._seekTo(${Math.floor(pos)});true;`,
+        );
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onMessage = event => {
     try {
       const m = JSON.parse(event.nativeEvent.data);
@@ -489,6 +528,12 @@ export default function PlayerScreen({route, navigation}) {
         PipModule?.setLandscape(!!m.enter);
       } else if (m.type === 'video_playing') {
         PipModule?.setVideoPlaying(!!m.value);
+      } else if (m.type === 'next_episode') {
+        const eps = seriesEpisodesRef.current;
+        if (!eps) return;
+        const idx = eps.findIndex(e => e.id === movie.id);
+        const next = idx >= 0 && idx < eps.length - 1 ? eps[idx + 1] : null;
+        if (next) navigation.replace('Player', {movie: next, startTime: 0, userId, seriesEpisodes: eps});
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);

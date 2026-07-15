@@ -613,6 +613,10 @@ function AdminApp(){
           setFormStatus({type:'success',message:'עודכן!'});
         }
       }else{
+        const isDup=isSeries
+          ?all.some(m=>m.series_name===payload.series_name&&(m.season_number||1)===(payload.season_number||1)&&m.episode_number===payload.episode_number)
+          :all.some(m=>m.title===payload.title&&payload.video_url&&m.video_url===payload.video_url);
+        if(isDup){setSaving(false);setFormStatus({type:'error',message:isSeries?'הפרק הזה כבר קיים בסדרה':'תוכן עם כותרת וקישור זהים כבר קיים'});return;}
         const newM={...payload,id:crypto.randomUUID(),created_date:new Date().toISOString()};
         await ghSaveMovies([newM,...all]);
         setFormStatus({type:'success',message:'נשמר!'});

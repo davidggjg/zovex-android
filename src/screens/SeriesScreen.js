@@ -9,17 +9,20 @@ import {
   ScrollView,
 } from 'react-native';
 
-import {loadProgress} from '../api/movies';
 import {getUserId} from '../api/userStore';
 
 export default function SeriesScreen({route, navigation}) {
   const {seriesName, movies} = route.params;
   const [selectedSeason, setSelectedSeason] = useState(1);
 
-  const openEpisode = useCallback(async item => {
-    const startTime = await loadProgress(item.id, getUserId());
-    navigation.navigate('Player', {movie: item, startTime: startTime || 0});
-  }, [navigation]);
+  const openEpisode = useCallback(item => {
+    navigation.navigate('Player', {
+      movie: item,
+      startTime: 0,
+      userId: getUserId(),
+      seriesEpisodes: filtered,
+    });
+  }, [navigation, filtered]);
 
   const episodes = useMemo(
     () => movies.filter(m => m.series_name === seriesName),

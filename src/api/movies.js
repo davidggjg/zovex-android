@@ -1,6 +1,4 @@
-const MOVIES_URL_PRIMARY =
-  'https://raw.githubusercontent.com/davidggjg/zovex-android/main/public/movies.json';
-const MOVIES_URL_FALLBACK =
+const MOVIES_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex/main/public/movies.json';
 const LIVE_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex/main/public/live.json';
@@ -14,20 +12,9 @@ export async function fetchMovies() {
   const now = Date.now();
   if (_moviesCache && now - _moviesCacheTime < CACHE_MS) return _moviesCache;
   try {
-    const primary = await fetch(MOVIES_URL_PRIMARY + '?t=' + now);
-    if (primary.ok) {
-      const data = await primary.json();
-      if (Array.isArray(data) && data.length > 0) {
-        _moviesCache = data;
-        _moviesCacheTime = now;
-        return data;
-      }
-    }
-  } catch {}
-  try {
-    const fallback = await fetch(MOVIES_URL_FALLBACK + '?t=' + now);
-    if (!fallback.ok) throw new Error('fetch failed');
-    const data = await fallback.json();
+    const res = await fetch(MOVIES_URL + '?t=' + now);
+    if (!res.ok) throw new Error('fetch failed');
+    const data = await res.json();
     _moviesCache = data;
     _moviesCacheTime = now;
     return data;
