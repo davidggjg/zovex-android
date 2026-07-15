@@ -1,6 +1,7 @@
-import React from 'react';
+import React, {useRef, useCallback} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet} from 'react-native';
 import {WebView} from 'react-native-webview';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const ADMIN_HTML = `<!DOCTYPE html>
 <html dir="rtl" lang="he">
@@ -35,7 +36,8 @@ function ls(k,fb=null){try{const v=localStorage.getItem(k);return v!==null?v:fb;
 function lsSet(k,v){try{localStorage.setItem(k,v);}catch{}}
 function lsJson(k,fb=null){try{const v=localStorage.getItem(k);return v?JSON.parse(v):fb;}catch{return fb;}}
 
-function getToken(){return ls('github_token','')}
+function getToken(){return (window._rn_token||ls('github_token','')).trim();}
+window._applyToken=function(t){window._rn_token=t;};
 
 async function ghFetchMovies(){
   try{
@@ -978,9 +980,9 @@ function AdminApp(){
               <div style={{fontSize:13,fontWeight:700,marginBottom:14}}>הגדרות</div>
               <div style={{marginBottom:12}}>
                 <label style={{display:'block',fontSize:11,color:'#6e6e73',marginBottom:5,fontWeight:700}}>GitHub Token</label>
-                <input type="password" defaultValue={ls('github_token','')} onChange={e=>{lsSet('github_token',e.target.value);}} placeholder="ghp_..." dir="ltr" style={inp}/>
+                <input type="password" defaultValue={ls('github_token','')} onChange={e=>{const v=e.target.value;lsSet('github_token',v);window._rn_token=v;if(window.ReactNativeWebView)window.ReactNativeWebView.postMessage(JSON.stringify({type:'saveToken',value:v}));}} placeholder="ghp_..." dir="ltr" style={inp}/>
               </div>
-              <button onClick={()=>{setFormStatus({type:'success',message:'✅ טוקן נשמר!'});setTimeout(()=>setFormStatus({type:'',message:''}),2000);}} style={{width:'100%',background:'#24292e',color:'#fff',border:'none',borderRadius:12,padding:12,fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'inherit',marginBottom:10}}>🔑 שמור GitHub Token</button>
+              <button onClick={()=>{if(window.ReactNativeWebView&&window._rn_token!==undefined)window.ReactNativeWebView.postMessage(JSON.stringify({type:'saveToken',value:window._rn_token||''}));setFormStatus({type:'success',message:'✅ טוקן נשמר!'});setTimeout(()=>setFormStatus({type:'',message:''}),2000);}} style={{width:'100%',background:'#24292e',color:'#fff',border:'none',borderRadius:12,padding:12,fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'inherit',marginBottom:10}}>🔑 שמור GitHub Token</button>
               <div style={{marginBottom:12}}>
                 <label style={{display:'block',fontSize:11,color:'#6e6e73',marginBottom:5,fontWeight:700}}>TMDB API Key <span style={{color:tmdbKey?'#34c759':'#ff3b30',fontWeight:400}}>{tmdbKey?'מוגדר':'לא מוגדר'}</span></label>
                 <input type="password" value={tmdbKey} onChange={e=>setTmdbKey(e.target.value)} placeholder="32 תווים..." dir="ltr" style={inp}/>
@@ -1014,7 +1016,32 @@ ReactDOM.createRoot(document.getElementById('root')).render(<AdminApp/>);
 </body>
 </html>`;
 
+const ASYNC_TOKEN_KEY = 'zovex_github_token';
+
 export default function AdminDashboardScreen({navigation}) {
+  const webViewRef = useRef(null);
+
+  const onMessage = useCallback(e => {
+    try {
+      const msg = JSON.parse(e.nativeEvent.data);
+      if (msg.type === 'saveToken') {
+        AsyncStorage.setItem(ASYNC_TOKEN_KEY, msg.value || '');
+      }
+    } catch {}
+  }, []);
+
+  const onLoad = useCallback(async () => {
+    try {
+      const token = await AsyncStorage.getItem(ASYNC_TOKEN_KEY);
+      if (token && webViewRef.current) {
+        const safe = token.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        webViewRef.current.injectJavaScript(
+          `window._rn_token='${safe}';window._applyToken&&window._applyToken('${safe}');true;`,
+        );
+      }
+    } catch {}
+  }, []);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -1025,11 +1052,14 @@ export default function AdminDashboardScreen({navigation}) {
         <View style={{width: 36}} />
       </View>
       <WebView
+        ref={webViewRef}
         source={{html: ADMIN_HTML}}
         javaScriptEnabled
         domStorageEnabled
         startInLoadingState
         mixedContentMode="always"
+        onMessage={onMessage}
+        onLoad={onLoad}
         style={styles.webview}
       />
     </View>
