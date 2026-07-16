@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useMemo} from 'react';
-import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules} from 'react-native';
+import {View, StyleSheet, StatusBar, NativeModules} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 
@@ -130,6 +130,7 @@ function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.pos
 <style>
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeInOut{0%{opacity:0;transform:translateY(-50%) scale(.7)}25%{opacity:1;transform:translateY(-50%) scale(1.1)}70%{opacity:1}100%{opacity:0}}
+@keyframes resumeFade{0%{opacity:0;transform:translateX(-50%) translateY(-8px)}15%{opacity:1;transform:translateX(-50%) translateY(0)}80%{opacity:1}100%{opacity:0}}
 @keyframes liveDot{0%,100%{box-shadow:0 0 0 0 rgba(229,9,20,.6)}50%{box-shadow:0 0 0 6px rgba(229,9,20,0)}}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;background:#000;overflow:hidden}
@@ -178,13 +179,16 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #nextcard .nctitle{color:#fff;font:700 13px/1.3 Arial}
 #nextcard .ncbtn{display:block;margin-top:10px;background:#e91e8c;border:none;color:#fff;
   padding:8px 0;border-radius:8px;font:700 13px Arial;cursor:pointer;width:100%;text-align:center}
+#resumetoast{display:none;position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:50;
+  background:rgba(0,0,0,.72);border-radius:20px;padding:8px 18px;color:#fff;font:600 13px Arial;
+  white-space:nowrap;pointer-events:none;border:1px solid rgba(255,255,255,.15)}
 </style>
 </head><body>
 <div id="wrap">
   <div id="loader"><div class="spin"></div></div>
   <div id="overlay">
     <div id="topbar">
-      <div style="width:42px"></div>
+      <button class="xbtn" id="closebtn">✕</button>
       <div id="ttl">
         <div class="main">${(movie.title || '').replace(/</g, '&lt;')}</div>
         ${episodeLabel ? `<div class="sub">${episodeLabel.replace(/</g, '&lt;')}</div>` : ''}
@@ -219,6 +223,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
     </div>
     <div id="skipanim"><div class="skipbox"><span id="skipicon"></span><span id="skiptext"></span></div></div>
     ${hasNext ? `<div id="nextcard"><div class="nclbl">הפרק הבא</div><div class="nctitle" id="nexttitle"></div><button class="ncbtn" onclick="goNextEp()">המשך לפרק הבא ▶</button></div>` : ''}
+    <div id="resumetoast"></div>
   </div>
 </div>
 <script>
@@ -354,10 +359,12 @@ var playbtn=document.getElementById('playbtn');
 var skipbackbtn=document.getElementById('skipback');
 var skipfwdbtn=document.getElementById('skipfwd');
 var sharebtn=document.getElementById('sharebtn');
+var closebtn=document.getElementById('closebtn');
 if(playbtn)playbtn.addEventListener('click',togglePlay);
 if(skipbackbtn)skipbackbtn.addEventListener('click',function(){skip(-10);});
 if(skipfwdbtn)skipfwdbtn.addEventListener('click',function(){skip(10);});
 if(sharebtn)sharebtn.addEventListener('click',doShare);
+if(closebtn)closebtn.addEventListener('click',function(){postMsg({type:'close'});});
 document.getElementById('mutebtn').addEventListener('click',toggleMute);
 document.getElementById('fsbtn').addEventListener('click',goFullscreen);
 
@@ -381,7 +388,20 @@ if(progwrap){
 
 function initVideo(el){
   vid=el;
-  window._seekTo=function(t){if(!vid)return;if(vid.readyState>=1){try{vid.currentTime=t;}catch{}}else{vid.addEventListener('loadedmetadata',function(){try{vid.currentTime=t;}catch{}},{once:true});}};
+  function showResume(t){
+    var el=document.getElementById('resumetoast');if(!el)return;
+    var m=Math.floor(t/60);var s=Math.floor(t%60);
+    el.textContent='ממשיך מ-'+m+':'+(s<10?'0'+s:s);
+    el.style.display='block';el.style.animation='none';el.offsetHeight;
+    el.style.animation='resumeFade 3s ease forwards';
+    setTimeout(function(){el.style.display='none';},3000);
+  }
+  window._seekTo=function(t){
+    if(!vid)return;
+    var doShow=function(){if(t>5)showResume(t);};
+    if(vid.readyState>=1){try{vid.currentTime=t;}catch{}doShow();}
+    else{vid.addEventListener('loadedmetadata',function(){try{vid.currentTime=t;}catch{}doShow();},{once:true});}
+  };
   renderMuteIcon(false);
   renderFsIcon(false);
   updateUI();
@@ -570,11 +590,6 @@ export default function PlayerScreen({route, navigation}) {
         mixedContentMode="always"
         originWhitelist={['*']}
       />
-      {!isIframe && (
-        <TouchableOpacity style={styles.closeBtn} onPress={() => navigation.goBack()} activeOpacity={0.85}>
-          <Text style={styles.closeTxt}>✕</Text>
-        </TouchableOpacity>
-      )}
     </View>
   );
 }
@@ -582,14 +597,6 @@ export default function PlayerScreen({route, navigation}) {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
-  closeBtn: {
-    position: 'absolute', top: 14, left: 14,
-    width: 42, height: 42, borderRadius: 21,
-    backgroundColor: 'rgba(0,0,0,0.65)',
-    justifyContent: 'center', alignItems: 'center',
-    zIndex: 10,
-  },
-  closeTxt: {color: '#fff', fontSize: 20, fontWeight: '700', lineHeight: 22},
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
