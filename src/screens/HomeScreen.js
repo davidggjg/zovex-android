@@ -4,6 +4,7 @@ import {
   Text,
   Alert,
   Modal,
+  Linking,
   FlatList,
   TextInput,
   TouchableOpacity,
@@ -357,6 +358,8 @@ export default function HomeScreen({navigation}) {
   const [showSignIn, setShowSignIn] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showDonation, setShowDonation] = useState(false);
+  const donationCallback = useRef(null);
   const searchAnim = useRef(new Animated.Value(0)).current;
 
   const startSignIn = useCallback(async () => {
@@ -493,22 +496,36 @@ export default function HomeScreen({navigation}) {
     return rows;
   }, [liveChannels, history, movies, allCategories, getItemsForCategory]);
 
+  const showDonationModal = useCallback(cb => {
+    donationCallback.current = cb;
+    setShowDonation(true);
+  }, []);
+
+  const handleDonationContinue = useCallback(() => {
+    setShowDonation(false);
+    const cb = donationCallback.current;
+    donationCallback.current = null;
+    cb?.();
+  }, []);
+
   const handleItemPress = useCallback(item => {
-    if (item.is_live) {
-      navigation.navigate('Player', {
-        movie: {
-          ...item,
-          is_live: true,
-          type: item.type || 'direct',
-          video_url: item.video_url || item.url || '',
-          title: item.title || item.name || 'שידור חי',
-        },
-        userId: user?.id || null,
-      });
-    } else {
-      setDetailItem(item);
-    }
-  }, [navigation, user]);
+    showDonationModal(() => {
+      if (item.is_live) {
+        navigation.navigate('Player', {
+          movie: {
+            ...item,
+            is_live: true,
+            type: item.type || 'direct',
+            video_url: item.video_url || item.url || '',
+            title: item.title || item.name || 'שידור חי',
+          },
+          userId: user?.id || null,
+        });
+      } else {
+        setDetailItem(item);
+      }
+    });
+  }, [navigation, user, showDonationModal]);
 
   const handlePlayDirect = useCallback(item => {
     const userId = user?.id || null;
@@ -529,12 +546,14 @@ export default function HomeScreen({navigation}) {
   }, [navigation, user]);
 
   const handleHeroPlay = useCallback(movie => {
-    setDetailItem(movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie);
-  }, [seriesMap]);
+    const d = movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie;
+    showDonationModal(() => setDetailItem(d));
+  }, [seriesMap, showDonationModal]);
 
   const handleHeroInfo = useCallback(movie => {
-    setDetailItem(movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie);
-  }, [seriesMap]);
+    const d = movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie;
+    showDonationModal(() => setDetailItem(d));
+  }, [seriesMap, showDonationModal]);
 
   const handleSearchChange = useCallback(v => {
     if (v === ADMIN_TRIGGER) { setSearch(''); navigation.navigate('AdminEntry'); return; }
@@ -767,6 +786,34 @@ export default function HomeScreen({navigation}) {
 
       {CatModal}
       {UserMenu}
+
+      <Modal
+        visible={showDonation}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { setShowDonation(false); donationCallback.current = null; }}>
+        <View style={styles.donOverlay}>
+          <View style={styles.donCard}>
+            <Text style={styles.donEmoji}>🎬</Text>
+            <Text style={styles.donTitle}>עזרו לנו לשפר את האפליקציה</Text>
+            <Text style={styles.donBody}>
+              {'ZOVEX פועל ללא מטרות רווח ובהתנדבות מלאה.\nתרומה קטנה תעזור לנו לשפר את איכות האפליקציה,\nלשדרג את הנגנים ולהוסיף עוד תכנים כיפיים לצפייה 💙'}
+            </Text>
+            <TouchableOpacity
+              style={styles.donBitBtn}
+              activeOpacity={0.85}
+              onPress={() => Linking.openURL('https://www.bitpay.co.il/app/me/F062649F-7124-4CDF-88DD-A1FEA14185EB').catch(() => {})}>
+              <Text style={styles.donBitTxt}>💳 תרום בביט</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.donContinueBtn}
+              activeOpacity={0.85}
+              onPress={handleDonationContinue}>
+              <Text style={styles.donContinueTxt}>המשך לצפייה</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -933,4 +980,15 @@ const styles = StyleSheet.create({
   historyEmpty: {alignItems: 'center', marginTop: 80, paddingHorizontal: 30},
   historyEmptyTitle: {color: '#aaa', fontSize: 18, fontWeight: '600', marginBottom: 8},
   historyEmptyDesc: {color: '#555', fontSize: 13, textAlign: 'center'},
+
+  // ── Donation modal ──
+  donOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 20},
+  donCard: {backgroundColor: '#111', borderRadius: 24, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#222'},
+  donEmoji: {fontSize: 32, marginBottom: 10},
+  donTitle: {fontSize: 20, fontWeight: '900', color: '#fff', textAlign: 'center', marginBottom: 10},
+  donBody: {fontSize: 14, color: '#aaa', textAlign: 'center', lineHeight: 24, marginBottom: 20},
+  donBitBtn: {width: '100%', backgroundColor: '#0d7a5f', borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginBottom: 10},
+  donBitTxt: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  donContinueBtn: {width: '100%', backgroundColor: '#1e1e1e', borderRadius: 14, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#333'},
+  donContinueTxt: {color: '#888', fontSize: 14},
 });
