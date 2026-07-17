@@ -124,7 +124,7 @@ function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.pos
 </body></html>`;
   }
 
-  // Native video (HLS via HLS.js, or direct MP4/stream)
+  // Native video — HLS via Shaka Player (→ HLS.js fallback → native), or direct MP4/stream
   return `<!DOCTYPE html><html><head>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
 <style>
@@ -148,6 +148,10 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #ttl{flex:1;text-align:center;padding-top:2px}
 #ttl .main{color:#fff;font:700 15px/1.3 Arial;text-shadow:0 1px 6px rgba(0,0,0,.9)}
 #ttl .sub{color:rgba(255,255,255,.7);font:12px Arial;margin-top:2px}
+#viewersbadge{position:absolute;top:68px;left:14px;z-index:25;background:rgba(0,0,0,.62);
+  backdrop-filter:blur(6px);border-radius:20px;padding:6px 12px;
+  display:none;align-items:center;gap:6px;color:#fff;font:700 12px Arial;pointer-events:none}
+#viewersbadge .vdot{width:7px;height:7px;border-radius:50%;background:#e50914;display:inline-block;animation:liveDot 1.5s ease-in-out infinite}
 #bottombar{position:absolute;bottom:0;left:0;right:0;z-index:30;padding:40px 20px 20px;
   background:linear-gradient(to top,rgba(0,0,0,.55) 0%,transparent 100%);
   transition:opacity .3s;opacity:1;direction:ltr}
@@ -195,6 +199,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
       </div>
       <button class="xbtn" id="sharebtn" style="font-size:18px">⤴</button>
     </div>
+    ${isLive ? '<div id="viewersbadge"><span class="vdot"></span><span id="viewercount"></span></div>' : ''}
     <div id="ctrls">
       ${isLive ? '' : `<button class="cbtn" id="skipback">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 .49-3.51"></path></svg>
@@ -217,6 +222,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
             : '<div id="timestr">0:00 / 0:00</div>'}
         </div>
         <div class="bright">
+          <button class="ibtn" id="pipbtn" style="display:none"></button>
           <button class="ibtn" id="fsbtn"></button>
         </div>
       </div>
@@ -233,8 +239,70 @@ var START = ${Math.max(0, Math.floor(startTime || 0))};
 var IS_LIVE = ${isLive ? 'true' : 'false'};
 var SRC = ${JSON.stringify(src)};
 var IS_HLS = ${hls ? 'true' : 'false'};
+var BACKEND_URL = 'https://davidhzhdhd-my-telegram-bot.hf.space';
+var STREAM_BACKEND_URL = 'https://maco11.onrender.com';
 
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
+
+// ── MediaSession (lock-screen controls) ──────────────────────
+function setupMediaSession(videoEl){
+  if(!('mediaSession' in navigator))return;
+  var art=MOVIE.poster_url?[{src:MOVIE.poster_url,sizes:'512x512',type:'image/jpeg'}]:[];
+  try{navigator.mediaSession.metadata=new MediaMetadata({title:MOVIE.title||'ZOVEX',artist:MOVIE.year?String(MOVIE.year):'',artwork:art});}catch{}
+  var seek=function(s){try{videoEl.currentTime=Math.max(0,videoEl.currentTime+s);}catch{}};
+  var safe=function(a,h){try{navigator.mediaSession.setActionHandler(a,h);}catch{}};
+  safe('play',function(){videoEl.play().catch(function(){});});
+  safe('pause',function(){videoEl.pause();});
+  safe('seekbackward',function(d){seek(-((d&&d.seekOffset)||10));});
+  safe('seekforward',function(d){seek((d&&d.seekOffset)||10);});
+  safe('stop',function(){videoEl.pause();videoEl.currentTime=0;});
+  try{navigator.mediaSession.playbackState='playing';}catch{}
+}
+function clearMediaSession(){
+  if(!('mediaSession' in navigator))return;
+  try{navigator.mediaSession.metadata=null;}catch{}
+  ['play','pause','seekbackward','seekforward','stop'].forEach(function(a){
+    try{navigator.mediaSession.setActionHandler(a,null);}catch{}
+  });
+  try{navigator.mediaSession.playbackState='none';}catch{}
+}
+
+// ── Live viewer count heartbeat ───────────────────────────────
+if(IS_LIVE&&MOVIE.id){
+  var _vid=(function(){try{var id=localStorage.getItem('zovex_viewer_id');if(!id){id='v_'+Math.random().toString(36).slice(2)+Date.now().toString(36);try{localStorage.setItem('zovex_viewer_id',id);}catch{}}return id;}catch{return 'v_'+Math.random().toString(36).slice(2);}})();
+  var _hbUrl=BACKEND_URL+'/api/live/'+encodeURIComponent(String(MOVIE.id))+'/heartbeat';
+  var _lbUrl=BACKEND_URL+'/api/live/'+encodeURIComponent(String(MOVIE.id))+'/leave';
+  var _hb=function(){
+    fetch(_hbUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewer_id:_vid})})
+    .then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(d&&typeof d.viewers==='number'){
+        var badge=document.getElementById('viewersbadge');
+        var cnt=document.getElementById('viewercount');
+        if(badge&&cnt){cnt.textContent=d.viewers.toLocaleString('he-IL')+' צופים עכשיו';badge.style.display='flex';}
+      }
+    }).catch(function(){});
+  };
+  _hb();setInterval(_hb,15000);
+  var _leave=function(){try{var b=JSON.stringify({viewer_id:_vid});if(navigator.sendBeacon){navigator.sendBeacon(_lbUrl,b);}else{fetch(_lbUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:b,keepalive:true}).catch(function(){});}}catch{}};
+  window.addEventListener('beforeunload',_leave);
+}
+
+// ── HLS auto-refresh every 25 min (updates stream URL without page reload) ──
+var _refreshTimer=null;
+var _currentSrc=[SRC];
+function _startRefresh(shakaPl){
+  if(_refreshTimer)clearInterval(_refreshTimer);
+  _refreshTimer=setInterval(function(){
+    fetch(STREAM_BACKEND_URL+'/api/refresh-stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current_src:_currentSrc[0]})})
+    .then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(!d)return;
+      var ns=d.hls_url||d.url;
+      if(!ns||ns===_currentSrc[0])return;
+      _currentSrc[0]=ns;
+      if(shakaPl){try{shakaPl.load(ns).catch(function(){});}catch{}}
+    }).catch(function(){});
+  },25*60*1000);
+}
 
 var HAS_NEXT=${hasNext ? 'true' : 'false'};
 var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true, isFullscreen=false, nextShown=false;
@@ -335,6 +403,18 @@ function renderFsIcon(fs){
   }
 }
 
+// ── PiP button ────────────────────────────────────────────────
+var pipbtn=document.getElementById('pipbtn');
+if(pipbtn&&document.pictureInPictureEnabled){
+  pipbtn.style.display='flex';
+  pipbtn.innerHTML='<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1"/></svg>';
+  pipbtn.addEventListener('click',function(){
+    if(!vid)return;
+    try{if(document.pictureInPictureElement){document.exitPictureInPicture().catch(function(){});}
+    else{vid.requestPictureInPicture().catch(function(){});}}catch{}
+  });
+}
+
 function skip(s){
   if(!vid)return;
   vid.currentTime=Math.max(0,vid.currentTime+s);
@@ -349,12 +429,6 @@ function skip(s){
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
-// Wire up controls here — these buttons used to have inline onclick="..."
-// attributes, but those run in the GLOBAL scope while togglePlay/toggleMute/
-// goFullscreen/skip/doShare are declared inside this IIFE, so every tap
-// threw a silent "not defined" error and did nothing. Binding listeners
-// here, where the functions are actually in scope, fixes play/pause, mute,
-// fullscreen, skip, and share all at once.
 var playbtn=document.getElementById('playbtn');
 var skipbackbtn=document.getElementById('skipback');
 var skipfwdbtn=document.getElementById('skipfwd');
@@ -368,7 +442,7 @@ if(closebtn)closebtn.addEventListener('click',function(){postMsg({type:'close'})
 document.getElementById('mutebtn').addEventListener('click',toggleMute);
 document.getElementById('fsbtn').addEventListener('click',goFullscreen);
 
-// Seek bar
+// ── Seek bar ──────────────────────────────────────────────────
 function doSeek(e){
   if(!vid||!progwrap)return;
   var dur=usableDur(vid);if(!dur)return;
@@ -389,12 +463,12 @@ if(progwrap){
 function initVideo(el){
   vid=el;
   function showResume(t){
-    var el=document.getElementById('resumetoast');if(!el)return;
+    var rt=document.getElementById('resumetoast');if(!rt)return;
     var m=Math.floor(t/60);var s=Math.floor(t%60);
-    el.textContent='ממשיך מ-'+m+':'+(s<10?'0'+s:s);
-    el.style.display='block';el.style.animation='none';el.offsetHeight;
-    el.style.animation='resumeFade 3s ease forwards';
-    setTimeout(function(){el.style.display='none';},3000);
+    rt.textContent='ממשיך מ-'+m+':'+(s<10?'0'+s:s);
+    rt.style.display='block';rt.style.animation='none';rt.offsetHeight;
+    rt.style.animation='resumeFade 3s ease forwards';
+    setTimeout(function(){rt.style.display='none';},3000);
   }
   window._seekTo=function(t){
     if(!vid)return;
@@ -410,13 +484,45 @@ function initVideo(el){
   vid.addEventListener('durationchange',updateUI);
   vid.addEventListener('play',function(){updateUI();postMsg({type:'video_playing',value:true});});
   vid.addEventListener('pause',function(){updateUI();postMsg({type:'video_playing',value:false});});
-  vid.addEventListener('ended',function(){onProgress();postMsg({type:'video_playing',value:false});});
+  vid.addEventListener('ended',function(){onProgress();postMsg({type:'video_playing',value:false});clearMediaSession();});
   vid.addEventListener('waiting',function(){loader.style.display='flex';});
-  vid.addEventListener('playing',function(){loader.style.display='none';showCtrls();});
+  vid.addEventListener('playing',function(){loader.style.display='none';showCtrls();setupMediaSession(vid);});
   vid.addEventListener('canplay',function(){loader.style.display='none';});
 }
 
+function tryLoadScript(url,onOk,onFail){
+  var s=document.createElement('script');s.src=url;
+  s.onload=onOk;s.onerror=onFail;
+  document.head.appendChild(s);
+}
+
 if(IS_HLS){
+  // ── Shaka Player (primary) ────────────────────────────────
+  function startWithShaka(){
+    var v=document.createElement('video');
+    v.setAttribute('playsinline','');v.setAttribute('autoplay','');
+    v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
+    document.getElementById('wrap').insertBefore(v,loader);
+    initVideo(v);
+    window.shaka.polyfill.installAll();
+    var player=new window.shaka.Player();
+    player.attach(v).then(function(){
+      return player.load(SRC);
+    }).then(function(){
+      if(START>1){try{v.currentTime=START;}catch{}}
+      v.play().catch(function(){});
+      loader.style.display='none';
+      _startRefresh(player);
+    }).catch(function(){
+      // Shaka failed — fall through to HLS.js
+      player.destroy().catch(function(){});
+      v.parentNode&&v.parentNode.removeChild(v);
+      vid=null;
+      startWithHlsJs();
+    });
+  }
+
+  // ── HLS.js (fallback) ────────────────────────────────────
   function startWithHlsJs(){
     var v=document.createElement('video');
     v.setAttribute('playsinline','');v.setAttribute('autoplay','');
@@ -429,6 +535,7 @@ if(IS_HLS){
       hls.on(Hls.Events.MANIFEST_PARSED,function(){
         if(START>1){try{v.currentTime=START;}catch{}}
         v.play().catch(function(){});loader.style.display='none';
+        _startRefresh(null);
       });
       hls.on(Hls.Events.ERROR,function(ev,d){if(d.fatal)loader.style.display='none';});
     } else if(v.canPlayType('application/vnd.apple.mpegurl')){
@@ -441,37 +548,39 @@ if(IS_HLS){
       loader.style.display='none';
     }
   }
-  function tryLoadScript(url,onOk,onFail){
-    var s=document.createElement('script');s.src=url;
-    s.onload=onOk;s.onerror=onFail;
-    document.head.appendChild(s);
-  }
+
+  // Try Shaka first; if it fails to load, fall back to HLS.js
   tryLoadScript(
-    'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js',
-    startWithHlsJs,
+    'https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.js',
+    startWithShaka,
     function(){
       tryLoadScript(
-        'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js',
+        'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js',
         startWithHlsJs,
         function(){
-          // Both CDNs failed — try native HLS (Safari/iOS native)
-          var v=document.createElement('video');
-          v.setAttribute('playsinline','');v.setAttribute('autoplay','');
-          v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
-          v.src=SRC;
-          document.getElementById('wrap').insertBefore(v,loader);
-          initVideo(v);
-          v.addEventListener('loadedmetadata',function(){
-            if(START>1){try{v.currentTime=START;}catch{}}
-            v.play().catch(function(){});loader.style.display='none';
-          });
-          v.addEventListener('error',function(){loader.style.display='none';});
+          tryLoadScript(
+            'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js',
+            startWithHlsJs,
+            function(){
+              var v=document.createElement('video');
+              v.setAttribute('playsinline','');v.setAttribute('autoplay','');
+              v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
+              v.src=SRC;
+              document.getElementById('wrap').insertBefore(v,loader);
+              initVideo(v);
+              v.addEventListener('loadedmetadata',function(){
+                if(START>1){try{v.currentTime=START;}catch{}}
+                v.play().catch(function(){});loader.style.display='none';
+              });
+              v.addEventListener('error',function(){loader.style.display='none';});
+            }
+          );
         }
       );
     }
   );
 } else {
-  // Direct video (MP4, stream, telegram proxy, etc.)
+  // ── Direct video (MP4, stream, telegram proxy, etc.) ─────
   var v=document.createElement('video');
   v.setAttribute('playsinline','');v.setAttribute('autoplay','');
   v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
@@ -484,6 +593,7 @@ if(IS_HLS){
   });
   v.addEventListener('error',function(){loader.style.display='none';});
 }
+window.addEventListener('beforeunload',function(){clearMediaSession();if(_refreshTimer)clearInterval(_refreshTimer);});
 })();
 </script>
 </body></html>`;
