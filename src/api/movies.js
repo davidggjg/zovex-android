@@ -1,7 +1,5 @@
 const MOVIES_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex/main/public/movies.json';
-const LIVE_URL =
-  'https://raw.githubusercontent.com/davidggjg/zovex/main/public/live.json';
 const BACKEND_URL = 'https://davidhzhdhd-my-telegram-bot.hf.space';
 
 let _moviesCache = null;
@@ -20,21 +18,6 @@ export async function fetchMovies() {
     return data;
   } catch {
     return _moviesCache || [];
-  }
-}
-
-export async function fetchLiveChannels() {
-  try {
-    const res = await fetch(LIVE_URL + '?t=' + Date.now());
-    if (!res.ok) throw new Error('failed');
-    const data = await res.json();
-    // Support both array format and {channels:[...]} format
-    if (Array.isArray(data)) return data;
-    if (Array.isArray(data.channels)) return data.channels;
-    if (data.url) return [{id: 'live_main', title: 'שידור חי', video_url: data.url, type: 'direct'}];
-    return [];
-  } catch {
-    return [];
   }
 }
 
