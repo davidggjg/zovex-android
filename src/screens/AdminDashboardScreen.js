@@ -470,6 +470,7 @@ function AdminApp(){
   const[liveChannels,setLiveChannels]=useState([]);
   const[liveNameInput,setLiveNameInput]=useState('');
   const[liveUrlInput,setLiveUrlInput]=useState('');
+  const[liveThumbInput,setLiveThumbInput]=useState('');
   const[liveSaving,setLiveSaving]=useState(false);
   const[editingLiveId,setEditingLiveId]=useState(null);
   const fileInputRef=useRef(null);
@@ -923,6 +924,8 @@ function AdminApp(){
               <input value={liveNameInput} onChange={e=>setLiveNameInput(e.target.value)} placeholder="למשל: ערוץ 12 - חדשות" style={{...inp,marginBottom:10}}/>
               <label style={{display:'block',fontSize:11,color:'#6e6e73',marginBottom:5,fontWeight:700}}>קישור לשידור חי (m3u8 / iframe)</label>
               <input value={liveUrlInput} onChange={e=>setLiveUrlInput(e.target.value)} placeholder="https://example.com/stream.m3u8" dir="ltr" style={{...inp,marginBottom:10}}/>
+              <label style={{display:'block',fontSize:11,color:'#6e6e73',marginBottom:5,fontWeight:700}}>תמונת כרטיסייה / פוסטר (URL, אופציונלי)</label>
+              <input value={liveThumbInput} onChange={e=>setLiveThumbInput(e.target.value)} placeholder="https://example.com/poster.jpg" dir="ltr" style={{...inp,marginBottom:10}}/>
               <div style={{display:'flex',gap:8,marginBottom:16}}>
                 <button onClick={async()=>{
                   if(!liveUrlInput.trim()||!liveNameInput.trim()){setFormStatus({type:'error',message:'צריך גם שם וגם קישור'});setTimeout(()=>setFormStatus({type:'',message:''}),2500);return;}
@@ -930,10 +933,10 @@ function AdminApp(){
                   try{
                     const all=await ghFetchMovies();
                     let updated;
-                    if(editingLiveId){updated=all.map(m=>m.id===editingLiveId?{...m,title:liveNameInput.trim(),video_url:liveUrlInput.trim()}:m);}
-                    else{const liveEntry={id:'live_'+crypto.randomUUID(),is_live:true,title:liveNameInput.trim(),video_url:liveUrlInput.trim(),category:'שידורים חיים',created_date:new Date().toISOString()};updated=[liveEntry,...all];}
+                    if(editingLiveId){updated=all.map(m=>m.id===editingLiveId?{...m,title:liveNameInput.trim(),video_url:liveUrlInput.trim(),...(liveThumbInput.trim()?{thumbnail_url:liveThumbInput.trim()}:{})}:m);}
+                    else{const liveEntry={id:'live_'+crypto.randomUUID(),is_live:true,title:liveNameInput.trim(),video_url:liveUrlInput.trim(),...(liveThumbInput.trim()?{thumbnail_url:liveThumbInput.trim()}:{}),category:'שידורים חיים',created_date:new Date().toISOString()};updated=[liveEntry,...all];}
                     await ghSaveMovies(updated);
-                    setLiveNameInput('');setLiveUrlInput('');setEditingLiveId(null);
+                    setLiveNameInput('');setLiveUrlInput('');setLiveThumbInput('');setEditingLiveId(null);
                     setFormStatus({type:'success',message:editingLiveId?'✅ עודכן!':'✅ שידור חדש נוסף!'});
                     await loadMovies();
                   }catch{setFormStatus({type:'error',message:'שגיאה בשמירה — בדוק טוקן'});}
@@ -941,7 +944,7 @@ function AdminApp(){
                 }} disabled={liveSaving} style={{flex:1,background:'#e50914',color:'#fff',border:'none',borderRadius:12,padding:12,fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'inherit',opacity:liveSaving?.6:1}}>
                   {liveSaving?'⏳ שומר...':editingLiveId?'💾 עדכן שידור':'🔴 הוסף שידור חי'}
                 </button>
-                {editingLiveId&&<button onClick={()=>{setEditingLiveId(null);setLiveNameInput('');setLiveUrlInput('');}} style={{flex:1,background:'#f5f5f7',color:'#333',border:'1.5px solid #d2d2d7',borderRadius:12,padding:12,fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>ביטול</button>}
+                {editingLiveId&&<button onClick={()=>{setEditingLiveId(null);setLiveNameInput('');setLiveUrlInput('');setLiveThumbInput('');}} style={{flex:1,background:'#f5f5f7',color:'#333',border:'1.5px solid #d2d2d7',borderRadius:12,padding:12,fontSize:13,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>ביטול</button>}
               </div>
               {formStatus.message&&<div style={{borderRadius:10,padding:'10px 12px',fontSize:12,background:formStatus.type==='success'?'#f0fff4':'#fff5f5',color:formStatus.type==='success'?'#1a7a3a':'#ff3b30',marginBottom:12}}>{formStatus.message}</div>}
             </div>
@@ -957,7 +960,7 @@ function AdminApp(){
                           <span style={{fontSize:13,fontWeight:700}}>{ch.title}</span>
                         </div>
                         <div style={{display:'flex',gap:6}}>
-                          <button onClick={()=>{setEditingLiveId(ch.id);setLiveNameInput(ch.title);setLiveUrlInput(ch.video_url);}} style={{background:'none',border:'1.5px solid #d2d2d7',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>✏️ ערוך</button>
+                          <button onClick={()=>{setEditingLiveId(ch.id);setLiveNameInput(ch.title);setLiveUrlInput(ch.video_url);setLiveThumbInput(ch.thumbnail_url||'');}} style={{background:'none',border:'1.5px solid #d2d2d7',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>✏️ ערוך</button>
                           <button onClick={async()=>{
                             if(!window.confirm(\`למחוק לצמיתות את "\${ch.title}"? פעולה זו בלתי הפיכה.\`))return;
                             setLiveSaving(true);

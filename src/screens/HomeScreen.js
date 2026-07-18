@@ -1009,14 +1009,14 @@ const styles = StyleSheet.create({
   // ── Telegram floating bubble ──
   tgBubbleWrap: {
     position: 'absolute', bottom: 20, left: 14, zIndex: 1000,
-    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
+    flexDirection: 'column', alignItems: 'flex-start',
   },
   tgTip: {
     position: 'relative', backgroundColor: 'rgba(26,26,26,0.92)',
     borderRadius: 14, borderBottomLeftRadius: 4,
     padding: 8, paddingRight: 24, maxWidth: 150,
     shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5,
-    elevation: 6,
+    elevation: 6, marginBottom: 8,
   },
   tgTipClose: {position: 'absolute', top: 3, right: 4, padding: 2},
   tgTipCloseTxt: {color: '#777', fontSize: 10, fontWeight: '700'},
