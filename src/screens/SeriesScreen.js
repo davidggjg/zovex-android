@@ -15,15 +15,6 @@ export default function SeriesScreen({route, navigation}) {
   const {seriesName, movies} = route.params;
   const [selectedSeason, setSelectedSeason] = useState(1);
 
-  const openEpisode = useCallback(item => {
-    navigation.navigate('Player', {
-      movie: item,
-      startTime: 0,
-      userId: getUserId(),
-      seriesEpisodes: filtered,
-    });
-  }, [navigation, filtered]);
-
   const episodes = useMemo(
     () => movies.filter(m => m.series_name === seriesName),
     [movies, seriesName],
@@ -43,6 +34,15 @@ export default function SeriesScreen({route, navigation}) {
         .sort((a, b) => (a.episode_number || 0) - (b.episode_number || 0)),
     [episodes, selectedSeason],
   );
+
+  const openEpisode = useCallback(item => {
+    navigation.navigate('Player', {
+      movie: item,
+      startTime: 0,
+      userId: getUserId(),
+      seriesEpisodes: filtered,
+    });
+  }, [navigation, filtered]);
 
   const poster = episodes[0]?.thumbnail_url;
   const desc = episodes[0]?.description;

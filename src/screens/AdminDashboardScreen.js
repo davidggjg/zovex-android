@@ -507,7 +507,8 @@ function AdminApp(){
     const saved=lsJson('zovex_cats');
     const fromMovies=[...new Set(movies.map(m=>m.category).filter(Boolean))];
     if(saved?.length){
-      const merged=[...saved,...fromMovies.filter(c=>!saved.includes(c))];
+      const pruned=saved.filter(c=>fromMovies.includes(c));
+      const merged=[...pruned,...fromMovies.filter(c=>!pruned.includes(c))];
       setCategories(merged);lsSet('zovex_cats',JSON.stringify(merged));return;
     }
     setCategories(fromMovies);lsSet('zovex_cats',JSON.stringify(fromMovies));
@@ -958,11 +959,11 @@ function AdminApp(){
                         <div style={{display:'flex',gap:6}}>
                           <button onClick={()=>{setEditingLiveId(ch.id);setLiveNameInput(ch.title);setLiveUrlInput(ch.video_url);}} style={{background:'none',border:'1.5px solid #d2d2d7',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:11,fontFamily:'inherit'}}>✏️ ערוך</button>
                           <button onClick={async()=>{
-                            if(!window.confirm(\`לעצור את "\${ch.title}"?\`))return;
+                            if(!window.confirm(\`למחוק לצמיתות את "\${ch.title}"? פעולה זו בלתי הפיכה.\`))return;
                             setLiveSaving(true);
-                            try{const all=await ghFetchMovies();await ghSaveMovies(all.filter(m=>m.id!==ch.id));await loadMovies();setFormStatus({type:'success',message:'⏹ שידור הופסק'});}catch{}
+                            try{const all=await ghFetchMovies();await ghSaveMovies(all.filter(m=>m.id!==ch.id));await loadMovies();setFormStatus({type:'success',message:'🗑️ שידור נמחק'});}catch{}
                             setLiveSaving(false);setTimeout(()=>setFormStatus({type:'',message:''}),2500);
-                          }} style={{background:'none',border:'1.5px solid #ffd0d0',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:11,color:'#ff3b30',fontFamily:'inherit'}}>⏹ עצור</button>
+                          }} style={{background:'none',border:'1.5px solid #ffd0d0',borderRadius:8,padding:'4px 10px',cursor:'pointer',fontSize:11,color:'#ff3b30',fontFamily:'inherit'}}>🗑️ מחק</button>
                         </div>
                       </div>
                     </div>

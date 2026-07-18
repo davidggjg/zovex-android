@@ -21,7 +21,6 @@ import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
-  fetchLiveChannels,
   fetchHistory,
   clearCache,
 } from '../api/movies';
@@ -37,6 +36,7 @@ const HERO_H = Math.round(SW * 1.25);
 const ADMIN_TRIGGER = 'ZovexAdmin2026';
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
+const TG_TIP_KEY = 'zovex_hide_telegram_tip';
 
 GoogleSignin.configure({
   scopes: ['profile', 'email'],
@@ -347,7 +347,6 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) 
 
 export default function HomeScreen({navigation}) {
   const [movies, setMovies] = useState([]);
-  const [liveChannels, setLiveChannels] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -360,6 +359,7 @@ export default function HomeScreen({navigation}) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
   const donationCallback = useRef(null);
+  const [showTgTip, setShowTgTip] = useState(false);
   const searchAnim = useRef(new Animated.Value(0)).current;
 
   const startSignIn = useCallback(async () => {
@@ -415,17 +415,20 @@ export default function HomeScreen({navigation}) {
     try { await GoogleSignin.signOut(); } catch {}
   }, []);
 
+  // Show Telegram tip unless user has dismissed it before
+  useEffect(() => {
+    AsyncStorage.getItem(TG_TIP_KEY).then(v => { if (!v) setShowTgTip(true); }).catch(() => {});
+  }, []);
+
   // ── Data loading ──
   const load = useCallback(async (refresh = false, loggedInUser = null) => {
     if (refresh) { clearCache(); setRefreshing(true); }
     try {
-      const [data, live, hist] = await Promise.all([
+      const [data, hist] = await Promise.all([
         fetchMovies(),
-        fetchLiveChannels(),
         loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]),
       ]);
       setMovies(data);
-      setLiveChannels(live);
       setHistory(hist);
     } catch {}
     setLoading(false);
@@ -442,8 +445,10 @@ export default function HomeScreen({navigation}) {
 
   const seriesMap = useMemo(() => buildSeriesMap(movies), [movies]);
 
+  const liveChannels = useMemo(() => movies.filter(m => m.is_live), [movies]);
+
   const allCategories = useMemo(() => {
-    const cats = [...new Set(movies.map(m => m.category).filter(Boolean))];
+    const cats = [...new Set(movies.filter(m => !m.is_live).map(m => m.category).filter(Boolean))];
     const tabs = ['הכל'];
     if (liveChannels.length > 0) tabs.push('שידורים חיים');
     tabs.push(...cats);
@@ -456,8 +461,7 @@ export default function HomeScreen({navigation}) {
   const getItemsForCategory = useCallback(cat => {
     if (cat === 'שידורים חיים') {
       return liveChannels
-        .filter(ch => (ch.title || ch.name || '').toLowerCase().includes(q))
-        .map(ch => ({...ch, is_live: true, id: ch.id || ch.name}));
+        .filter(ch => (ch.title || ch.name || '').toLowerCase().includes(q));
     }
     if (cat === 'היסטוריה') {
       return history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
@@ -465,6 +469,7 @@ export default function HomeScreen({navigation}) {
     const seen = {};
     const result = [];
     movies.forEach(m => {
+      if (m.is_live) return;
       const matchQ = (m.title||'').toLowerCase().includes(q) || (m.series_name||'').toLowerCase().includes(q);
       if (!matchQ || (cat !== 'הכל' && m.category !== cat)) return;
       if (m.series_name) {
@@ -478,13 +483,8 @@ export default function HomeScreen({navigation}) {
 
   const netflixRows = useMemo(() => {
     const rows = [];
-    const liveMov = movies.filter(m => m.is_live);
-    const allLiveItems = [
-      ...liveChannels.map(ch => ({...ch, is_live: true, id: ch.id || ch.name})),
-      ...liveMov.filter(m => !liveChannels.find(ch => (ch.id || ch.name) === m.id)),
-    ];
-    if (allLiveItems.length > 0)
-      rows.push({title: 'שידורים חיים', isLiveRow: true, items: allLiveItems});
+    if (liveChannels.length > 0)
+      rows.push({title: 'שידורים חיים', isLiveRow: true, items: liveChannels});
     const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
     if (histItems.length > 0) rows.push({title: '▶ המשך צפייה', items: histItems});
     allCategories
@@ -787,6 +787,31 @@ export default function HomeScreen({navigation}) {
       {CatModal}
       {UserMenu}
 
+      {/* Telegram floating bubble */}
+      <View style={styles.tgBubbleWrap} pointerEvents="box-none">
+        {showTgTip && (
+          <View style={styles.tgTip}>
+            <TouchableOpacity
+              style={styles.tgTipClose}
+              onPress={() => {
+                setShowTgTip(false);
+                AsyncStorage.setItem(TG_TIP_KEY, '1').catch(() => {});
+              }}
+              hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
+              <Text style={styles.tgTipCloseTxt}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.tgTipTitle}>לחצו כאן לתמיכה 💬</Text>
+            <Text style={styles.tgTipSub}>או להוספת סרט חדש</Text>
+          </View>
+        )}
+        <TouchableOpacity
+          style={styles.tgBtn}
+          activeOpacity={0.85}
+          onPress={() => Linking.openURL('https://t.me/ZOVE8').catch(() => {})}>
+          <Text style={styles.tgBtnIcon}>➤</Text>
+        </TouchableOpacity>
+      </View>
+
       <Modal
         visible={showDonation}
         transparent
@@ -980,6 +1005,31 @@ const styles = StyleSheet.create({
   historyEmpty: {alignItems: 'center', marginTop: 80, paddingHorizontal: 30},
   historyEmptyTitle: {color: '#aaa', fontSize: 18, fontWeight: '600', marginBottom: 8},
   historyEmptyDesc: {color: '#555', fontSize: 13, textAlign: 'center'},
+
+  // ── Telegram floating bubble ──
+  tgBubbleWrap: {
+    position: 'absolute', bottom: 20, left: 14, zIndex: 1000,
+    flexDirection: 'row', alignItems: 'flex-end', gap: 8,
+  },
+  tgTip: {
+    position: 'relative', backgroundColor: 'rgba(26,26,26,0.92)',
+    borderRadius: 14, borderBottomLeftRadius: 4,
+    padding: 8, paddingRight: 24, maxWidth: 150,
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5,
+    elevation: 6,
+  },
+  tgTipClose: {position: 'absolute', top: 3, right: 4, padding: 2},
+  tgTipCloseTxt: {color: '#777', fontSize: 10, fontWeight: '700'},
+  tgTipTitle: {color: '#eee', fontSize: 11, fontWeight: '700', marginBottom: 2},
+  tgTipSub: {color: '#888', fontSize: 10, lineHeight: 14},
+  tgBtn: {
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: '#229ED9',
+    justifyContent: 'center', alignItems: 'center',
+    shadowColor: '#229ED9', shadowOpacity: 0.45, shadowRadius: 6,
+    elevation: 8,
+  },
+  tgBtnIcon: {color: '#fff', fontSize: 18, marginLeft: 2},
 
   // ── Donation modal ──
   donOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 20},
