@@ -1,3 +1,4 @@
+const MAIN_SITE_ORIGIN = 'https://davidggjg.github.io';
 const MOVIES_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex/main/public/movies.json';
 const BACKEND_URL = 'https://davidhzhdhd-my-telegram-bot.hf.space';
@@ -6,13 +7,27 @@ let _moviesCache = null;
 let _moviesCacheTime = 0;
 const CACHE_MS = 5 * 60 * 1000;
 
+// Some thumbnail_url values (mainly live-channel logos) are root-relative
+// paths like "/zovex/live-logos/kan11.png" - that's fine for the web app
+// (same origin), but React Native's <Image> needs a real absolute URL or it
+// just silently fails to load. Resolve any relative path against the main
+// site's origin here, once, at the data layer, so every screen gets a
+// working URL without needing to know about this quirk.
+function resolveImage(url) {
+  if (!url) return url;
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  if (url.startsWith('/')) return MAIN_SITE_ORIGIN + url;
+  return url;
+}
+
 export async function fetchMovies() {
   const now = Date.now();
   if (_moviesCache && now - _moviesCacheTime < CACHE_MS) return _moviesCache;
   try {
     const res = await fetch(MOVIES_URL + '?t=' + now);
     if (!res.ok) throw new Error('fetch failed');
-    const data = await res.json();
+    const raw = await res.json();
+    const data = raw.map(m => (m && m.thumbnail_url ? {...m, thumbnail_url: resolveImage(m.thumbnail_url)} : m));
     _moviesCache = data;
     _moviesCacheTime = now;
     return data;

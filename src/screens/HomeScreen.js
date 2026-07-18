@@ -16,6 +16,7 @@ import {
   Dimensions,
   ImageBackground,
   Animated,
+  I18nManager,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -209,8 +210,18 @@ const mdStyles = StyleSheet.create({
 
 function HeroBanner({movies, onPlay, onInfo}) {
   const heroMovies = useMemo(() => {
+    // Sort by created_date first (newest first) - movies.json isn't
+    // guaranteed to be in any particular order (different tools that write
+    // to it append vs. prepend differently), so relying on raw array
+    // position here means genuinely new content can end up buried and
+    // never surface in the banner at all. Missing dates sort last.
+    const sorted = [...movies].sort((a, b) => {
+      const da = a.created_date ? new Date(a.created_date).getTime() : 0;
+      const db = b.created_date ? new Date(b.created_date).getTime() : 0;
+      return db - da;
+    });
     const seen = {};
-    const result = movies.filter(m => {
+    const result = sorted.filter(m => {
       if (m.series_name) { if (seen[m.series_name]) return false; seen[m.series_name] = true; }
       return true;
     }).slice(0, 6);
@@ -1007,9 +1018,14 @@ const styles = StyleSheet.create({
   historyEmptyDesc: {color: '#555', fontSize: 13, textAlign: 'center'},
 
   // ── Telegram floating bubble ──
+  // React Native mirrors absolute left/right positioning when the device
+  // locale is RTL (unlike CSS on the web, where "left" always means the
+  // physical left edge). Pick the side explicitly so this always ends up
+  // in the bottom-left corner of the screen, regardless of RTL state.
   tgBubbleWrap: {
-    position: 'absolute', bottom: 20, left: 14, zIndex: 1000,
+    position: 'absolute', bottom: 20, zIndex: 1000,
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
+    ...(I18nManager.isRTL ? {right: 14} : {left: 14}),
   },
   tgTip: {
     position: 'relative', backgroundColor: 'rgba(26,26,26,0.92)',
