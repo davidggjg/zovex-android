@@ -31,6 +31,21 @@ const DIALOG_CONFIG_URL =
 
 const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
 
+// Deep linking: zovex://thor or https://davidggjg.github.io/zovex/thor both
+// land on the Home screen with the trailing slug as a param, so HomeScreen
+// can look it up and open it directly once the movie list has loaded.
+// (The https prefix only actually opens the app - instead of the browser -
+// once Android App Links verification is set up; see docs/app-links-setup.md.
+// The zovex:// scheme works immediately either way.)
+const linking = {
+  prefixes: ['zovex://', 'https://davidggjg.github.io/zovex'],
+  config: {
+    screens: {
+      Home: '*deepPath',
+    },
+  },
+};
+
 // Replaced at build time by scripts/register_sha.py + "Apply iOS OAuth client ID" CI step.
 // iOS OAuth clients allow custom-scheme redirect URIs (unlike web clients).
 // Chrome Custom Tabs shares Chrome's Google session → account picker with no credentials.
@@ -294,7 +309,7 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}>
       <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
       <Stack.Navigator screenOptions={{headerShown: false}}>
         <Stack.Screen name="Home" component={HomeScreen} />

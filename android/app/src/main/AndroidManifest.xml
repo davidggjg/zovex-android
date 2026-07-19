@@ -33,6 +33,32 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="IOS_SCHEME_PLACEHOLDER" />
             </intent-filter>
+
+            <!-- Custom-scheme deep link: zovex://<slug> opens the app directly,
+                 works immediately, no domain verification needed. Good for
+                 links shared over WhatsApp/Telegram/email. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="zovex" />
+            </intent-filter>
+
+            <!-- Android App Links: makes a normal https://davidggjg.github.io/zovex/...
+                 link open this app directly instead of a browser, IF the domain
+                 ownership is verified (assetlinks.json hosted at the domain root -
+                 see docs/app-links-setup.md for the remaining manual step). Until
+                 that file is in place, Android just falls back to opening the link
+                 in the browser as normal - this doesn't break anything either way. -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="davidggjg.github.io"
+                    android:pathPrefix="/zovex" />
+            </intent-filter>
         </activity>
     </application>
 

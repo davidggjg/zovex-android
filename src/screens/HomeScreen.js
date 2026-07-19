@@ -356,7 +356,7 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) 
 
 // ── main component ────────────────────────────────────────────────────────────
 
-export default function HomeScreen({navigation}) {
+export default function HomeScreen({navigation, route}) {
   const [movies, setMovies] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -537,6 +537,25 @@ export default function HomeScreen({navigation}) {
       }
     });
   }, [navigation, user, showDonationModal]);
+
+  // Deep link support: zovex://<slug> or https://davidggjg.github.io/zovex/<slug>
+  // land here with the slug in route.params.deepPath (see linking config in
+  // App.js). Once the movie list has loaded, look it up and open it directly -
+  // same as tapping the card would. Only acts once per app open.
+  const deepLinkHandled = useRef(false);
+  useEffect(() => {
+    const slug = route?.params?.deepPath;
+    if (!slug || deepLinkHandled.current || movies.length === 0) return;
+    deepLinkHandled.current = true;
+    const cleanSlug = slug.replace(/^\/+|\/+$/g, '');
+    if (!cleanSlug) return;
+    const liveMatch = movies.find(m => m.is_live && m.custom_slug === cleanSlug);
+    if (liveMatch) { handleItemPress(liveMatch); return; }
+    const movieMatch = movies.find(m => !m.is_live && !m.series_name && m.custom_slug === cleanSlug);
+    if (movieMatch) { handleItemPress(movieMatch); return; }
+    const epMatch = movies.find(m => m.series_name && m.custom_slug === cleanSlug);
+    if (epMatch) { handleItemPress(seriesMap[epMatch.series_name]); return; }
+  }, [route?.params?.deepPath, movies, seriesMap, handleItemPress]);
 
   const handlePlayDirect = useCallback(item => {
     const userId = user?.id || null;
