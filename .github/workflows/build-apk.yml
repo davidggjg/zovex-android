@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -182,3 +185,18 @@ jobs:
           name: zovex-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
+
+      - name: Publish APK to GitHub Release (stable public download link)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk zovex.apk
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest zovex.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create latest zovex.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "ZOVEX - הגרסה העדכנית ביותר" \
+              --notes "קובץ ה-APK העדכני ביותר. הקישור הזה מתעדכן אוטומטית עם כל build חדש."
+          fi
+          echo "Public download URL: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/zovex.apk"
