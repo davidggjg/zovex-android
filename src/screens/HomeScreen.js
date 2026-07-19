@@ -26,6 +26,16 @@ import {
   clearCache,
 } from '../api/movies';
 import {getUserId} from '../api/userStore';
+import {
+  getDownloads,
+  downloadItem,
+  deleteDownload,
+  preparePlayback,
+  downloadEntryToMovie,
+  isItemDownloadable,
+} from '../api/downloads';
+
+const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
 const {width: SW} = Dimensions.get('window');
 // 3 cards + 5px margin each side + 8px grid padding each side = 3*CARD_W + 30 + 16 = SW
@@ -46,7 +56,46 @@ GoogleSignin.configure({
 
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
-function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
+function DownloadControl({item, compact, downloadedIds, downloadingId, downloadProgress, onDownload, onDeleteDownload}) {
+  if (!item || !isItemDownloadable(item)) return null;
+  const id = String(item.id);
+  const isThisDownloading = downloadingId === id;
+  const isDownloaded = downloadedIds.has(id);
+
+  if (isThisDownloading) {
+    const pct = Math.round((downloadProgress?.pct || 0) * 100);
+    const label = downloadProgress?.phase === 'encrypting' ? 'מצפין' : 'מוריד';
+    return (
+      <View style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}>
+        <ActivityIndicator size="small" color="#e50914" />
+        {!compact && <Text style={mdStyles.dlBtnTxt}>{label} {pct}%</Text>}
+      </View>
+    );
+  }
+  if (isDownloaded) {
+    return (
+      <TouchableOpacity
+        style={[mdStyles.dlBtn, mdStyles.dlBtnDone, compact && mdStyles.dlBtnCompact]}
+        activeOpacity={0.8}
+        onPress={() => onDeleteDownload(id)}>
+        <Text style={[mdStyles.dlBtnTxt, mdStyles.dlBtnDoneTxt]}>{compact ? '✓' : '✓ הורד · הסר'}</Text>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <TouchableOpacity
+      style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}
+      activeOpacity={0.8}
+      onPress={() => onDownload(item)}>
+      <Text style={mdStyles.dlBtnTxt}>{compact ? '⬇' : '⬇ הורדה'}</Text>
+    </TouchableOpacity>
+  );
+}
+
+function MovieDetailModal({
+  item, allMovies, onClose, onPlayDirect,
+  downloadedIds, downloadingId, downloadProgress, onDownload, onDeleteDownload,
+}) {
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
   const [seasonLoading, setSeasonLoading] = useState(false);
@@ -104,9 +153,19 @@ function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
             {!!item.description && (
               <Text style={mdStyles.desc} numberOfLines={5}>{item.description}</Text>
             )}
-            <TouchableOpacity style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
-              <Text style={mdStyles.playTxt}>▶ הפעל</Text>
-            </TouchableOpacity>
+            <View style={mdStyles.actionsRow}>
+              <TouchableOpacity style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
+                <Text style={mdStyles.playTxt}>▶ הפעל</Text>
+              </TouchableOpacity>
+              <DownloadControl
+                item={firstEp || item}
+                downloadedIds={downloadedIds}
+                downloadingId={downloadingId}
+                downloadProgress={downloadProgress}
+                onDownload={onDownload}
+                onDeleteDownload={onDeleteDownload}
+              />
+            </View>
           </View>
           {episodes.length > 1 && (
             <View style={mdStyles.epsSection}>
@@ -140,6 +199,15 @@ function MovieDetailModal({item, allMovies, onClose, onPlayDirect}) {
                         {ep.episode_title || ep.title}
                       </Text>
                     </View>
+                    <DownloadControl
+                      item={ep}
+                      compact
+                      downloadedIds={downloadedIds}
+                      downloadingId={downloadingId}
+                      downloadProgress={downloadProgress}
+                      onDownload={onDownload}
+                      onDeleteDownload={onDeleteDownload}
+                    />
                     <Text style={mdStyles.epPlayIcon}>▶</Text>
                   </TouchableOpacity>
                 ))
@@ -184,8 +252,19 @@ const mdStyles = StyleSheet.create({
   body: {padding: 18},
   title: {color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8},
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
-  playBtn: {backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
+  actionsRow: {flexDirection: 'row', gap: 10},
+  playBtn: {flex: 1, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
+  dlBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: '#2a2a2a', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16,
+  },
+  dlBtnCompact: {
+    paddingVertical: 6, paddingHorizontal: 8, borderRadius: 16, marginHorizontal: 6, minWidth: 34,
+  },
+  dlBtnTxt: {color: '#e5e5e5', fontSize: 13, fontWeight: '700'},
+  dlBtnDone: {backgroundColor: 'rgba(76,175,80,0.16)'},
+  dlBtnDoneTxt: {color: '#4caf50'},
   epsSection: {paddingHorizontal: 16, paddingBottom: 24},
   seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: '#222'},
   seasonBtn: {backgroundColor: '#2a2a2a', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
@@ -372,6 +451,10 @@ export default function HomeScreen({navigation, route}) {
   const donationCallback = useRef(null);
   const [showTgTip, setShowTgTip] = useState(false);
   const searchAnim = useRef(new Animated.Value(0)).current;
+  const [downloads, setDownloads] = useState([]);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [downloadProgress, setDownloadProgress] = useState(null);
+  const [preparingPlaybackId, setPreparingPlaybackId] = useState(null);
 
   const startSignIn = useCallback(async () => {
     try {
@@ -448,6 +531,12 @@ export default function HomeScreen({navigation, route}) {
 
   useEffect(() => { load(false, user); }, [load, user]);
 
+  const refreshDownloads = useCallback(() => {
+    getDownloads().then(setDownloads).catch(() => {});
+  }, []);
+  useEffect(() => { refreshDownloads(); }, [refreshDownloads]);
+  const downloadedIds = useMemo(() => new Set(downloads.map(d => d.id)), [downloads]);
+
   // Clear detail modal when returning from Player so no flash on back-navigate
   useEffect(() => {
     const unsub = navigation.addListener('focus', () => setDetailItem(null));
@@ -463,6 +552,7 @@ export default function HomeScreen({navigation, route}) {
     const tabs = ['הכל'];
     if (liveChannels.length > 0) tabs.push('שידורים חיים');
     tabs.push(...cats);
+    tabs.push(DOWNLOADS_CATEGORY);
     tabs.push('היסטוריה');
     return tabs;
   }, [movies, liveChannels]);
@@ -477,6 +567,9 @@ export default function HomeScreen({navigation, route}) {
     if (cat === 'היסטוריה') {
       return history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
     }
+    if (cat === DOWNLOADS_CATEGORY) {
+      return downloads.map(downloadEntryToMovie);
+    }
     const seen = {};
     const result = [];
     movies.forEach(m => {
@@ -490,7 +583,7 @@ export default function HomeScreen({navigation, route}) {
       }
     });
     return result;
-  }, [movies, liveChannels, history, seriesMap, q]);
+  }, [movies, liveChannels, history, seriesMap, q, downloads]);
 
   const netflixRows = useMemo(() => {
     const rows = [];
@@ -499,7 +592,7 @@ export default function HomeScreen({navigation, route}) {
     const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
     if (histItems.length > 0) rows.push({title: '▶ המשך צפייה', items: histItems});
     allCategories
-      .filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה')
+      .filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה' && c !== DOWNLOADS_CATEGORY)
       .forEach(cat => {
         const items = getItemsForCategory(cat);
         if (items.length > 0) rows.push({title: cat, items});
@@ -519,7 +612,54 @@ export default function HomeScreen({navigation, route}) {
     cb?.();
   }, []);
 
+  // Downloaded items are a flat "what you have offline" list (unlike the
+  // online catalog's detail modal, they don't need a series/episode picker -
+  // that would let you tap into episodes that were never actually
+  // downloaded). Decrypt straight to a temp file and play immediately.
+  const playDownloadedItem = useCallback(async item => {
+    const id = item.__downloadId;
+    setPreparingPlaybackId(id);
+    try {
+      const {uri, cleanup} = await preparePlayback(id);
+      navigation.navigate('Player', {
+        movie: {...item, video_url: uri, video_id: uri, type: 'direct'},
+        startTime: 0,
+        userId: user?.id || null,
+        onLeaveCleanup: cleanup,
+      });
+    } catch (e) {
+      Alert.alert('שגיאה', e?.message || 'לא ניתן להפעיל את ההורדה');
+    } finally {
+      setPreparingPlaybackId(null);
+    }
+  }, [navigation, user]);
+
+  const handleDownloadItem = useCallback(async item => {
+    if (downloadingId) {
+      Alert.alert('הורדה', 'הורדה אחרת כבר מתבצעת - המתן שתסתיים ונסה שוב.');
+      return;
+    }
+    const id = String(item.id);
+    setDownloadingId(id);
+    setDownloadProgress({phase: 'downloading', pct: 0});
+    try {
+      await downloadItem(item, p => setDownloadProgress(p));
+      refreshDownloads();
+    } catch (e) {
+      Alert.alert('שגיאת הורדה', e?.message || 'לא ניתן להוריד את התוכן הזה');
+    } finally {
+      setDownloadingId(null);
+      setDownloadProgress(null);
+    }
+  }, [downloadingId, refreshDownloads]);
+
+  const handleDeleteDownload = useCallback(async id => {
+    await deleteDownload(id);
+    refreshDownloads();
+  }, [refreshDownloads]);
+
   const handleItemPress = useCallback(item => {
+    if (item.__isDownload) { playDownloadedItem(item); return; }
     showDonationModal(() => {
       if (item.is_live) {
         navigation.navigate('Player', {
@@ -536,7 +676,7 @@ export default function HomeScreen({navigation, route}) {
         setDetailItem(item);
       }
     });
-  }, [navigation, user, showDonationModal]);
+  }, [navigation, user, showDonationModal, playDownloadedItem]);
 
   // Deep link support: zovex://<slug> or https://davidggjg.github.io/zovex/<slug>
   // land here with the slug in route.params.deepPath (see linking config in
@@ -798,6 +938,11 @@ export default function HomeScreen({navigation, route}) {
                   <Text style={styles.historyEmptyTitle}>עדיין לא צפית בשום דבר</Text>
                   <Text style={styles.historyEmptyDesc}>ההיסטוריה שלך תופיע כאן</Text>
                 </View>
+              ) : category === DOWNLOADS_CATEGORY ? (
+                <View style={styles.historyEmpty}>
+                  <Text style={styles.historyEmptyTitle}>עדיין לא הורדת שום דבר</Text>
+                  <Text style={styles.historyEmptyDesc}>הורידו סרטים וסדרות ממסך הפרטים כדי לצפות גם בלי אינטרנט</Text>
+                </View>
               ) : (
                 <Text style={styles.empty}>לא נמצאו תוצאות</Text>
               )
@@ -811,7 +956,19 @@ export default function HomeScreen({navigation, route}) {
           allMovies={movies}
           onClose={() => setDetailItem(null)}
           onPlayDirect={handlePlayDirect}
+          downloadedIds={downloadedIds}
+          downloadingId={downloadingId}
+          downloadProgress={downloadProgress}
+          onDownload={handleDownloadItem}
+          onDeleteDownload={handleDeleteDownload}
         />
+      )}
+
+      {preparingPlaybackId && (
+        <View style={styles.prepOverlay}>
+          <ActivityIndicator size="large" color="#e50914" />
+          <Text style={styles.prepTxt}>מכין לצפייה...</Text>
+        </View>
       )}
 
       {CatModal}
@@ -1036,6 +1193,13 @@ const styles = StyleSheet.create({
   historyEmpty: {alignItems: 'center', marginTop: 80, paddingHorizontal: 30},
   historyEmptyTitle: {color: '#aaa', fontSize: 18, fontWeight: '600', marginBottom: 8},
   historyEmptyDesc: {color: '#555', fontSize: 13, textAlign: 'center'},
+
+  // ── Offline-download playback prep overlay ──
+  prepOverlay: {
+    ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center', alignItems: 'center', zIndex: 500,
+  },
+  prepTxt: {color: '#ccc', fontSize: 14, marginTop: 12},
 
   // ── Telegram floating bubble ──
   // React Native mirrors absolute left/right positioning when the device

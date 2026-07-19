@@ -15,6 +15,9 @@ function buildSrc(movie, startTime = 0) {
   const type = movie.type || 'direct';
   const t = Math.max(0, Math.floor(startTime || 0));
   if (!vid) return null;
+  // Decrypted offline downloads are served from a local file:// path - play
+  // it directly as a native video, skip every remote-service pattern below.
+  if (vid.startsWith('file://')) return vid;
   if (vid.includes('kaltura.com')) return vid;
   const kalturaMatch = vid.match(/^(\d+)\/(\d+)\/([a-zA-Z0-9_]+)$/);
   if (type === 'kaltura' || kalturaMatch) {
@@ -600,7 +603,7 @@ window.addEventListener('beforeunload',function(){clearMediaSession();if(_refres
 }
 
 export default function PlayerScreen({route, navigation}) {
-  const {movie, startTime = 0, userId = null, seriesEpisodes = null} = route.params;
+  const {movie, startTime = 0, userId = null, seriesEpisodes = null, onLeaveCleanup = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
   const seriesEpisodesRef = useRef(seriesEpisodes);
   const isLive = !!movie.is_live;
@@ -632,6 +635,15 @@ export default function PlayerScreen({route, navigation}) {
         saveProgress(movie.id, position, duration, userId);
     };
   }, [movie.id, movie.title, movie.thumbnail_url, userId]);
+
+  // Offline-download playback decrypts to a short-lived temp file before
+  // navigating here (see HomeScreen's playDownloadedItem) - delete it once
+  // this screen unmounts, whether the user backs out or plays something else.
+  useEffect(() => {
+    return () => {
+      onLeaveCleanup?.();
+    };
+  }, [onLeaveCleanup]);
 
   // Load saved progress in background and seek once the video is ready
   useEffect(() => {
@@ -692,6 +704,9 @@ export default function PlayerScreen({route, navigation}) {
         allowsFullscreenVideo
         javaScriptEnabled
         domStorageEnabled
+        allowFileAccess
+        allowFileAccessFromFileURLs
+        allowUniversalAccessFromFileURLs
         startInLoadingState={false}
         onMessage={onMessage}
         onMessageForMainFrameOnly={false}
