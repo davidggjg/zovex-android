@@ -483,6 +483,13 @@ if(IS_HLS){
     initVideo(v);
     window.shaka.polyfill.installAll();
     var player=new window.shaka.Player();
+    // תיקון: שידורים חיים מ-CDN חיצוני נראו נתקעים/קופצים אחורה כל כמה
+    // שניות, בזמן שאותו שידור בדיוק חלק באתר המקור - ברירת המחדל של
+    // Shaka מכוונת ל-VOD, לא לשידור חי מ-CDN שיכול להיות פחות יציב.
+    // חלון buffer גדול יותר רק לשידורים חיים נותן כרית נגד קפיצות רשת.
+    if(IS_LIVE){
+      player.configure({streaming:{bufferingGoal:30,rebufferingGoal:4,retryParameters:{maxAttempts:5,baseDelay:500,backoffFactor:2,timeout:15000}}});
+    }
     player.attach(v).then(function(){
       return player.load(SRC);
     }).then(function(){
