@@ -127,6 +127,28 @@ jobs:
         run: |
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/zovex-release.keystore
 
+      - name: Print SHA256 fingerprint for Android App Links (assetlinks.json)
+        run: |
+          echo "=== Release keystore SHA256 (for assetlinks.json - see docs/app-links-setup.md) ==="
+          SHA256=$(keytool -list -v -keystore android/app/zovex-release.keystore -alias zovex-key -storepass zovex2026 2>/dev/null | grep "SHA256:" | sed 's/.*SHA256: //')
+          echo "SHA256: $SHA256"
+          echo ""
+          echo "Paste this into davidggjg.github.io/.well-known/assetlinks.json :"
+          echo "----------------------------------------------------------------"
+          cat <<EOF
+          [
+            {
+              "relation": ["delegate_permission/common.handle_all_urls"],
+              "target": {
+                "namespace": "android_app",
+                "package_name": "com.zovexapp",
+                "sha256_cert_fingerprints": ["$SHA256"]
+              }
+            }
+          ]
+          EOF
+          echo "----------------------------------------------------------------"
+
       - name: Register release SHA-1 with Firebase and fetch google-services.json
         env:
           FIREBASE_SA_JSON: ${{ secrets.FIREBASE_SA_JSON }}
