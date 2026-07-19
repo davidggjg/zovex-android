@@ -839,6 +839,7 @@ export default function HomeScreen({navigation, route}) {
           activeOpacity={0.85}
           onPress={() => Linking.openURL('https://t.me/ZOVE8').catch(() => {})}>
           <Text style={styles.tgBtnIcon}>➤</Text>
+          <Text style={styles.tgBtnLabel}>תמיכה</Text>
         </TouchableOpacity>
       </View>
 
@@ -1058,13 +1059,14 @@ const styles = StyleSheet.create({
   tgTipTitle: {color: '#eee', fontSize: 11, fontWeight: '700', marginBottom: 2},
   tgTipSub: {color: '#888', fontSize: 10, lineHeight: 14},
   tgBtn: {
-    width: 42, height: 42, borderRadius: 21,
+    height: 42, paddingHorizontal: 14, borderRadius: 21,
     backgroundColor: '#229ED9',
-    justifyContent: 'center', alignItems: 'center',
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6,
     shadowColor: '#229ED9', shadowOpacity: 0.45, shadowRadius: 6,
     elevation: 8,
   },
-  tgBtnIcon: {color: '#fff', fontSize: 18, marginLeft: 2},
+  tgBtnIcon: {color: '#fff', fontSize: 16},
+  tgBtnLabel: {color: '#fff', fontSize: 12, fontWeight: '700'},
 
   // ── Donation modal ──
   donOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 20},
