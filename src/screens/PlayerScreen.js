@@ -151,10 +151,6 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #ttl{flex:1;text-align:center;padding-top:2px}
 #ttl .main{color:#fff;font:700 15px/1.3 Arial;text-shadow:0 1px 6px rgba(0,0,0,.9)}
 #ttl .sub{color:rgba(255,255,255,.7);font:12px Arial;margin-top:2px}
-#viewersbadge{position:absolute;top:68px;left:14px;z-index:25;background:rgba(0,0,0,.62);
-  backdrop-filter:blur(6px);border-radius:20px;padding:6px 12px;
-  display:none;align-items:center;gap:6px;color:#fff;font:700 12px Arial;pointer-events:none}
-#viewersbadge .vdot{width:7px;height:7px;border-radius:50%;background:#e50914;display:inline-block;animation:liveDot 1.5s ease-in-out infinite}
 #bottombar{position:absolute;bottom:0;left:0;right:0;z-index:30;padding:40px 20px 20px;
   background:linear-gradient(to top,rgba(0,0,0,.55) 0%,transparent 100%);
   transition:opacity .3s;opacity:1;direction:ltr}
@@ -202,7 +198,6 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
       </div>
       <button class="xbtn" id="sharebtn" style="font-size:18px">⤴</button>
     </div>
-    ${isLive ? '<div id="viewersbadge"><span class="vdot"></span><span id="viewercount"></span></div>' : ''}
     <div id="ctrls">
       ${isLive ? '' : `<button class="cbtn" id="skipback">
         <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 .49-3.51"></path></svg>
@@ -242,7 +237,6 @@ var START = ${Math.max(0, Math.floor(startTime || 0))};
 var IS_LIVE = ${isLive ? 'true' : 'false'};
 var SRC = ${JSON.stringify(src)};
 var IS_HLS = ${hls ? 'true' : 'false'};
-var BACKEND_URL = 'https://davidhzhdhd-my-telegram-bot.hf.space';
 var STREAM_BACKEND_URL = 'https://maco11.onrender.com';
 
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
@@ -268,26 +262,6 @@ function clearMediaSession(){
     try{navigator.mediaSession.setActionHandler(a,null);}catch{}
   });
   try{navigator.mediaSession.playbackState='none';}catch{}
-}
-
-// ── Live viewer count heartbeat ───────────────────────────────
-if(IS_LIVE&&MOVIE.id){
-  var _vid=(function(){try{var id=localStorage.getItem('zovex_viewer_id');if(!id){id='v_'+Math.random().toString(36).slice(2)+Date.now().toString(36);try{localStorage.setItem('zovex_viewer_id',id);}catch{}}return id;}catch{return 'v_'+Math.random().toString(36).slice(2);}})();
-  var _hbUrl=BACKEND_URL+'/api/live/'+encodeURIComponent(String(MOVIE.id))+'/heartbeat';
-  var _lbUrl=BACKEND_URL+'/api/live/'+encodeURIComponent(String(MOVIE.id))+'/leave';
-  var _hb=function(){
-    fetch(_hbUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({viewer_id:_vid})})
-    .then(function(r){return r.ok?r.json():null;}).then(function(d){
-      if(d&&typeof d.viewers==='number'){
-        var badge=document.getElementById('viewersbadge');
-        var cnt=document.getElementById('viewercount');
-        if(badge&&cnt){cnt.textContent=d.viewers.toLocaleString('he-IL')+' צופים עכשיו';badge.style.display='flex';}
-      }
-    }).catch(function(){});
-  };
-  _hb();setInterval(_hb,15000);
-  var _leave=function(){try{var b=JSON.stringify({viewer_id:_vid});if(navigator.sendBeacon){navigator.sendBeacon(_lbUrl,b);}else{fetch(_lbUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:b,keepalive:true}).catch(function(){});}}catch{}};
-  window.addEventListener('beforeunload',_leave);
 }
 
 // ── HLS auto-refresh every 25 min (updates stream URL without page reload) ──
