@@ -41,7 +41,7 @@ const linking = {
   prefixes: ['zovex://', 'https://davidggjg.github.io/zovex'],
   config: {
     screens: {
-      Home: '*deepPath',
+      Home: ':deepPath',
     },
   },
 };
