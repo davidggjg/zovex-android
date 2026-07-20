@@ -2,6 +2,21 @@ import React, {useEffect, useRef, useMemo} from 'react';
 import {View, StyleSheet, StatusBar, NativeModules} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
+import SHAKA_PLAYER_SOURCE from '../assets/shakaPlayerSource';
+import HLS_JS_SOURCE from '../assets/hlsJsSource';
+
+// Live streams used to feel like they hung forever on some networks. Root
+// cause: the player waited on fetching shaka-player.compiled.js (~560KB) and,
+// on fallback, hls.js (~370KB) from an external CDN *every time it opened* -
+// if that CDN was slow or briefly unreachable for the user's network, there
+// was no timeout, so it just sat on the loading spinner indefinitely, even
+// though the actual stream URL itself loaded instantly elsewhere. Both
+// libraries are now bundled into the app (see src/assets/) and inlined
+// straight into the page, so playback never depends on a third-party CDN
+// being reachable at all - only the actual video CDN does.
+function escapeForInlineScript(js) {
+  return js.replace(/<\/script/gi, '<\\/script');
+}
 
 const {PipModule} = NativeModules;
 
@@ -230,6 +245,8 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
     <div id="resumetoast"></div>
   </div>
 </div>
+${hls ? `<script>${escapeForInlineScript(SHAKA_PLAYER_SOURCE)}</script>
+<script>${escapeForInlineScript(HLS_JS_SOURCE)}</script>` : ''}
 <script>
 (function(){
 var MOVIE = ${movieJson};
@@ -467,12 +484,6 @@ function initVideo(el){
   vid.addEventListener('canplay',function(){loader.style.display='none';});
 }
 
-function tryLoadScript(url,onOk,onFail){
-  var s=document.createElement('script');s.src=url;
-  s.onload=onOk;s.onerror=onFail;
-  document.head.appendChild(s);
-}
-
 if(IS_HLS){
   // ── Shaka Player (primary) ────────────────────────────────
   function startWithShaka(){
@@ -533,36 +544,9 @@ if(IS_HLS){
     }
   }
 
-  // Try Shaka first; if it fails to load, fall back to HLS.js
-  tryLoadScript(
-    'https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.compiled.js',
-    startWithShaka,
-    function(){
-      tryLoadScript(
-        'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js',
-        startWithHlsJs,
-        function(){
-          tryLoadScript(
-            'https://cdn.jsdelivr.net/npm/hls.js@1.4.12/dist/hls.min.js',
-            startWithHlsJs,
-            function(){
-              var v=document.createElement('video');
-              v.setAttribute('playsinline','');v.setAttribute('autoplay','');
-              v.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000';
-              v.src=SRC;
-              document.getElementById('wrap').insertBefore(v,loader);
-              initVideo(v);
-              v.addEventListener('loadedmetadata',function(){
-                if(START>1){try{v.currentTime=START;}catch{}}
-                v.play().catch(function(){});loader.style.display='none';
-              });
-              v.addEventListener('error',function(){loader.style.display='none';});
-            }
-          );
-        }
-      );
-    }
-  );
+  // Both libraries are already inlined above (no CDN fetch needed) - go
+  // straight to Shaka, which falls back to HLS.js internally on failure.
+  if(window.shaka){startWithShaka();}else{startWithHlsJs();}
 } else {
   // ── Direct video (MP4, stream, telegram proxy, etc.) ─────
   var v=document.createElement('video');
