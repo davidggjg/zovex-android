@@ -17,6 +17,7 @@ import {
   ImageBackground,
   Animated,
   I18nManager,
+  AppState,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -539,6 +540,20 @@ export default function HomeScreen({navigation, route}) {
 
   useEffect(() => { load(false, user); }, [load, user]);
 
+  // The app process often stays alive in the background for a long time on
+  // Android, and nothing was refetching movies.json in that case - once
+  // loaded, new content (like a newly-added live channel) would never show
+  // up until the user happened to pull-to-refresh or force-kill the app.
+  // fetchMovies() already has its own 5-minute in-memory cache, so calling
+  // load() here on every foreground return is cheap when data isn't stale
+  // and just refreshes it in the background when it is.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', state => {
+      if (state === 'active') load(false, user);
+    });
+    return () => sub.remove();
+  }, [load, user]);
+
   const refreshDownloads = useCallback(() => {
     getDownloads().then(setDownloads).catch(() => {});
   }, []);
@@ -914,18 +929,28 @@ export default function HomeScreen({navigation, route}) {
       {TopBar}
       {CatsButton}
       {isNetflixMode ? (
-        <ScrollView
+        // A plain ScrollView mounted every category row (and its images) at
+        // once, even ones far below the fold - with dozens of categories
+        // that's a lot of images fetched on every app open. A vertical
+        // FlatList only mounts rows near the viewport, same idea as the
+        // existing per-row virtualization below.
+        <FlatList
+          data={netflixRows}
+          keyExtractor={row => row.title}
+          renderItem={({item: row}) => (
+            <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
+          )}
+          ListHeaderComponent={<HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />}
+          ListEmptyComponent={<Text style={styles.empty}>אין תוכן זמין</Text>}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
+          initialNumToRender={3}
+          maxToRenderPerBatch={2}
+          windowSize={5}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
-          }>
-          <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />
-          {netflixRows.map(row => (
-            <NetflixRow key={row.title} title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
-          ))}
-          {netflixRows.length === 0 && <Text style={styles.empty}>אין תוכן זמין</Text>}
-        </ScrollView>
+          }
+        />
       ) : (
         <FlatList
             data={gridItems}
