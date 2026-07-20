@@ -118,13 +118,35 @@ export async function downloadItem(item, onProgress) {
   if (await RNFS.exists(encPath)) await RNFS.unlink(encPath);
 
   try {
+    // Content is proxied through a slow, bandwidth-constrained backend and
+    // files often run 1GB+, so a download can sit at the same percentage for
+    // 15-20s at a time. progressDivider:2 (native reports only every whole
+    // 2% of progress) made that far worse - combined with the file size it
+    // could look completely frozen for the first 20-30s. Report on every
+    // native tick instead (progressDivider:0) and pass along raw byte counts
+    // so the UI can show live MB progress, which moves within a second or
+    // two even while the percentage itself barely ticks.
+    let lastEmit = 0;
     const dl = RNFS.downloadFile({
       fromUrl: videoUrl,
       toFile: rawTmpPath,
-      progressDivider: 2,
+      progressDivider: 0,
+      begin: res => {
+        if (res.contentLength > 0) {
+          onProgress?.({phase: 'downloading', pct: 0, bytesWritten: 0, contentLength: res.contentLength});
+        }
+      },
       progress: res => {
         if (res.contentLength > 0) {
-          onProgress?.({phase: 'downloading', pct: res.bytesWritten / res.contentLength});
+          const now = Date.now();
+          if (now - lastEmit < 250) return;
+          lastEmit = now;
+          onProgress?.({
+            phase: 'downloading',
+            pct: res.bytesWritten / res.contentLength,
+            bytesWritten: res.bytesWritten,
+            contentLength: res.contentLength,
+          });
         }
       },
     });

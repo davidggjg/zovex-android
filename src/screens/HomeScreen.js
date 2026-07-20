@@ -65,10 +65,18 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
   if (isThisDownloading) {
     const pct = Math.round((downloadProgress?.pct || 0) * 100);
     const label = downloadProgress?.phase === 'encrypting' ? 'מצפין' : 'מוריד';
+    // Files here are often 1GB+ over a slow connection, so the percentage
+    // alone can sit unchanged for a long time and look frozen. Showing the
+    // live MB count too gives visible movement within a second or two.
+    const mb = downloadProgress?.contentLength
+      ? `${Math.round((downloadProgress.bytesWritten || 0) / 1048576)}/${Math.round(downloadProgress.contentLength / 1048576)}MB`
+      : null;
     return (
       <View style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}>
         <ActivityIndicator size="small" color="#e50914" />
-        {!compact && <Text style={mdStyles.dlBtnTxt}>{label} {pct}%</Text>}
+        {!compact && (
+          <Text style={mdStyles.dlBtnTxt}>{label} {pct}%{mb ? ` · ${mb}` : ''}</Text>
+        )}
       </View>
     );
   }
