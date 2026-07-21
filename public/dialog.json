@@ -1,8 +1,8 @@
 {
   "active": true,
   "title": "🚀 עדכון גדול ל-ZOVEX!",
-  "message": "4 ערוצי שידור חי חדשים, תיקון שגרם לשידורים חיים להיתקע בטעינה, טעינה מהירה בהרבה של פוסטרים, וסדרה חדשה בשלמותה. עדכנו עכשיו לחוויה הכי טובה.",
-  "target_versions": [],
+  "message": "4 ערוצי שידור חי חדשים, תיקון שגרם לשידורים חיים להיתקע בטעינה, טעינה מהירה בהרבה של פוסטרים, וסדרה חדשה בשלמותה. יש לעדכן כדי להמשיך להשתמש באפליקציה.",
+  "target_versions": ["1.0"],
   "join_url": "https://t.me/zovex",
   "update_url": "https://github.com/davidggjg/zovex-android/releases/latest/download/zovex.apk"
 }

@@ -25,7 +25,7 @@ import {initUserId} from './api/userStore';
 
 const Stack = createNativeStackNavigator();
 
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.1';
 const DIALOG_CONFIG_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex-android/main/public/dialog.json';
 
