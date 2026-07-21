@@ -1,8 +1,8 @@
 {
-  "active": false,
-  "title": "עדכון זמין",
-  "message": "גרסה חדשה של האפליקציה זמינה. אנא עדכנו כדי להמשיך.",
+  "active": true,
+  "title": "🚀 עדכון גדול ל-ZOVEX!",
+  "message": "4 ערוצי שידור חי חדשים, תיקון שגרם לשידורים חיים להיתקע בטעינה, טעינה מהירה בהרבה של פוסטרים, וסדרה חדשה בשלמותה. עדכנו עכשיו לחוויה הכי טובה.",
   "target_versions": [],
   "join_url": "https://t.me/zovex",
-  "update_url": "https://github.com/davidggjg/zovex-android/releases"
+  "update_url": "https://github.com/davidggjg/zovex-android/releases/latest/download/zovex.apk"
 }
