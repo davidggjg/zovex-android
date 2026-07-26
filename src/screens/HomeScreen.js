@@ -600,7 +600,7 @@ export default function HomeScreen({navigation, route}) {
       const matchQ = (m.title||'').toLowerCase().includes(q) || (m.series_name||'').toLowerCase().includes(q);
       if (!matchQ || (cat !== 'הכל' && m.category !== cat)) return;
       if (m.series_name) {
-        if (!seen[m.series_name]) { seen[m.series_name] = true; result.push({...seriesMap[m.series_name]}); }
+        if (!seen[m.series_name] && seriesMap[m.series_name]) { seen[m.series_name] = true; result.push({...seriesMap[m.series_name]}); }
       } else {
         result.push({...m, isSeries: false});
       }
