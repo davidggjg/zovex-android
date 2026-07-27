@@ -961,6 +961,7 @@ export default function HomeScreen({navigation, route}) {
         // FlatList only mounts rows near the viewport, same idea as the
         // existing per-row virtualization below.
         <FlatList
+          key="netflix-rows"
           data={netflixRows}
           keyExtractor={row => row.title}
           renderItem={({item: row}) => (
@@ -979,6 +980,7 @@ export default function HomeScreen({navigation, route}) {
         />
       ) : (
         <FlatList
+            key="search-grid"
             data={Array.isArray(gridItems) ? gridItems.filter(item => item && item.id) : []}
             keyExtractor={item => String(item?.id || '')}
             numColumns={3}
