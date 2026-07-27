@@ -399,7 +399,10 @@ function buildSeriesMap(movies) {
 // ── MovieCard ─────────────────────────────────────────────────────────────────
 
 const MovieCard = memo(function MovieCard({item, onPress}) {
+  if (!item || typeof item !== 'object') return null;
   const isLive = !!item.is_live;
+  const displayTitle = String(item.name || item.title || '');
+  if (!displayTitle) return null;
   return (
     <TouchableOpacity style={[styles.card, {width: CARD_W}]} onPress={() => onPress(item)} activeOpacity={0.8}>
       <View style={[styles.cardImg, {height: CARD_H, borderColor: isLive ? '#e50914' : 'transparent', borderWidth: isLive ? 2 : 0}]}>
@@ -411,7 +414,7 @@ const MovieCard = memo(function MovieCard({item, onPress}) {
         {item.isSeries && <View style={styles.badge}><Text style={styles.badgeText}>סדרה</Text></View>}
         {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
       </View>
-      <Text style={styles.cardTitle} numberOfLines={2}>{item.name || item.title}</Text>
+      <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
     </TouchableOpacity>
   );
 });
@@ -584,25 +587,48 @@ export default function HomeScreen({navigation, route}) {
 
   const getItemsForCategory = useCallback(cat => {
     if (cat === 'שידורים חיים') {
+      if (!Array.isArray(liveChannels)) return [];
       return liveChannels
-        .filter(ch => (ch.title || ch.name || '').toLowerCase().includes(q));
+        .filter(ch => {
+          if (!ch) return false;
+          return (ch.title || ch.name || '').toLowerCase().includes(q);
+        });
     }
     if (cat === 'היסטוריה') {
-      return history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
+      if (!Array.isArray(history) || !Array.isArray(movies)) return [];
+      return history.map(h => h && movies.find(m => m && m.id === h.media_id)).filter(Boolean);
     }
     if (cat === DOWNLOADS_CATEGORY) {
-      return downloads.map(downloadEntryToMovie);
+      if (!Array.isArray(downloads)) return [];
+      return downloads.map(d => {
+        try {
+          return d ? downloadEntryToMovie(d) : null;
+        } catch {
+          return null;
+        }
+      }).filter(Boolean);
     }
+    if (!Array.isArray(movies)) return [];
     const seen = {};
     const result = [];
     movies.forEach(m => {
-      if (m.is_live) return;
-      const matchQ = (m.title||'').toLowerCase().includes(q) || (m.series_name||'').toLowerCase().includes(q);
+      if (!m || m.is_live) return;
+      const title = m.title || '';
+      const seriesName = m.series_name || '';
+      const matchQ = String(title).toLowerCase().includes(q) || String(seriesName).toLowerCase().includes(q);
       if (!matchQ || (cat !== 'הכל' && m.category !== cat)) return;
-      if (m.series_name) {
-        if (!seen[m.series_name] && seriesMap[m.series_name]) { seen[m.series_name] = true; result.push({...seriesMap[m.series_name]}); }
+      if (seriesName) {
+        if (!seen[seriesName] && seriesMap && seriesMap[seriesName]) {
+          seen[seriesName] = true;
+          const seriesItem = seriesMap[seriesName];
+          if (seriesItem && seriesItem.id && seriesItem.name) {
+            result.push({...seriesItem});
+          }
+        }
       } else {
-        result.push({...m, isSeries: false});
+        if (m.id && m.title) {
+          result.push({...m, isSeries: false});
+        }
       }
     });
     return result;
@@ -953,8 +979,8 @@ export default function HomeScreen({navigation, route}) {
         />
       ) : (
         <FlatList
-            data={gridItems}
-            keyExtractor={item => String(item.id)}
+            data={Array.isArray(gridItems) ? gridItems.filter(item => item && item.id) : []}
+            keyExtractor={item => String(item?.id || '')}
             numColumns={3}
             contentContainerStyle={styles.grid}
             initialNumToRender={9}
