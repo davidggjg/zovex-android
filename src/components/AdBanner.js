@@ -1,17 +1,20 @@
-import React from 'react';
-import {View, StyleSheet} from 'react-native';
+import React, {useState} from 'react';
+import {View, Text, StyleSheet} from 'react-native';
 import {WebView} from 'react-native-webview';
 
 const AD_KEY = '833479e14706e97fe2b8acbc143a4963';
 
-// אותה מודעת Adsterra שבאתר (davidggjg.github.io/zovex), בתוך WebView -
-// זו הדרך התקנית להריץ סקריפט מבוסס document.write כמו הזה בתוך אפליקציה
-// native, בלי לגעת ב-DOM/View tree של שאר האפליקציה.
+// גרסת דיבאג זמנית: מדווחת על כל שלב דרך window.ReactNativeWebView.postMessage
+// (ה-bridge של react-native-webview, מקביל ל-postMessage שהשתמשנו בו באתר),
+// כדי לראות בדיוק איפה זה נתקע - במקום שזה פשוט ייראה "כאילו אין מודעה"
+// כשה-iframe שקוף.
 const AD_HTML = `<!DOCTYPE html>
 <html>
 <head><style>body{margin:0;padding:0;overflow:hidden;background:transparent;}</style></head>
 <body>
   <script>
+    function report(msg){ try{ window.ReactNativeWebView.postMessage(msg); }catch(e){} }
+    report('1-html-script-started');
     atOptions = {
       'key' : '${AD_KEY}',
       'format' : 'iframe',
@@ -19,14 +22,26 @@ const AD_HTML = `<!DOCTYPE html>
       'width' : 320,
       'params' : {}
     };
+    report('2-atOptions-set');
   </script>
-  <script src="https://www.highperformanceformat.com/${AD_KEY}/invoke.js"></script>
+  <script
+    src="https://www.highperformanceformat.com/${AD_KEY}/invoke.js"
+    onload="report('3-invoke-onload-fired')"
+    onerror="report('3-invoke-ONERROR-fired')"
+  ></script>
+  <script>report('4-after-invoke-tag');</script>
 </body>
 </html>`;
 
 export default function AdBanner() {
+  const [logs, setLogs] = useState([]);
+  const [webviewError, setWebviewError] = useState(null);
+
   return (
     <View style={styles.wrap} pointerEvents="box-none">
+      <Text style={styles.debugText}>
+        AD DEBUG: {webviewError ? `WEBVIEW-ERROR: ${webviewError}` : logs.length === 0 ? 'waiting...' : logs.join(' | ')}
+      </Text>
       <WebView
         source={{html: AD_HTML}}
         style={styles.webview}
@@ -34,6 +49,15 @@ export default function AdBanner() {
         javaScriptEnabled
         scrollEnabled={false}
         backgroundColor="transparent"
+        onMessage={event => {
+          setLogs(prev => [...prev, event.nativeEvent.data]);
+        }}
+        onError={syntheticEvent => {
+          setWebviewError(JSON.stringify(syntheticEvent.nativeEvent));
+        }}
+        onHttpError={syntheticEvent => {
+          setWebviewError('HTTP ' + JSON.stringify(syntheticEvent.nativeEvent));
+        }}
       />
     </View>
   );
@@ -48,6 +72,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     zIndex: 200,
     elevation: 200,
+  },
+  debugText: {
+    backgroundColor: '#000',
+    color: '#0f0',
+    fontSize: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    width: '100%',
+    textAlign: 'left',
   },
   webview: {
     width: 320,
