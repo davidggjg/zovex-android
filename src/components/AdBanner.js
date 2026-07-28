@@ -1,6 +1,16 @@
 import React, {useState} from 'react';
-import {View, Text, StyleSheet} from 'react-native';
+import {View, Text, StyleSheet, Linking} from 'react-native';
 import {WebView} from 'react-native-webview';
+
+// מודעות מובייל נוהגות לנסות לפתוח קישורי deep-link לאפליקציות (סכימות
+// כמו aliexpress:// / market:// / intent://) - ה-WebView לא יודע לנווט
+// אליהן בעצמו וקורס עם ERR_UNKNOWN_URL_SCHEME. צריך ליירט ולהעביר ל-OS.
+function handleNavigation(request) {
+  const {url} = request;
+  if (/^(https?:|about:blank|data:)/i.test(url)) return true;
+  Linking.openURL(url).catch(() => {});
+  return false;
+}
 
 const AD_KEY = '833479e14706e97fe2b8acbc143a4963';
 
@@ -52,6 +62,7 @@ export default function AdBanner() {
           mixedContentMode="always"
           scrollEnabled={false}
           backgroundColor="transparent"
+          onShouldStartLoadWithRequest={handleNavigation}
           onMessage={event => {
             setLogs(prev => [...prev, event.nativeEvent.data]);
           }}
