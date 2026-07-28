@@ -2,12 +2,25 @@ import React, {useState} from 'react';
 import {View, Text, StyleSheet, Linking} from 'react-native';
 import {WebView} from 'react-native-webview';
 
-// מודעות מובייל נוהגות לנסות לפתוח קישורי deep-link לאפליקציות (סכימות
-// כמו aliexpress:// / market:// / intent://) - ה-WebView לא יודע לנווט
-// אליהן בעצמו וקורס עם ERR_UNKNOWN_URL_SCHEME. צריך ליירט ולהעביר ל-OS.
+const AD_BASE_URL = 'https://davidggjg.github.io/zovex/';
+
+// שתי בעיות שונות שמודעות מובייל אוהבות לעשות בתוך WebView:
+// 1. deep-link לאפליקציה (aliexpress:// / market:// / intent://) - ה-WebView
+//    לא יודע לנווט לזה בעצמו וקורס עם ERR_UNKNOWN_URL_SCHEME.
+// 2. "השתלטות" על העמוד הראשי - במקום לטעון את קריאייטיב המודעה בתוך
+//    ה-iframe הפנימי שלה, המודעה מנווטת את כל ה-WebView (הבאנר הקטן
+//    שלנו, 320x50) לאתר יעד שלם (למשל AliExpress), מה שיהפוך את הבאנר
+//    לרינדור מכווץ ומכוער של אתר מלא.
+// שתי הבעיות מטופלות באותה פונקציה: ניווט http(s) שהוא top-frame (לא
+// iframe פנימי של המודעה עצמה) ומחוץ לדף הבסיס שלנו - נפתח ב-OS/דפדפן
+// חיצוני במקום בתוך הבאנר. כל שאר הניווטים (iframe-ים פנימיים של קוד
+// המודעה עצמו) מותרים כרגיל, אחרת המודעה לא תיטען בכלל.
 function handleNavigation(request) {
-  const {url} = request;
-  if (/^(https?:|about:blank|data:)/i.test(url)) return true;
+  const {url, isTopFrame} = request;
+  const isHttp = /^https?:/i.test(url);
+  if (isHttp && (!isTopFrame || url === AD_BASE_URL)) return true;
+  // כל השאר (ניווט top-frame לאתר יעד, או סכימת deep-link לאפליקציה) -
+  // נפתח ב-OS/דפדפן חיצוני. openURL נכשל בשקט אם אין אפליקציה שתטפל בזה.
   Linking.openURL(url).catch(() => {});
   return false;
 }
@@ -53,7 +66,7 @@ export default function AdBanner() {
       </Text>
       <View style={styles.webviewBox}>
         <WebView
-          source={{html: AD_HTML, baseUrl: 'https://davidggjg.github.io/zovex/'}}
+          source={{html: AD_HTML, baseUrl: AD_BASE_URL}}
           style={styles.webview}
           originWhitelist={['*']}
           javaScriptEnabled
