@@ -4,10 +4,9 @@ import {WebView} from 'react-native-webview';
 
 const AD_KEY = '833479e14706e97fe2b8acbc143a4963';
 
-// גרסת דיבאג זמנית: מדווחת על כל שלב דרך window.ReactNativeWebView.postMessage
-// (ה-bridge של react-native-webview, מקביל ל-postMessage שהשתמשנו בו באתר),
-// כדי לראות בדיוק איפה זה נתקע - במקום שזה פשוט ייראה "כאילו אין מודעה"
-// כשה-iframe שקוף.
+// גרסת דיבאג: מדווחת על כל שלב דרך window.ReactNativeWebView.postMessage,
+// ובנוסף - ה-WebView עטוף בקופסה עם רקע צהוב זמני, כדי לראות אם השטח שלו
+// בכלל נתפס על המסך (בלי קשר לשאלה אם המודעה עצמה נטענה).
 const AD_HTML = `<!DOCTYPE html>
 <html>
 <head><style>body{margin:0;padding:0;overflow:hidden;background:transparent;}</style></head>
@@ -42,23 +41,25 @@ export default function AdBanner() {
       <Text style={styles.debugText}>
         AD DEBUG: {webviewError ? `WEBVIEW-ERROR: ${webviewError}` : logs.length === 0 ? 'waiting...' : logs.join(' | ')}
       </Text>
-      <WebView
-        source={{html: AD_HTML}}
-        style={styles.webview}
-        originWhitelist={['*']}
-        javaScriptEnabled
-        scrollEnabled={false}
-        backgroundColor="transparent"
-        onMessage={event => {
-          setLogs(prev => [...prev, event.nativeEvent.data]);
-        }}
-        onError={syntheticEvent => {
-          setWebviewError(JSON.stringify(syntheticEvent.nativeEvent));
-        }}
-        onHttpError={syntheticEvent => {
-          setWebviewError('HTTP ' + JSON.stringify(syntheticEvent.nativeEvent));
-        }}
-      />
+      <View style={styles.webviewBox}>
+        <WebView
+          source={{html: AD_HTML}}
+          style={styles.webview}
+          originWhitelist={['*']}
+          javaScriptEnabled
+          scrollEnabled={false}
+          backgroundColor="transparent"
+          onMessage={event => {
+            setLogs(prev => [...prev, event.nativeEvent.data]);
+          }}
+          onError={syntheticEvent => {
+            setWebviewError(JSON.stringify(syntheticEvent.nativeEvent));
+          }}
+          onHttpError={syntheticEvent => {
+            setWebviewError('HTTP ' + JSON.stringify(syntheticEvent.nativeEvent));
+          }}
+        />
+      </View>
     </View>
   );
 }
@@ -71,7 +72,6 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     zIndex: 200,
-    elevation: 200,
   },
   debugText: {
     backgroundColor: '#000',
@@ -82,9 +82,14 @@ const styles = StyleSheet.create({
     width: '100%',
     textAlign: 'left',
   },
-  webview: {
+  // רקע צהוב זמני - כדי לראות אם השטח הזה בכלל מצויר על המסך
+  webviewBox: {
     width: 320,
     height: 50,
+    backgroundColor: 'yellow',
+  },
+  webview: {
+    flex: 1,
     backgroundColor: 'transparent',
   },
 });
