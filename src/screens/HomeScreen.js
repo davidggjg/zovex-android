@@ -35,6 +35,7 @@ import {
   downloadEntryToMovie,
   isItemDownloadable,
 } from '../api/downloads';
+import AdBanner from '../components/AdBanner';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
@@ -1035,6 +1036,8 @@ export default function HomeScreen({navigation, route}) {
       {CatModal}
       {UserMenu}
 
+      <AdBanner />
+
       {/* Telegram floating bubble */}
       <View style={styles.tgBubbleWrap} pointerEvents="box-none">
         {showTgTip && (
@@ -1268,7 +1271,8 @@ const styles = StyleSheet.create({
   // physical left edge). Pick the side explicitly so this always ends up
   // in the bottom-left corner of the screen, regardless of RTL state.
   tgBubbleWrap: {
-    position: 'absolute', bottom: 20, zIndex: 1000,
+    // bottom מוגבה כדי לא להיחסם ע"י באנר הפרסומת הקבוע בתחתית (AdBanner)
+    position: 'absolute', bottom: 78, zIndex: 1000,
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     ...(I18nManager.isRTL ? {right: 14} : {left: 14}),
   },
