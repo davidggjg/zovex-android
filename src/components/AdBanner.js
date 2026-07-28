@@ -43,10 +43,13 @@ export default function AdBanner() {
       </Text>
       <View style={styles.webviewBox}>
         <WebView
-          source={{html: AD_HTML}}
+          source={{html: AD_HTML, baseUrl: 'https://davidggjg.github.io/zovex/'}}
           style={styles.webview}
           originWhitelist={['*']}
           javaScriptEnabled
+          domStorageEnabled
+          thirdPartyCookiesEnabled
+          mixedContentMode="always"
           scrollEnabled={false}
           backgroundColor="transparent"
           onMessage={event => {
