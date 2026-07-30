@@ -716,7 +716,7 @@ export default function PlayerScreen({route, navigation}) {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
-  castBtn: {position: 'absolute', top: 10, left: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
+  castBtn: {position: 'absolute', top: 10, right: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
