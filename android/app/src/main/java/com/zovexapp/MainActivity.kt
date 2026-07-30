@@ -1,6 +1,8 @@
 package com.zovexapp
 
 import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -18,6 +20,12 @@ class MainActivity : ReactActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // בטלפון: נעל portrait (ה-UI מעוצב אנכית). בטלוויזיה: אפשר landscape,
+        // אחרת התצוגה מופיעה מסובבת. מזהים טלוויזיה לפי UiMode.
+        val uiMode = getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        if (uiMode.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) {
+            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
         // Most robust fix: listen for insets being (re)applied at all —
         // this fires on rotation, fold/unfold, split-screen, keyboard
         // showing, or the system re-showing bars for any reason — and
