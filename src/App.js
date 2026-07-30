@@ -18,9 +18,6 @@ import messaging from '@react-native-firebase/messaging';
 import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
-import AdminScreen from './screens/AdminScreen';
-import AdminEntryScreen from './screens/AdminEntryScreen';
-import AdminDashboardScreen from './screens/AdminDashboardScreen';
 import {initUserId} from './api/userStore';
 
 const Stack = createNativeStackNavigator();
@@ -315,9 +312,6 @@ export default function App() {
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Player" component={PlayerScreen} />
         <Stack.Screen name="Series" component={SeriesScreen} />
-        <Stack.Screen name="Admin" component={AdminScreen} />
-        <Stack.Screen name="AdminEntry" component={AdminEntryScreen} />
-        <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
