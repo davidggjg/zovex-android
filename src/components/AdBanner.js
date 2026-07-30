@@ -2,10 +2,10 @@ import React from 'react';
 import {View, StyleSheet, Linking} from 'react-native';
 import {WebView} from 'react-native-webview';
 
-const AD_KEY = '833479e14706e97fe2b8acbc143a4963';
-const AD_BASE_URL = 'https://davidggjg.github.io/zovex/';
+const AD_KEY = '8050516fd44627d57aee36c0f8306419';
+const AD_BASE_URL = 'https://zovex.duckdns.org/';
 
-// אותה מודעת Adsterra שבאתר (davidggjg.github.io/zovex). baseUrl גורם
+// אותה מודעת Adsterra שבאתר (zovex.duckdns.org). baseUrl גורם
 // ל-WebView לשלוח את הדומיין הרשום כמקור הדף (הזוהה נדרש כדי שהמודעה
 // תיטען בכלל, ולא תחזור ריקה).
 const AD_HTML = `<!DOCTYPE html>
