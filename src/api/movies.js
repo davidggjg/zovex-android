@@ -1,7 +1,7 @@
-const MAIN_SITE_ORIGIN = 'https://davidggjg.github.io';
+const MAIN_SITE_ORIGIN = 'https://zovex.duckdns.org';
 const MOVIES_URL =
-  'https://raw.githubusercontent.com/davidggjg/zovex/main/public/movies.json';
-const BACKEND_URL = 'https://davidhzhdhd-my-telegram-bot.hf.space';
+  'https://zovex.duckdns.org/content';
+const BACKEND_URL = 'https://zovex.duckdns.org';
 
 let _moviesCache = null;
 let _moviesCacheTime = 0;

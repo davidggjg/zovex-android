@@ -20,7 +20,7 @@ function escapeForInlineScript(js) {
 
 const {PipModule} = NativeModules;
 
-const TG_PROXY = 'https://telegram-bot-8528.onrender.com';
+const TG_PROXY = 'https://zovex.duckdns.org';
 
 // Maps channel names → numeric IDs (same as CustomVideoPlayer.jsx)
 const TG_CHANNELS = {zove8: '7282626428', ZOVE8: '7282626428'};
@@ -254,7 +254,7 @@ var START = ${Math.max(0, Math.floor(startTime || 0))};
 var IS_LIVE = ${isLive ? 'true' : 'false'};
 var SRC = ${JSON.stringify(src)};
 var IS_HLS = ${hls ? 'true' : 'false'};
-var STREAM_BACKEND_URL = 'https://maco11.onrender.com';
+var STREAM_BACKEND_URL = 'https://zovex.duckdns.org';
 
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
 
