@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useMemo} from 'react';
 import {View, StyleSheet, StatusBar, NativeModules} from 'react-native';
 import {WebView} from 'react-native-webview';
+import {CastButton, useRemoteMediaClient} from 'react-native-google-cast';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 import SHAKA_PLAYER_SOURCE from '../assets/shakaPlayerSource';
 import HLS_JS_SOURCE from '../assets/hlsJsSource';
@@ -587,6 +588,33 @@ export default function PlayerScreen({route, navigation}) {
     };
   }, [movie, startTime, isLive, hasNext]);
 
+  // ── Chromecast: כפתור שידור לטלוויזיה ──
+  // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה) שאי אפשר
+  // לשדר דרך ה-receiver הרגיל. כשמתחברים למכשיר cast: טוענים אליו את הסרט
+  // ומשהים את הנגן המקומי כדי שלא יתנגן פעמיים.
+  const castClient = useRemoteMediaClient();
+  const castable = !!src && !isIframe;
+  useEffect(() => {
+    if (!castClient || !castable) return;
+    castClient
+      .loadMedia({
+        mediaInfo: {
+          contentUrl: src,
+          contentType: isHlsUrl(src) ? 'application/x-mpegurl' : 'video/mp4',
+          metadata: {
+            type: isLive ? 'generic' : 'movie',
+            title: movie.title || 'ZOVEX',
+            images: movie.thumbnail_url ? [{url: movie.thumbnail_url}] : [],
+          },
+        },
+        startTime: Math.floor(isLive ? 0 : startTime || 0),
+      })
+      .catch(() => {});
+    webViewRef.current?.injectJavaScript(
+      "var v=document.querySelector('video');if(v)v.pause();true;",
+    );
+  }, [castClient, castable, src, isLive, startTime, movie.title, movie.thumbnail_url]);
+
   useEffect(() => {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
@@ -680,6 +708,7 @@ export default function PlayerScreen({route, navigation}) {
         mixedContentMode="always"
         originWhitelist={['*']}
       />
+      {castable ? <CastButton style={styles.castBtn} /> : null}
     </View>
   );
 }
@@ -687,6 +716,7 @@ export default function PlayerScreen({route, navigation}) {
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
+  castBtn: {position: 'absolute', top: 10, left: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
   error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},

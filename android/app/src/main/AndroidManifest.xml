@@ -19,6 +19,11 @@
         android:usesCleartextTraffic="true"
         android:banner="@drawable/tv_banner">
 
+        <!-- Chromecast: מצביע על ה-OptionsProvider -->
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="com.zovexapp.CastOptionsProvider" />
+
         <activity
             android:name=".MainActivity"
             android:label="ZOVEX"
