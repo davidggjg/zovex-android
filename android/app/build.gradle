@@ -66,3 +66,12 @@ dependencies {
 }
 
 apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)
+
+// play-services-cast-framework 22.x נבנה עם Kotlin 2.2 — המהדר שלנו (1.9)
+// לא יכול לקרוא את מטא-הדאטה שלו. הדגל מדלג על בדיקת גרסת המטא-דאטה
+// (הספרייה עצמה היא Java, לא צורכים ממנה Kotlin API שדורש את המטא-דאטה).
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    kotlinOptions {
+        freeCompilerArgs += ["-Xskip-metadata-version-check"]
+    }
+}
