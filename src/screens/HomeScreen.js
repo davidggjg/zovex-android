@@ -46,7 +46,6 @@ const CARD_H = Math.floor(CARD_W * 1.48);
 // Hero banner: tall enough to show portrait thumbnails (2:3) with contain mode
 const HERO_H = Math.round(SW * 1.25);
 
-const ADMIN_TRIGGER = 'ZovexAdmin2026';
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 const TG_TIP_KEY = 'zovex_hide_telegram_tip';
@@ -776,7 +775,6 @@ export default function HomeScreen({navigation, route}) {
   }, [seriesMap, showDonationModal]);
 
   const handleSearchChange = useCallback(v => {
-    if (v === ADMIN_TRIGGER) { setSearch(''); navigation.navigate('AdminEntry'); return; }
     setSearch(v);
     if (!v) setCategory('הכל');
   }, [navigation]);
