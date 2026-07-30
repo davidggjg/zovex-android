@@ -55,6 +55,8 @@ dependencies {
     implementation("com.facebook.react:react-android")
     implementation(platform("com.google.firebase:firebase-bom:32.7.4"))
     implementation("com.google.firebase:firebase-messaging")
+    // נדרש כדי ש-CastOptionsProvider (במודול האפליקציה) יראה את מחלקות ה-Cast
+    implementation("com.google.android.gms:play-services-cast-framework:21.3.0")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
