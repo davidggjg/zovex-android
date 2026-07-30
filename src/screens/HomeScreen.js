@@ -36,6 +36,8 @@ import {
   isItemDownloadable,
 } from '../api/downloads';
 import AdBanner from '../components/AdBanner';
+import SupportModal from '../components/SupportModal';
+import UpdateDialog from '../components/UpdateDialog';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
@@ -462,6 +464,7 @@ export default function HomeScreen({navigation, route}) {
   const [showDonation, setShowDonation] = useState(false);
   const donationCallback = useRef(null);
   const [showTgTip, setShowTgTip] = useState(false);
+  const [showSupport, setShowSupport] = useState(false);
   const searchAnim = useRef(new Animated.Value(0)).current;
   const [downloads, setDownloads] = useState([]);
   const [downloadingId, setDownloadingId] = useState(null);
@@ -1056,11 +1059,23 @@ export default function HomeScreen({navigation, route}) {
         <TouchableOpacity
           style={styles.tgBtn}
           activeOpacity={0.85}
-          onPress={() => Linking.openURL('https://t.me/ZOVE8').catch(() => {})}>
+          onPress={() => {
+            setShowTgTip(false);
+            AsyncStorage.setItem(TG_TIP_KEY, '1').catch(() => {});
+            setShowSupport(true);
+          }}>
           <Text style={styles.tgBtnIcon}>➤</Text>
           <Text style={styles.tgBtnLabel}>תמיכה</Text>
         </TouchableOpacity>
       </View>
+
+      <SupportModal
+        visible={showSupport}
+        onClose={() => setShowSupport(false)}
+        user={user}
+      />
+
+      <UpdateDialog />
 
       <Modal
         visible={showDonation}

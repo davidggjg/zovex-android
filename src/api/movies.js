@@ -85,3 +85,40 @@ export async function fetchHistory(userId) {
   const res = await apiCall('/api/history', 'GET', null, userId);
   return Array.isArray(res) ? res : [];
 }
+
+// ── Support / feedback ───────────────────────────────────────────────────────
+// גרסת האפליקציה. חייבת להתאים ל-versionName ב-build.gradle. השרת משווה אליה
+// כדי להחליט אם צריך לכפות עדכון.
+export const APP_VERSION = '1.0.0';
+
+export async function sendFeedback({userId, name, email, text, kind}) {
+  if (!userId || !text) return false;
+  const res = await apiCall('/feedback/send', 'POST', {
+    user_id: userId, name: name || '', email: email || '',
+    text, kind: kind || 'support',
+  });
+  return !!res;
+}
+
+export async function fetchMyFeedback(userId) {
+  if (!userId) return {messages: []};
+  const res = await apiCall(`/feedback/mine?user_id=${encodeURIComponent(userId)}`, 'GET');
+  return res || {messages: []};
+}
+
+// משווה שתי גרסאות "x.y.z". מחזיר -1/0/1.
+export function cmpVersion(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x < y) return -1;
+    if (x > y) return 1;
+  }
+  return 0;
+}
+
+// מחזיר {latest,min,url,notes} או null אם אין חיבור.
+export async function fetchAppVersion() {
+  return apiCall('/app/version', 'GET');
+}
