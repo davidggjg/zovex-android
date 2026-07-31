@@ -112,7 +112,7 @@ export default function SeriesScreen({route, navigation}) {
               </View>
             )}
             <View style={styles.epInfo}>
-              <Text style={styles.epNum}>פרק {item.episode_number}</Text>
+              <Text style={styles.epNum}>פרק {item.episode_number}{item.episode_number_end ? '+' + item.episode_number_end : ''}</Text>
               <Text style={styles.epTitle} numberOfLines={2}>
                 {item.episode_title || item.title}
               </Text>
