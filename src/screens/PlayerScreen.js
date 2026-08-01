@@ -596,10 +596,17 @@ export default function PlayerScreen({route, navigation}) {
   const castable = !!src && !isIframe;
   useEffect(() => {
     if (!castClient || !castable) return;
+    // ל-Chromecast: אם זה זרם מהשרת שלנו (/stream), שולחים דרך /cast שממיר את
+    // האודיו ל-AAC (Chromecast לא מפענח AC3/DTS → אחרת אין קול ב-TV). שאר
+    // המקורות (HLS/שידור חי) נשלחים כמו שהם.
+    const castUrl =
+      !isHlsUrl(src) && src.includes('/stream/')
+        ? src.replace('/stream/', '/cast/')
+        : src;
     castClient
       .loadMedia({
         mediaInfo: {
-          contentUrl: src,
+          contentUrl: castUrl,
           contentType: isHlsUrl(src) ? 'application/x-mpegurl' : 'video/mp4',
           metadata: {
             type: isLive ? 'generic' : 'movie',
