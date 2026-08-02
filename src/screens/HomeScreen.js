@@ -409,7 +409,7 @@ const MovieCard = memo(function MovieCard({item, onPress}) {
     <TouchableOpacity style={[styles.card, {width: CARD_W}]} onPress={() => onPress(item)} activeOpacity={0.8}>
       <View style={[styles.cardImg, {height: CARD_H, borderColor: isLive ? '#e50914' : 'transparent', borderWidth: isLive ? 2 : 0}]}>
         {item.thumbnail_url ? (
-          <Image source={{uri: item.thumbnail_url}} style={styles.cardImgInner} fadeDuration={200} />
+          <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} fadeDuration={200} />
         ) : (
           <View style={styles.noThumb}><Text style={styles.thumbEmoji}>{isLive ? '📡' : '🎬'}</Text></View>
         )}
@@ -1257,6 +1257,7 @@ const styles = StyleSheet.create({
   card: {marginHorizontal: 5, borderRadius: 10, overflow: 'hidden'},
   cardImg: {width: '100%', borderRadius: 10, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
+  cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},
   noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1c1c1e'},
   thumbEmoji: {fontSize: 28},
   cardTitle: {color: '#f2f2f2', fontSize: 11, fontWeight: '700', paddingTop: 5, paddingHorizontal: 2, textAlign: 'right'},
