@@ -18,6 +18,7 @@ import messaging from '@react-native-firebase/messaging';
 import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
+import ZovexIntro from './components/ZovexIntro';
 import {initUserId} from './api/userStore';
 
 const Stack = createNativeStackNavigator();
@@ -156,6 +157,8 @@ function generateCodeVerifier() {
 
 export default function App() {
   const [appReady, setAppReady] = useState(false);
+  // פתיח קולנועי — משחק פעם אחת בפתיחה. מדלגים עליו בטלוויזיה (WebView חלש).
+  const [introDone, setIntroDone] = useState(Platform.isTV);
   const [dialogConfig, setDialogConfig] = useState(null);
   const glowAnim = useRef(new Animated.Value(0)).current;
 
@@ -257,6 +260,11 @@ export default function App() {
     inputRange: [0, 1],
     outputRange: [0.02, 0.2],
   });
+
+  // הפתיח הקולנועי — משחק פעם אחת בכניסה, לפני כל השאר (בזמן שה-boot רץ ברקע).
+  if (!introDone) {
+    return <ZovexIntro onDone={() => setIntroDone(true)} />;
+  }
 
   if (!appReady) {
     return (
