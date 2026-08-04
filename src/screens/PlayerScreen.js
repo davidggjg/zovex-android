@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useMemo} from 'react';
-import {View, StyleSheet, StatusBar, NativeModules} from 'react-native';
+import {View, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
 import {CastButton, useRemoteMediaClient} from 'react-native-google-cast';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
@@ -110,7 +110,7 @@ function isIframeUrl(src, type) {
     .some(d => src.includes(d));
 }
 
-function buildPlayerHtml(movie, src, startTime, isLive, hasNext) {
+function buildPlayerHtml(movie, src, startTime, isLive, hasNext, isTv) {
   const movieJson = JSON.stringify(movie).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   const hls = isHlsUrl(src);
   const iframe = isIframeUrl(src, movie.type || 'direct');
@@ -253,6 +253,7 @@ ${hls ? `<script>${escapeForInlineScript(SHAKA_PLAYER_SOURCE)}</script>
 var MOVIE = ${movieJson};
 var START = ${Math.max(0, Math.floor(startTime || 0))};
 var IS_LIVE = ${isLive ? 'true' : 'false'};
+var IS_TV = ${isTv ? 'true' : 'false'};
 var SRC = ${JSON.stringify(src)};
 var IS_HLS = ${hls ? 'true' : 'false'};
 var STREAM_BACKEND_URL = 'https://zovex.duckdns.org';
@@ -495,13 +496,20 @@ if(IS_HLS){
     initVideo(v);
     window.shaka.polyfill.installAll();
     var player=new window.shaka.Player();
-    // תיקון: שידורים חיים מ-CDN חיצוני נראו נתקעים/קופצים אחורה כל כמה
-    // שניות, בזמן שאותו שידור בדיוק חלק באתר המקור - ברירת המחדל של
-    // Shaka מכוונת ל-VOD, לא לשידור חי מ-CDN שיכול להיות פחות יציב.
-    // חלון buffer גדול יותר רק לשידורים חיים נותן כרית נגד קפיצות רשת.
+    // buffer/זיכרון:
+    // • שידור חי מ-CDN חיצוני: חלון buffer גדול נגד קפיצות/קפיצה-אחורה
+    //   (ברירת המחדל של Shaka מכוונת ל-VOD, פחות יציבה לשידור חי מ-CDN).
+    // • טלוויזיה חכמה (WebView חלש): מגבילים רזולוציה ל-720p וממעיטים buffer,
+    //   כדי לצמצם זיכרון פענוח וידאו ולמנוע קריסת ה-renderer שמוציאה מהאפליקציה.
+    var _cfg={};
     if(IS_LIVE){
-      player.configure({streaming:{bufferingGoal:30,rebufferingGoal:4,retryParameters:{maxAttempts:5,baseDelay:500,backoffFactor:2,timeout:15000}}});
+      _cfg.streaming={bufferingGoal:30,rebufferingGoal:4,retryParameters:{maxAttempts:5,baseDelay:500,backoffFactor:2,timeout:15000}};
     }
+    if(IS_TV){
+      _cfg.restrictions={maxHeight:720};
+      _cfg.streaming=Object.assign({bufferingGoal:16,rebufferingGoal:2},_cfg.streaming||{});
+    }
+    if(Object.keys(_cfg).length)player.configure(_cfg);
     player.attach(v).then(function(){
       return player.load(SRC);
     }).then(function(){
@@ -526,7 +534,7 @@ if(IS_HLS){
     document.getElementById('wrap').insertBefore(v,loader);
     initVideo(v);
     if(window.Hls&&Hls.isSupported()){
-      var hls=new Hls({maxBufferLength:30,enableWorker:false});
+      var hls=new Hls({maxBufferLength:IS_TV?16:30,capLevelToPlayerSize:IS_TV,enableWorker:false});
       hls.loadSource(SRC);hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED,function(){
         if(START>1){try{v.currentTime=START;}catch{}}
@@ -573,6 +581,7 @@ export default function PlayerScreen({route, navigation}) {
   const progressRef = useRef({position: startTime, duration: 0});
   const seriesEpisodesRef = useRef(seriesEpisodes);
   const isLive = !!movie.is_live;
+  const isTv = Platform.isTV; // טלוויזיה חכמה (Android TV) — WebView חלש יותר
   const webViewRef = useRef(null);
   const nextEpIdx = seriesEpisodes ? seriesEpisodes.findIndex(e => e.id === movie.id) : -1;
   const hasNext = nextEpIdx >= 0 && nextEpIdx < (seriesEpisodes?.length ?? 0) - 1;
@@ -583,17 +592,19 @@ export default function PlayerScreen({route, navigation}) {
     const iframe = isIframeUrl(s, movie.type || 'direct');
     return {
       src: s,
-      html: buildPlayerHtml(movie, s, isLive ? 0 : startTime, isLive, hasNext),
+      html: buildPlayerHtml(movie, s, isLive ? 0 : startTime, isLive, hasNext, isTv),
       isIframe: iframe,
     };
-  }, [movie, startTime, isLive, hasNext]);
+  }, [movie, startTime, isLive, hasNext, isTv]);
 
   // ── Chromecast: כפתור שידור לטלוויזיה ──
   // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה) שאי אפשר
   // לשדר דרך ה-receiver הרגיל. כשמתחברים למכשיר cast: טוענים אליו את הסרט
   // ומשהים את הנגן המקומי כדי שלא יתנגן פעמיים.
   const castClient = useRemoteMediaClient();
-  const castable = !!src && !isIframe;
+  // Google Cast הוא SDK של "שולח" — על טלוויזיה חכמה (מקלט בעצמה) הוא עלול
+  // לקרוס ולהוציא מהאפליקציה. מכבים אותו לגמרי במצב טלוויזיה.
+  const castable = !!src && !isIframe && !isTv;
   useEffect(() => {
     if (!castClient || !castable) return;
     // ל-Chromecast: אם זה זרם מהשרת שלנו (/stream), שולחים דרך /cast שממיר את
@@ -709,6 +720,9 @@ export default function PlayerScreen({route, navigation}) {
         allowUniversalAccessFromFileURLs
         startInLoadingState={false}
         onMessage={onMessage}
+        // אם ה-renderer של ה-WebView קורס (למשל מחוסר זיכרון בטלוויזיה),
+        // חוזרים אחורה בעדינות במקום שכל האפליקציה תיפול ותיסגר.
+        onRenderProcessGone={() => { try { navigation.goBack(); } catch (_) {} }}
         onMessageForMainFrameOnly={false}
         injectedJavaScriptForMainFrameOnly={false}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
