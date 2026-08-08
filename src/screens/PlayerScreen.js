@@ -1,8 +1,9 @@
-import React, {useEffect, useRef, useMemo} from 'react';
+import React, {useEffect, useRef, useMemo, useState} from 'react';
 import {View, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
-import {CastButton, useRemoteMediaClient} from 'react-native-google-cast';
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
+import CastLayer from '../components/CastLayer';
 import SHAKA_PLAYER_SOURCE from '../assets/shakaPlayerSource';
 import HLS_JS_SOURCE from '../assets/hlsJsSource';
 
@@ -598,40 +599,29 @@ export default function PlayerScreen({route, navigation}) {
   }, [movie, startTime, isLive, hasNext, isTv]);
 
   // ── Chromecast: כפתור שידור לטלוויזיה ──
-  // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה) שאי אפשר
-  // לשדר דרך ה-receiver הרגיל. כשמתחברים למכשיר cast: טוענים אליו את הסרט
-  // ומשהים את הנגן המקומי כדי שלא יתנגן פעמיים.
-  const castClient = useRemoteMediaClient();
-  // Google Cast הוא SDK של "שולח" — על טלוויזיה חכמה (מקלט בעצמה) הוא עלול
-  // לקרוס ולהוציא מהאפליקציה. מכבים אותו לגמרי במצב טלוויזיה.
-  const castable = !!src && !isIframe && !isTv;
+  // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה).
+  // קריטי: Google Cast נשען על Google Play Services + Cast SDK. במכשירים בלי GMS
+  // (טלפוני Qin, חלק מהטלוויזיות) עצם הטעינה של Cast מקריסה את האפליקציה כשנכנסים
+  // לנגן. לכן מרכיבים את שכבת ה-Cast (CastLayer) *רק* אחרי שווידאנו ש-GMS זמין.
+  const castable = !!src && !isIframe;
+  const [castOk, setCastOk] = useState(false);
   useEffect(() => {
-    if (!castClient || !castable) return;
-    // ל-Chromecast: אם זה זרם מהשרת שלנו (/stream), שולחים דרך /cast שממיר את
-    // האודיו ל-AAC (Chromecast לא מפענח AC3/DTS → אחרת אין קול ב-TV). שאר
-    // המקורות (HLS/שידור חי) נשלחים כמו שהם.
-    const castUrl =
-      !isHlsUrl(src) && src.includes('/stream/')
-        ? src.replace('/stream/', '/cast/')
-        : src;
-    castClient
-      .loadMedia({
-        mediaInfo: {
-          contentUrl: castUrl,
-          contentType: isHlsUrl(src) ? 'application/x-mpegurl' : 'video/mp4',
-          metadata: {
-            type: isLive ? 'generic' : 'movie',
-            title: movie.title || 'ZOVEX',
-            images: movie.thumbnail_url ? [{url: movie.thumbnail_url}] : [],
-          },
-        },
-        startTime: Math.floor(isLive ? 0 : startTime || 0),
-      })
-      .catch(() => {});
+    let alive = true;
+    GoogleSignin.hasPlayServices({showPlayServicesUpdateDialog: false})
+      .then(() => { if (alive) setCastOk(true); })
+      .catch(() => { if (alive) setCastOk(false); });
+    return () => { alive = false; };
+  }, []);
+  // ל-Chromecast: זרם מהשרת שלנו (/stream) נשלח דרך /cast שממיר אודיו ל-AAC
+  // (Chromecast לא מפענח AC3/DTS → אחרת אין קול ב-TV). שאר המקורות כמו שהם.
+  const castUrl =
+    src && !isHlsUrl(src) && src.includes('/stream/')
+      ? src.replace('/stream/', '/cast/')
+      : src;
+  const pauseLocalForCast = () =>
     webViewRef.current?.injectJavaScript(
       "var v=document.querySelector('video');if(v)v.pause();true;",
     );
-  }, [castClient, castable, src, isLive, startTime, movie.title, movie.thumbnail_url]);
 
   useEffect(() => {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
@@ -729,7 +719,17 @@ export default function PlayerScreen({route, navigation}) {
         mixedContentMode="always"
         originWhitelist={['*']}
       />
-      {castable ? <CastButton style={styles.castBtn} /> : null}
+      {castOk && castable ? (
+        <CastLayer
+          castUrl={castUrl}
+          contentType={isHlsUrl(src) ? 'application/x-mpegurl' : 'video/mp4'}
+          isLive={isLive}
+          title={movie.title || 'ZOVEX'}
+          images={movie.thumbnail_url ? [{url: movie.thumbnail_url}] : []}
+          startTime={startTime}
+          onCasting={pauseLocalForCast}
+        />
+      ) : null}
     </View>
   );
 }
