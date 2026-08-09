@@ -71,13 +71,21 @@ class MainActivity : ReactActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (!PipModule.videoActive) return
+        // חשוב: בודקים שהמכשיר תומך ב-PiP (FEATURE_PICTURE_IN_PICTURE) לפני הקריאה.
+        // בטלפונים בלי תמיכת PiP (Qin F21/F22 Pro ורומים כשרים) enterPictureInPictureMode
+        // זורק IllegalStateException ומקריס את האפליקציה כשסוגרים בזמן שסרט רץ.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+            PipModule.supportsPip(this)) {
             // Android 8–11: manually enter PiP when user presses home, only if video is playing
-            val params = PictureInPictureParams.Builder()
-                .setAspectRatio(Rational(16, 9))
-                .build()
-            enterPictureInPictureMode(params)
+            try {
+                val params = PictureInPictureParams.Builder()
+                    .setAspectRatio(Rational(16, 9))
+                    .build()
+                enterPictureInPictureMode(params)
+            } catch (_: Exception) {
+                // מכשיר לא תומך / מצב לא-פולסקרין — מדלגים במקום להקריס.
+            }
         }
     }
 

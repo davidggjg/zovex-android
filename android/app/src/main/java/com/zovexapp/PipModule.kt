@@ -21,6 +21,15 @@ class PipModule(private val reactContext: ReactApplicationContext) :
         @Volatile var videoActive = false
         @Volatile var isFullscreen = false
 
+        // האם המכשיר בכלל תומך ב-Picture-in-Picture. טלפונים חלשים / רומים כשרים
+        // (Qin F21/F22 Pro וכו') לרוב לא מכריזים על FEATURE_PICTURE_IN_PICTURE,
+        // וקריאה ל-enterPictureInPictureMode/setPictureInPictureParams עליהם זורקת
+        // IllegalStateException ומקריסה את האפליקציה (למשל כשסוגרים בזמן שסרט רץ).
+        fun supportsPip(activity: Activity): Boolean =
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            activity.packageManager.hasSystemFeature(
+                android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
         // Shared immersive-mode logic. Exposed so MainActivity can re-apply
         // the exact same state whenever the window gets re-laid out
         // (rotation, fold/unfold, split-screen, large-screen size-class
@@ -65,12 +74,14 @@ class PipModule(private val reactContext: ReactApplicationContext) :
     fun setVideoPlaying(playing: Boolean) {
         videoActive = playing
         val activity = currentActivity ?: return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && supportsPip(activity)) {
             val params = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
                 .setAutoEnterEnabled(playing)
                 .build()
-            activity.runOnUiThread { activity.setPictureInPictureParams(params) }
+            activity.runOnUiThread {
+                try { activity.setPictureInPictureParams(params) } catch (_: Exception) {}
+            }
         }
     }
 
