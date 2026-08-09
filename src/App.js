@@ -15,6 +15,7 @@ import {
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import messaging from '@react-native-firebase/messaging';
+import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
@@ -233,7 +234,20 @@ export default function App() {
         },
       );
     }
+    // FCM נשען על Google Play Services. במכשירים בלי GMS (Qin F22/F21 Pro,
+    // חלק מהטלוויזיות) כיבינו את האתחול-האוטומטי במניפסט, וכאן ניגשים ל-FCM רק
+    // אחרי שאימתנו ש-GMS קיים — כדי לא לגעת ב-GMS על מכשירים שאין בהם.
+    let gms = false;
     try {
+      gms = await GoogleSignin.hasPlayServices({
+        showPlayServicesUpdateDialog: false,
+      });
+    } catch (_) {
+      gms = false;
+    }
+    if (!gms) return;
+    try {
+      messaging().setAutoInitEnabled(true).catch(() => {});
       const authStatus = await messaging().requestPermission();
       const enabled =
         authStatus === messaging.AuthorizationStatus.AUTHORIZED ||

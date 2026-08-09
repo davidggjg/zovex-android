@@ -19,6 +19,17 @@
         android:usesCleartextTraffic="true"
         android:banner="@drawable/tv_banner">
 
+        <!-- מכבים את האתחול-האוטומטי של FCM בעלייה. על מכשירים בלי Google Play
+             Services (Qin F22/F21 Pro, טלוויזיות מסוימות) האתחול האוטומטי מנסה
+             לפנות ל-GMS בזמן ה-boot ועלול להקריס. במקום זה מפעילים את FCM ידנית
+             מ-JS רק אחרי שווידאנו ש-GMS קיים (setAutoInitEnabled(true)). -->
+        <meta-data
+            android:name="firebase_messaging_auto_init_enabled"
+            android:value="false" />
+        <meta-data
+            android:name="firebase_analytics_collection_enabled"
+            android:value="false" />
+
         <!-- Chromecast: מצביע על ה-OptionsProvider -->
         <meta-data
             android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"

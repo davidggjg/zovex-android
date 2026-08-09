@@ -3,7 +3,9 @@ import {View, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native
 import {WebView} from 'react-native-webview';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
-import CastLayer from '../components/CastLayer';
+// שים לב: CastLayer (ואיתו react-native-google-cast) *לא* מיובא כאן ברמת המודול
+// בכוונה — הוא נטען עצלנית (require) רק אחרי שווידאנו GMS, כדי שעל מכשירים בלי
+// Google Play Services המודול של Cast לא ייטען בכלל.
 import SHAKA_PLAYER_SOURCE from '../assets/shakaPlayerSource';
 import HLS_JS_SOURCE from '../assets/hlsJsSource';
 
@@ -612,6 +614,9 @@ export default function PlayerScreen({route, navigation}) {
       .catch(() => { if (alive) setCastOk(false); });
     return () => { alive = false; };
   }, []);
+  // טעינה עצלנית: מושכים את react-native-google-cast רק כשיש GMS. על מכשירים בלי
+  // GMS (Qin F22/F21 Pro) המודול הזה לא נטען כלל — אפס נגיעה ב-Cast.
+  const CastLayer = castOk ? require('../components/CastLayer').default : null;
   // ל-Chromecast: זרם מהשרת שלנו (/stream) נשלח דרך /cast שממיר אודיו ל-AAC
   // (Chromecast לא מפענח AC3/DTS → אחרת אין קול ב-TV). שאר המקורות כמו שהם.
   const castUrl =
@@ -719,7 +724,7 @@ export default function PlayerScreen({route, navigation}) {
         mixedContentMode="always"
         originWhitelist={['*']}
       />
-      {castOk && castable ? (
+      {castOk && castable && CastLayer ? (
         <CastLayer
           castUrl={castUrl}
           contentType={isHlsUrl(src) ? 'application/x-mpegurl' : 'video/mp4'}
