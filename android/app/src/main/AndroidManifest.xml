@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -25,10 +26,12 @@
              מ-JS רק אחרי שווידאנו ש-GMS קיים (setAutoInitEnabled(true)). -->
         <meta-data
             android:name="firebase_messaging_auto_init_enabled"
-            android:value="false" />
+            android:value="false"
+            tools:replace="android:value" />
         <meta-data
             android:name="firebase_analytics_collection_enabled"
-            android:value="false" />
+            android:value="false"
+            tools:replace="android:value" />
 
         <!-- Chromecast: מצביע על ה-OptionsProvider -->
         <meta-data
