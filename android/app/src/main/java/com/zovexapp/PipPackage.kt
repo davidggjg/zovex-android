@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class PipPackage : ReactPackage {
     override fun createNativeModules(ctx: ReactApplicationContext): List<NativeModule> =
-        listOf(PipModule(ctx))
+        listOf(PipModule(ctx), ApkInstallerModule(ctx))
 
     override fun createViewManagers(ctx: ReactApplicationContext): List<ViewManager<*, *>> =
         emptyList()

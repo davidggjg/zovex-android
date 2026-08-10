@@ -1,15 +1,45 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // ZOVEX · דיאלוג עדכון. בהפעלה בודק מול השרת (/app/version) מהי הגרסה האחרונה
 // והמינימלית. אם הגרסה של המשתמש נמוכה מהמינימלית → דיאלוג חוסם (חובה לעדכן).
-// אם נמוכה מהאחרונה בלבד → הצעה לעדכן שאפשר לסגור. הקישור מגיע מהשרת.
+// אם נמוכה מהאחרונה בלבד → הצעה לעדכן שאפשר לסגור.
+//
+// העדכון מתבצע *בתוך האפליקציה*: מורידים את ה-APK לתיקיית המטמון עם אחוזי
+// התקדמות, ואז פותחים את מתקין המערכת על הקובץ. המשתמש רק מאשר "התקן" — בלי
+// דפדפן ובלי גיטהאב. אם ההורדה/ההתקנה נכשלת (למשל רום נעול שחוסם התקנות),
+// נופלים חזרה לפתיחת הקישור בדפדפן כדי שתמיד תהיה דרך לעדכן.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {useEffect, useState} from 'react';
-import {View, Text, Modal, TouchableOpacity, StyleSheet, Linking} from 'react-native';
+import {
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
+  StyleSheet,
+  Linking,
+  NativeModules,
+} from 'react-native';
+import RNFS from 'react-native-fs';
 import {fetchAppVersion, cmpVersion, APP_VERSION} from '../api/movies';
 
+const {ApkInstaller} = NativeModules;
+
+// הקישור מהשרת הוא דף שחרור (…/releases/latest). כדי להוריד בתוך האפליקציה
+// צריך קישור ישיר לקובץ. אם השרת סיפק שדה apk — משתמשים בו; אחרת גוזרים אותו.
+function directApkUrl(v) {
+  if (v && v.apk) return v.apk;
+  const u = (v && v.url) || '';
+  if (/\/releases\/latest\/?$/.test(u)) {
+    return u.replace(/\/+$/, '') + '/download/zovex.apk';
+  }
+  if (/\.apk$/i.test(u)) return u;
+  return 'https://github.com/davidggjg/zovex-android/releases/latest/download/zovex.apk';
+}
+
 export default function UpdateDialog() {
-  const [state, setState] = useState(null); // {forced, url, notes, latest}
+  const [state, setState] = useState(null); // {forced, url, notes, latest, apk}
   const [dismissed, setDismissed] = useState(false);
+  const [pct, setPct] = useState(-1); // -1 = לא מוריד
+  const [err, setErr] = useState('');
 
   useEffect(() => {
     let alive = true;
@@ -22,6 +52,7 @@ export default function UpdateDialog() {
         setState({
           forced: belowMin,
           url: v.url || 'https://github.com/davidggjg/zovex-android/releases/latest',
+          apk: directApkUrl(v),
           notes: v.notes || '',
           latest: v.latest || '',
         });
@@ -33,11 +64,57 @@ export default function UpdateDialog() {
   if (!state) return null;
   if (dismissed && !state.forced) return null;
 
-  const open = () => Linking.openURL(state.url).catch(() => {});
+  const openInBrowser = () => Linking.openURL(state.url).catch(() => {});
+
+  const startUpdate = async () => {
+    setErr('');
+    // בלי המודול המקורי (בנייה ישנה) — נופלים לדפדפן.
+    if (!ApkInstaller) return openInBrowser();
+    try {
+      // אנדרואיד 8+: צריך אישור חד-פעמי "התקנת אפליקציות לא ידועות".
+      const allowed = await ApkInstaller.canInstall();
+      if (!allowed) {
+        setErr('כדי לעדכן מתוך האפליקציה — אשרו "התקנת אפליקציות לא ידועות", ואז לחצו שוב על עדכן.');
+        await ApkInstaller.openInstallSettings().catch(() => {});
+        return;
+      }
+      const dest = `${RNFS.CachesDirectoryPath}/zovex-update.apk`;
+      if (await RNFS.exists(dest)) {
+        await RNFS.unlink(dest).catch(() => {});
+      }
+      setPct(0);
+      const task = RNFS.downloadFile({
+        fromUrl: state.apk,
+        toFile: dest,
+        // GitHub מפנה ל-CDN — react-native-fs עוקב אחרי ההפניה בעצמו.
+        progressDivider: 1,
+        begin: () => setPct(0),
+        progress: r => {
+          if (r.contentLength > 0) {
+            setPct(Math.round((r.bytesWritten / r.contentLength) * 100));
+          }
+        },
+      });
+      const res = await task.promise;
+      if (res.statusCode !== 200) throw new Error('HTTP ' + res.statusCode);
+      const st = await RNFS.stat(dest);
+      // שפיות: APK אמיתי הוא כמה מגה. קובץ זעיר = דף שגיאה שהורד בטעות.
+      if (Number(st.size) < 1000000) throw new Error('הקובץ שהתקבל אינו תקין');
+      setPct(100);
+      await ApkInstaller.install(dest);
+      // המתקין נפתח — משאירים את המסך כמו שהוא; אחרי ההתקנה האפליקציה תופעל מחדש.
+    } catch (e) {
+      setPct(-1);
+      setErr('העדכון האוטומטי נכשל. פותח את הדף להורדה ידנית…');
+      setTimeout(openInBrowser, 1200);
+    }
+  };
+
+  const downloading = pct >= 0;
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={() => {
-      if (!state.forced) setDismissed(true);
+      if (!state.forced && !downloading) setDismissed(true);
     }}>
       <View style={styles.overlay}>
         <View style={styles.card}>
@@ -54,10 +131,25 @@ export default function UpdateDialog() {
           {state.latest ? (
             <Text style={styles.ver}>גרסה {state.latest}</Text>
           ) : null}
-          <TouchableOpacity style={styles.updateBtn} onPress={open} activeOpacity={0.85}>
-            <Text style={styles.updateTxt}>⬇️ עדכן עכשיו</Text>
-          </TouchableOpacity>
-          {!state.forced && (
+
+          {downloading ? (
+            <View style={styles.progWrap}>
+              <View style={styles.progTrack}>
+                <View style={[styles.progFill, {width: `${Math.max(pct, 2)}%`}]} />
+              </View>
+              <Text style={styles.progTxt}>
+                {pct >= 100 ? 'מתקין…' : `מוריד עדכון… ${pct}%`}
+              </Text>
+            </View>
+          ) : (
+            <TouchableOpacity style={styles.updateBtn} onPress={startUpdate} activeOpacity={0.85}>
+              <Text style={styles.updateTxt}>⬇️ עדכן עכשיו</Text>
+            </TouchableOpacity>
+          )}
+
+          {err ? <Text style={styles.err}>{err}</Text> : null}
+
+          {!state.forced && !downloading && (
             <TouchableOpacity style={styles.laterBtn} onPress={() => setDismissed(true)}>
               <Text style={styles.laterTxt}>אחר כך</Text>
             </TouchableOpacity>
@@ -79,4 +171,9 @@ const styles = StyleSheet.create({
   updateTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
   laterBtn: {paddingVertical: 12, marginTop: 4},
   laterTxt: {color: '#777', fontSize: 14},
+  progWrap: {width: '100%', marginTop: 10},
+  progTrack: {width: '100%', height: 10, borderRadius: 6, backgroundColor: '#2a2a2a', overflow: 'hidden'},
+  progFill: {height: '100%', backgroundColor: '#e50914', borderRadius: 6},
+  progTxt: {color: '#ddd', fontSize: 14, textAlign: 'center', marginTop: 10, fontWeight: '700'},
+  err: {color: '#ff8a8a', fontSize: 13, textAlign: 'center', marginTop: 12, lineHeight: 19},
 });
