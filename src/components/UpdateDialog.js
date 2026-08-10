@@ -23,16 +23,16 @@ import {fetchAppVersion, cmpVersion, APP_VERSION} from '../api/movies';
 
 const {ApkInstaller} = NativeModules;
 
-// הקישור מהשרת הוא דף שחרור (…/releases/latest). כדי להוריד בתוך האפליקציה
-// צריך קישור ישיר לקובץ. אם השרת סיפק שדה apk — משתמשים בו; אחרת גוזרים אותו.
+// קובץ העדכון מוגש מהשרת שלנו (/app/apk) — המשתמש לעולם לא נחשף למקור החיצוני
+// שממנו הקובץ מגיע. השרת מחזיר שדה apk; אם משום מה אין — נופלים לברירת המחדל
+// של הדומיין שלנו, אף פעם לא לקישור חיצוני.
+const APK_FALLBACK = 'https://zovex.duckdns.org/app/apk';
+
 function directApkUrl(v) {
   if (v && v.apk) return v.apk;
   const u = (v && v.url) || '';
-  if (/\/releases\/latest\/?$/.test(u)) {
-    return u.replace(/\/+$/, '') + '/download/zovex.apk';
-  }
   if (/\.apk$/i.test(u)) return u;
-  return 'https://github.com/davidggjg/zovex-android/releases/latest/download/zovex.apk';
+  return APK_FALLBACK;
 }
 
 export default function UpdateDialog() {
@@ -51,7 +51,7 @@ export default function UpdateDialog() {
       if (belowMin || belowLatest) {
         setState({
           forced: belowMin,
-          url: v.url || 'https://github.com/davidggjg/zovex-android/releases/latest',
+          url: directApkUrl(v),   // גם הנפילה-לאחור נשארת בדומיין שלנו
           apk: directApkUrl(v),
           notes: v.notes || '',
           latest: v.latest || '',
