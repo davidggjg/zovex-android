@@ -609,14 +609,28 @@ export default function PlayerScreen({route, navigation}) {
   const [castOk, setCastOk] = useState(false);
   useEffect(() => {
     let alive = true;
+    // חובה לבדוק את *הערך* שחוזר ולא רק שההבטחה לא נדחתה: במכשירים בלי GMS
+    // hasPlayServices לא תמיד זורק — הוא פשוט מחזיר false. הקוד הקודם הדליק
+    // את ה-Cast בכל מקרה שלא נזרקה שגיאה, ואז נטענה ספריית Cast שכבר הוסרה
+    // מהאפליקציה במכשירים האלה (ראה MainApplication) — והאפליקציה קרסה
+    // בכניסה לנגן. ב-App.js אותה בדיקה כבר נעשית נכון.
     GoogleSignin.hasPlayServices({showPlayServicesUpdateDialog: false})
-      .then(() => { if (alive) setCastOk(true); })
+      .then(ok => { if (alive) setCastOk(ok === true); })
       .catch(() => { if (alive) setCastOk(false); });
     return () => { alive = false; };
   }, []);
   // טעינה עצלנית: מושכים את react-native-google-cast רק כשיש GMS. על מכשירים בלי
   // GMS (Qin F22/F21 Pro) המודול הזה לא נטען כלל — אפס נגיעה ב-Cast.
-  const CastLayer = castOk ? require('../components/CastLayer').default : null;
+  // ה-require עטוף גם ב-try: אם בכל זאת נגיע לכאן בלי המודול המקורי (הוא מוסר
+  // מהאפליקציה כשאין GMS), עדיף שכפתור השידור פשוט לא יופיע מאשר שהנגן ייפול.
+  const CastLayer = useMemo(() => {
+    if (!castOk) return null;
+    try {
+      return require('../components/CastLayer').default;
+    } catch (e) {
+      return null;
+    }
+  }, [castOk]);
   // ל-Chromecast: זרם מהשרת שלנו (/stream) נשלח דרך /cast שממיר אודיו ל-AAC
   // (Chromecast לא מפענח AC3/DTS → אחרת אין קול ב-TV). שאר המקורות כמו שהם.
   const castUrl =

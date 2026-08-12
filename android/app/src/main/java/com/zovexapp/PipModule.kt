@@ -108,8 +108,13 @@ class PipModule(private val reactContext: ReactApplicationContext) :
                 } else {
                     android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                 }
-            } catch (_: IllegalStateException) {
-                // Not fullscreen (split-screen/freeform/PiP) — ignore.
+            } catch (_: Throwable) {
+                // Not fullscreen (split-screen/freeform/PiP), or a ROM that
+                // refuses orientation changes outright. Catching only
+                // IllegalStateException was not enough: anything else thrown
+                // here runs on the UI thread and takes the whole app down.
+                // setLandscape(false) is called while leaving the player,
+                // which is exactly when the crash on exit was reported.
             }
         }
     }
