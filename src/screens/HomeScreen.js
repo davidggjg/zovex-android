@@ -627,6 +627,14 @@ export default function HomeScreen({navigation, route}) {
     if (!Array.isArray(movies)) return [];
     const seen = {};
     const result = [];
+    // שידורים חיים יושבים ברשימה נפרדת, והלולאה למטה מדלגת עליהם (m.is_live).
+    // לכן חיפוש בקטגוריית "הכל" לא החזיר אף ערוץ — הם היו מגיעים רק כשבוחרים
+    // במפורש את קטגוריית השידורים החיים. בחיפוש מצרפים אותם לתוצאות.
+    if (cat === 'הכל' && qTokens.length && Array.isArray(liveChannels)) {
+      liveChannels.forEach(ch => {
+        if (ch && matchQ(ch.title, ch.name)) result.push({...ch, is_live: true});
+      });
+    }
     movies.forEach(m => {
       if (!m || m.is_live) return;
       const title = m.title || '';
@@ -648,7 +656,7 @@ export default function HomeScreen({navigation, route}) {
       }
     });
     return result;
-  }, [movies, liveChannels, history, seriesMap, matchQ, downloads]);
+  }, [movies, liveChannels, history, seriesMap, matchQ, qTokens, downloads]);
 
   const netflixRows = useMemo(() => {
     const rows = [];
