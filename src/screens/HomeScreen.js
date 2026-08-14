@@ -586,7 +586,20 @@ export default function HomeScreen({navigation, route}) {
     return tabs;
   }, [movies, liveChannels]);
 
-  const q = useMemo(() => search.toLowerCase(), [search]);
+  // נרמול חיפוש — זהה לזה שבאתר. חיפוש תת-מחרוזת פשוט על הכותרת בלבד החמיץ
+  // כמעט הכל: ניקוד, גרשיים, שם באנגלית, וכל חיפוש של יותר ממילה אחת שלא
+  // מופיעה כרצף מדויק ("דרגון סופר" לא מצא "דרגון בול סופר").
+  const norm = s => (s == null ? '' : String(s)).toLowerCase()
+    .replace(/[\u0591-\u05C7]/g, '')                        // ניקוד עברי
+    .replace(/["'`\u05F3\u05F4\u2018\u2019\u201C\u201D]/g, '')  // גרשיים
+    .replace(/\s+/g, ' ').trim();
+  const qTokens = useMemo(
+    () => norm(search).split(' ').filter(Boolean), [search]);
+  const matchQ = useCallback((...fields) => {
+    if (!qTokens.length) return true;
+    const hay = fields.map(norm).join(' ');
+    return qTokens.every(t => hay.includes(t));      // כל מילה, בכל סדר
+  }, [qTokens]);
 
   const getItemsForCategory = useCallback(cat => {
     if (cat === 'שידורים חיים') {
@@ -594,7 +607,7 @@ export default function HomeScreen({navigation, route}) {
       return liveChannels
         .filter(ch => {
           if (!ch) return false;
-          return (ch.title || ch.name || '').toLowerCase().includes(q);
+          return matchQ(ch.title, ch.name);
         });
     }
     if (cat === 'היסטוריה') {
@@ -618,8 +631,8 @@ export default function HomeScreen({navigation, route}) {
       if (!m || m.is_live) return;
       const title = m.title || '';
       const seriesName = m.series_name || '';
-      const matchQ = String(title).toLowerCase().includes(q) || String(seriesName).toLowerCase().includes(q);
-      if (!matchQ || (cat !== 'הכל' && m.category !== cat)) return;
+      const hit = matchQ(title, seriesName, m.en_title, m.original_title);
+      if (!hit || (cat !== 'הכל' && m.category !== cat)) return;
       if (seriesName) {
         if (!seen[seriesName] && seriesMap && seriesMap[seriesName]) {
           seen[seriesName] = true;
@@ -635,7 +648,7 @@ export default function HomeScreen({navigation, route}) {
       }
     });
     return result;
-  }, [movies, liveChannels, history, seriesMap, q, downloads]);
+  }, [movies, liveChannels, history, seriesMap, matchQ, downloads]);
 
   const netflixRows = useMemo(() => {
     const rows = [];
