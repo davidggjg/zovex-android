@@ -38,7 +38,7 @@ import {
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
-import {DISCORD_URL} from '../config/links';
+import {DISCORD_URL, TELEGRAM_URL} from '../config/links';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
@@ -298,6 +298,35 @@ const mdStyles = StyleSheet.create({
 });
 
 // ── HeroBanner ────────────────────────────────────────────────────────────────
+
+// פוטר קבוע בתחתית מסך הבית — מקביל לפוטר שבאתר. גלוי גם לאורחים (שאין להם
+// תפריט משתמש), כדי שהתנאים והמדיניות יהיו נגישים לכולם, לא רק למחוברים.
+function HomeFooter({navigation}) {
+  const link = doc => () => navigation.navigate('Legal', {doc});
+  const open = url => () => Linking.openURL(url).catch(() => {});
+  return (
+    <View style={ftStyles.wrap}>
+      <View style={ftStyles.row}>
+        <TouchableOpacity onPress={link('about')}><Text style={ftStyles.link}>אודות</Text></TouchableOpacity>
+        <TouchableOpacity onPress={link('terms')}><Text style={ftStyles.link}>תנאי שימוש</Text></TouchableOpacity>
+        <TouchableOpacity onPress={link('privacy')}><Text style={ftStyles.link}>פרטיות</Text></TouchableOpacity>
+        <TouchableOpacity onPress={link('copyright')}><Text style={ftStyles.link}>זכויות יוצרים</Text></TouchableOpacity>
+      </View>
+      <View style={ftStyles.row}>
+        <TouchableOpacity onPress={open(DISCORD_URL)}><Text style={[ftStyles.link, {color: '#7c85f5'}]}>דיסקורד</Text></TouchableOpacity>
+        <TouchableOpacity onPress={open(TELEGRAM_URL)}><Text style={[ftStyles.link, {color: '#5b9bd5'}]}>טלגרם</Text></TouchableOpacity>
+      </View>
+      <Text style={ftStyles.note}>ZOVEX · שירות חינמי, ללא מטרות רווח</Text>
+    </View>
+  );
+}
+
+const ftStyles = StyleSheet.create({
+  wrap: {borderTopWidth: 1, borderTopColor: '#1c1c1c', marginTop: 20, paddingTop: 18, paddingBottom: 30, paddingHorizontal: 16},
+  row: {flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 16, marginBottom: 10},
+  link: {color: '#888', fontSize: 13},
+  note: {color: '#555', fontSize: 11, textAlign: 'center', marginTop: 4},
+});
 
 function HeroBanner({movies, onPlay, onInfo}) {
   const heroMovies = useMemo(() => {
@@ -864,6 +893,16 @@ export default function HomeScreen({navigation, route}) {
           }}>
           <Text style={styles.skipBtnText}>המשך ללא כניסה</Text>
         </TouchableOpacity>
+        {/* מדיניות Google Play מחייבת קישור נגיש לתנאים ולפרטיות במסך הכניסה,
+            והמסך הזה מוצג עוד לפני שיש תפריט משתמש — אחרת אורח לא מגיע לתנאים כלל. */}
+        <Text style={styles.signInLegal}>
+          בכניסה או בהמשך אתה מסכים ל
+          <Text style={styles.signInLegalLink}
+                onPress={() => navigation.navigate('Legal', {doc: 'terms'})}> תנאי השימוש </Text>
+          ול
+          <Text style={styles.signInLegalLink}
+                onPress={() => navigation.navigate('Legal', {doc: 'privacy'})}>מדיניות הפרטיות</Text>
+        </Text>
       </View>
     );
   }
@@ -1031,6 +1070,7 @@ export default function HomeScreen({navigation, route}) {
             <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
           )}
           ListHeaderComponent={<HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />}
+          ListFooterComponent={<HomeFooter navigation={navigation} />}
           ListEmptyComponent={<Text style={styles.empty}>אין תוכן זמין</Text>}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
@@ -1189,6 +1229,8 @@ const styles = StyleSheet.create({
   googleBtnText: {color: '#fff', fontSize: 16, fontWeight: '700'},
   skipBtn: {paddingVertical: 12, paddingHorizontal: 24},
   skipBtnText: {color: '#555', fontSize: 14},
+  signInLegal: {color: '#555', fontSize: 12, textAlign: 'center', marginTop: 26, paddingHorizontal: 30, lineHeight: 19},
+  signInLegalLink: {color: '#8ab4f8', fontWeight: '600'},
 
   // ── Top bar ──
   topBar: {
