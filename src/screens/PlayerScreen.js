@@ -113,13 +113,21 @@ function isIframeUrl(src, type) {
     .some(d => src.includes(d));
 }
 
+// בריחת HTML לתוכן ולתכונות. שדות התוכן (title, episode_title, וכתובת
+// ה-src של ה-iframe) מגיעים מהקטלוג ומוזרקים ל-HTML של הנגן; בלי בריחה,
+// גרש כפול בכתובת שובר מתוך התכונה ומאפשר הזרקת סקריפט — מסוכן במיוחד כאן
+// כי ל-WebView יש הרשאות גישה לקבצים מקומיים.
+const escHtml = s => String(s == null ? '' : s)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escAttr = s => escHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
 function buildPlayerHtml(movie, src, startTime, isLive, hasNext, isTv) {
   const movieJson = JSON.stringify(movie).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   const hls = isHlsUrl(src);
   const iframe = isIframeUrl(src, movie.type || 'direct');
   const episodeLabel = movie.episode_title
-    ? `פרק ${movie.episode_number} - ${movie.episode_title}`
-    : movie.episode_number ? `פרק ${movie.episode_number}` : '';
+    ? `פרק ${escHtml(movie.episode_number)} - ${escHtml(movie.episode_title)}`
+    : movie.episode_number ? `פרק ${escHtml(movie.episode_number)}` : '';
 
   if (iframe) {
     return `<!DOCTYPE html><html><head>
@@ -134,12 +142,12 @@ iframe{flex:1;border:none;width:100%;min-height:0}
 <div class="bar">
   <button class="x" onclick="postMsg({type:'close'})">✕</button>
   <div style="flex:1;text-align:center">
-    <div class="ttl">${(movie.title || '').replace(/</g, '&lt;')}</div>
+    <div class="ttl">${escHtml(movie.title)}</div>
     ${episodeLabel ? `<div class="ep">${episodeLabel}</div>` : ''}
   </div>
   <div style="width:36px"></div>
 </div>
-<iframe src="${src}" allowfullscreen allow="autoplay;encrypted-media;picture-in-picture;fullscreen"></iframe>
+<iframe src="${escAttr(src)}" allowfullscreen allow="autoplay;encrypted-media;picture-in-picture;fullscreen"></iframe>
 <script>
 function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.postMessage(JSON.stringify(m));}catch{}}
 </script>
@@ -212,7 +220,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
     <div id="topbar">
       <button class="xbtn" id="closebtn">✕</button>
       <div id="ttl">
-        <div class="main">${(movie.title || '').replace(/</g, '&lt;')}</div>
+        <div class="main">${escHtml(movie.title)}</div>
         ${episodeLabel ? `<div class="sub">${episodeLabel.replace(/</g, '&lt;')}</div>` : ''}
       </div>
       <button class="xbtn" id="sharebtn" style="font-size:18px">⤴</button>
