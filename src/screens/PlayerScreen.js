@@ -344,18 +344,25 @@ function updateUI(){
   checkNextEp();
 }
 
+// כפתור השידור לטלוויזיה הוא רכיב נייטיב מעל ה-WebView, ולכן הוא לא מושפע
+// מהשקיפות של הסרגל כאן. מדווחים כל שינוי החוצה כדי שהוא ייעלם ויופיע יחד איתו.
+function reportCtrls(v){postMsg({type:'ctrls',visible:!!v});}
+function hideCtrls(){
+  ctrlsVisible=false;
+  [topbar,bottombar,ctrls].forEach(function(el){el.style.opacity=0;el.style.pointerEvents='none';});
+  reportCtrls(false);
+}
+
 function showCtrls(){
   ctrlsVisible=true;
   overlay.style.opacity=1;topbar.style.opacity=1;bottombar.style.opacity=1;ctrls.style.opacity=1;
   overlay.style.pointerEvents='auto';topbar.style.pointerEvents='auto';bottombar.style.pointerEvents='auto';ctrls.style.pointerEvents='auto';
+  reportCtrls(true);
   clearTimeout(hideTimer);
-  hideTimer=setTimeout(function(){
-    ctrlsVisible=false;
-    [topbar,bottombar,ctrls].forEach(function(el){el.style.opacity=0;el.style.pointerEvents='none';});
-  },3500);
+  hideTimer=setTimeout(hideCtrls,3500);
 }
 
-function toggleCtrls(){if(ctrlsVisible){clearTimeout(hideTimer);[topbar,bottombar,ctrls].forEach(function(el){el.style.opacity=0;el.style.pointerEvents='none';});ctrlsVisible=false;}else{showCtrls();}}
+function toggleCtrls(){if(ctrlsVisible){clearTimeout(hideTimer);hideCtrls();}else{showCtrls();}}
 function checkNextEp(){
   if(!HAS_NEXT||nextShown||!vid||IS_LIVE)return;
   var dur=usableDur(vid);if(!dur||dur<30)return;
@@ -607,6 +614,9 @@ export default function PlayerScreen({route, navigation}) {
   // לנגן. לכן מרכיבים את שכבת ה-Cast (CastLayer) *רק* אחרי שווידאנו ש-GMS זמין.
   const castable = !!src && !isIframe;
   const [castOk, setCastOk] = useState(false);
+  // סרגל הבקרה חי בתוך ה-WebView; הוא מדווח על כל הצגה/הסתרה כדי שכפתור
+  // השידור הנייטיב שמעליו יופיע וייעלם באותו רגע בדיוק.
+  const [ctrlsVisible, setCtrlsVisible] = useState(true);
   useEffect(() => {
     let alive = true;
     // חובה לבדוק את *הערך* שחוזר ולא רק שההבטחה לא נדחתה: במכשירים בלי GMS
@@ -690,6 +700,8 @@ export default function PlayerScreen({route, navigation}) {
         PipModule?.setLandscape(!!m.enter);
       } else if (m.type === 'video_playing') {
         PipModule?.setVideoPlaying(!!m.value);
+      } else if (m.type === 'ctrls') {
+        setCtrlsVisible(!!m.visible);
       } else if (m.type === 'next_episode') {
         const eps = seriesEpisodesRef.current;
         if (!eps) return;
@@ -747,6 +759,7 @@ export default function PlayerScreen({route, navigation}) {
           images={movie.thumbnail_url ? [{url: movie.thumbnail_url}] : []}
           startTime={startTime}
           onCasting={pauseLocalForCast}
+          visible={ctrlsVisible}
         />
       ) : null}
     </View>

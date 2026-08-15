@@ -1,5 +1,5 @@
 import React, {useEffect} from 'react';
-import {StyleSheet} from 'react-native';
+import {StyleSheet, View} from 'react-native';
 import {CastButton, useRemoteMediaClient} from 'react-native-google-cast';
 
 // ── שכבת Google Cast מבודדת ────────────────────────────────────────────────────
@@ -15,6 +15,7 @@ export default function CastLayer({
   images,
   startTime,
   onCasting,
+  visible = true,
 }) {
   const client = useRemoteMediaClient();
   useEffect(() => {
@@ -33,9 +34,18 @@ export default function CastLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, castUrl, contentType, isLive, startTime]);
 
-  return <CastButton style={styles.btn} />;
+  // הכפתור נעלם יחד עם סרגל הבקרה של הנגן, אבל הרכיב עצמו נשאר מורכב:
+  // הסרה שלו מה-DOM הייתה מנתקת שידור פעיל בכל פעם שהסרגל נעלם.
+  return (
+    <View
+      style={[styles.wrap, {opacity: visible ? 1 : 0}]}
+      pointerEvents={visible ? 'auto' : 'none'}>
+      <CastButton style={styles.btn} />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  btn: {position: 'absolute', top: 10, right: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
+  wrap: {position: 'absolute', top: 10, right: 12, zIndex: 20},
+  btn: {width: 40, height: 40, tintColor: '#fff'},
 });
