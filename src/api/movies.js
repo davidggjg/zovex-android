@@ -89,7 +89,7 @@ export async function fetchHistory(userId) {
 // ── Support / feedback ───────────────────────────────────────────────────────
 // גרסת האפליקציה. חייבת להתאים ל-versionName ב-build.gradle. השרת משווה אליה
 // כדי להחליט אם צריך לכפות עדכון.
-export const APP_VERSION = '1.0.5';
+export const APP_VERSION = '1.0.6';
 
 export async function sendFeedback({userId, name, email, text, kind}) {
   if (!userId || !text) return false;
