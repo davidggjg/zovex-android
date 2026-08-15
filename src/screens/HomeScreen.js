@@ -38,6 +38,7 @@ import {
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
+import {DISCORD_URL} from '../config/links';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
@@ -593,13 +594,38 @@ export default function HomeScreen({navigation, route}) {
     .replace(/[\u0591-\u05C7]/g, '')                        // ניקוד עברי
     .replace(/["'`\u05F3\u05F4\u2018\u2019\u201C\u201D]/g, '')  // גרשיים
     .replace(/\s+/g, ' ').trim();
+  // החיפוש רץ על השאילתה המושהית ולא על כל הקשה. בלי זה כל אות גררה סינון
+  // של כל הקטלוג (כ-11,700 פריטים) על ה-thread של ה-JS, וההקלדה נתקעה.
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setQuery(search), 180);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // מפתח חיפוש מנורמל, פעם אחת לכל קטלוג. קודם norm() רץ מחדש על ארבעה
+  // שדות של כל פריט בכל הקשה — כלומר מיליוני פעולות regex לכל אות.
+  const searchHay = useMemo(() => {
+    const map = new Map();
+    (Array.isArray(movies) ? movies : []).forEach(m => {
+      if (m && m.id != null) {
+        map.set(m.id, norm([m.title, m.name, m.series_name, m.en_title, m.original_title]
+          .filter(Boolean).join(' ')));
+      }
+    });
+    return map;
+  }, [movies]);
+
   const qTokens = useMemo(
-    () => norm(search).split(' ').filter(Boolean), [search]);
-  const matchQ = useCallback((...fields) => {
+    () => norm(query).split(' ').filter(Boolean), [query]);
+
+  const matchItem = useCallback(m => {
     if (!qTokens.length) return true;
-    const hay = fields.map(norm).join(' ');
+    if (!m) return false;
+    const hay = searchHay.get(m.id)
+      ?? norm([m.title, m.name, m.series_name, m.en_title, m.original_title]
+        .filter(Boolean).join(' '));
     return qTokens.every(t => hay.includes(t));      // כל מילה, בכל סדר
-  }, [qTokens]);
+  }, [qTokens, searchHay]);
 
   const getItemsForCategory = useCallback(cat => {
     if (cat === 'שידורים חיים') {
@@ -607,7 +633,7 @@ export default function HomeScreen({navigation, route}) {
       return liveChannels
         .filter(ch => {
           if (!ch) return false;
-          return matchQ(ch.title, ch.name);
+          return matchItem(ch);
         });
     }
     if (cat === 'היסטוריה') {
@@ -632,14 +658,14 @@ export default function HomeScreen({navigation, route}) {
     // במפורש את קטגוריית השידורים החיים. בחיפוש מצרפים אותם לתוצאות.
     if (cat === 'הכל' && qTokens.length && Array.isArray(liveChannels)) {
       liveChannels.forEach(ch => {
-        if (ch && matchQ(ch.title, ch.name)) result.push({...ch, is_live: true});
+        if (ch && matchItem(ch)) result.push({...ch, is_live: true});
       });
     }
     movies.forEach(m => {
       if (!m || m.is_live) return;
       const title = m.title || '';
       const seriesName = m.series_name || '';
-      const hit = matchQ(title, seriesName, m.en_title, m.original_title);
+      const hit = matchItem(m);
       if (!hit || (cat !== 'הכל' && m.category !== cat)) return;
       if (seriesName) {
         if (!seen[seriesName] && seriesMap && seriesMap[seriesName]) {
@@ -656,9 +682,13 @@ export default function HomeScreen({navigation, route}) {
       }
     });
     return result;
-  }, [movies, liveChannels, history, seriesMap, matchQ, qTokens, downloads]);
+  }, [movies, liveChannels, history, seriesMap, matchItem, qTokens, downloads]);
 
   const netflixRows = useMemo(() => {
+    // בזמן חיפוש המסך מציג רשת תוצאות, לא את השורות האלה. בלי היציאה
+    // המוקדמת הן חושבו מחדש בכל הקשה — עשרות קטגוריות × כל הקטלוג — בלי
+    // שאף אחד רואה אותן.
+    if (qTokens.length) return [];
     const rows = [];
     if (liveChannels.length > 0)
       rows.push({title: 'שידורים חיים', isLiveRow: true, items: liveChannels});
@@ -671,7 +701,7 @@ export default function HomeScreen({navigation, route}) {
         if (items.length > 0) rows.push({title: cat, items});
       });
     return rows;
-  }, [liveChannels, history, movies, allCategories, getItemsForCategory]);
+  }, [liveChannels, history, movies, allCategories, getItemsForCategory, qTokens]);
 
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
@@ -847,7 +877,7 @@ export default function HomeScreen({navigation, route}) {
     );
   }
 
-  const isNetflixMode = category === 'הכל' && !search;
+  const isNetflixMode = category === 'הכל' && !query;
   const gridItems = isNetflixMode ? [] : getItemsForCategory(category);
 
   const TopBar = (
@@ -962,6 +992,16 @@ export default function HomeScreen({navigation, route}) {
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); setSearch(''); }}>
             <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => { setShowUserMenu(false); navigation.navigate('Legal'); }}>
+            <Text style={styles.menuItemText}>📄  מידע ותנאים</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => { setShowUserMenu(false); Linking.openURL(DISCORD_URL).catch(() => {}); }}>
+            <Text style={styles.menuItemText}>💬  שרת הדיסקורד</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.menuItem}

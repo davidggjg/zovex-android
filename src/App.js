@@ -19,6 +19,7 @@ import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
+import LegalScreen from './screens/LegalScreen';
 import ZovexIntro from './components/ZovexIntro';
 import {initUserId} from './api/userStore';
 
@@ -28,7 +29,7 @@ const APP_VERSION = '1.1';
 const DIALOG_CONFIG_URL =
   'https://raw.githubusercontent.com/davidggjg/zovex-android/main/public/dialog.json';
 
-const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
+const ZOVEX_URL = 'https://zovex.duckdns.org/';
 
 // Deep linking: zovex://thor or https://davidggjg.github.io/zovex/thor both
 // land on the Home screen with the trailing slug as a param, so HomeScreen
@@ -37,7 +38,7 @@ const ZOVEX_URL = 'https://davidggjg.github.io/zovex/';
 // once Android App Links verification is set up; see docs/app-links-setup.md.
 // The zovex:// scheme works immediately either way.)
 const linking = {
-  prefixes: ['zovex://', 'https://davidggjg.github.io/zovex'],
+  prefixes: ['zovex://', 'https://zovex.duckdns.org', 'https://davidggjg.github.io/zovex'],
   config: {
     screens: {
       Home: ':deepPath',
@@ -334,6 +335,7 @@ export default function App() {
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Player" component={PlayerScreen} />
         <Stack.Screen name="Series" component={SeriesScreen} />
+        <Stack.Screen name="Legal" component={LegalScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

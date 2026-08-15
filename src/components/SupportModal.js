@@ -8,6 +8,7 @@ import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView,
   StyleSheet, Linking, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import {TELEGRAM_URL, DISCORD_URL} from '../config/links';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {sendFeedback, fetchMyFeedback} from '../api/movies';
 
@@ -159,10 +160,15 @@ export default function SupportModal({visible, onClose, user}) {
             </TouchableOpacity>
           </View>
 
-          {/* טלגרם כאופציה נוספת */}
+          {/* ערוצים חיצוניים */}
+          <TouchableOpacity
+            style={styles.dcRow}
+            onPress={() => Linking.openURL(DISCORD_URL).catch(() => {})}>
+            <Text style={styles.dcTxt}>הצטרפו לשרת הדיסקורד</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={styles.tgRow}
-            onPress={() => Linking.openURL('https://t.me/ZOVE8').catch(() => {})}>
+            onPress={() => Linking.openURL(TELEGRAM_URL).catch(() => {})}>
             <Text style={styles.tgTxt}>או פנו אלינו בטלגרם ➤</Text>
           </TouchableOpacity>
         </View>
@@ -212,4 +218,7 @@ const styles = StyleSheet.create({
   sendTxt: {color: '#fff', fontWeight: '800', fontSize: 14},
   tgRow: {alignItems: 'center', paddingTop: 12},
   tgTxt: {color: '#5b9bd5', fontSize: 13, fontWeight: '600'},
+  dcRow: {backgroundColor: '#5865F2', borderRadius: 14, paddingVertical: 12,
+    alignItems: 'center', marginTop: 14},
+  dcTxt: {color: '#fff', fontSize: 14, fontWeight: '800'},
 });
