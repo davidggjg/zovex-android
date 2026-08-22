@@ -625,6 +625,10 @@ export default function PlayerScreen({route, navigation}) {
   // סרגל הבקרה חי בתוך ה-WebView; הוא מדווח על כל הצגה/הסתרה כדי שכפתור
   // השידור הנייטיב שמעליו יופיע וייעלם באותו רגע בדיוק.
   const [ctrlsVisible, setCtrlsVisible] = useState(true);
+  // התאוששות מקריסת renderer בטלוויזיה: במקום לזרוק את המשתמש החוצה מיד,
+  // טוענים מחדש את הנגן (renderer טרי) עד פעמיים. רק אם גם זה נכשל — יוצאים.
+  const [wvKey, setWvKey] = useState(0);
+  const crashCountRef = useRef(0);
   useEffect(() => {
     let alive = true;
     // חובה לבדוק את *הערך* שחוזר ולא רק שההבטחה לא נדחתה: במכשירים בלי GMS
@@ -736,6 +740,7 @@ export default function PlayerScreen({route, navigation}) {
   return (
     <View style={styles.container}>
       <WebView
+        key={wvKey}
         ref={webViewRef}
         source={{html}}
         style={styles.player}
@@ -749,9 +754,17 @@ export default function PlayerScreen({route, navigation}) {
         allowUniversalAccessFromFileURLs
         startInLoadingState={false}
         onMessage={onMessage}
-        // אם ה-renderer של ה-WebView קורס (למשל מחוסר זיכרון בטלוויזיה),
-        // חוזרים אחורה בעדינות במקום שכל האפליקציה תיפול ותיסגר.
-        onRenderProcessGone={() => { try { navigation.goBack(); } catch (_) {} }}
+        // אם ה-renderer של ה-WebView קורס (בעיקר מחוסר זיכרון בטלוויזיה),
+        // מנסים לטעון מחדש renderer טרי עד פעמיים; רק אם גם זה נכשל — יוצאים
+        // בעדינות במקום שכל האפליקציה תיפול ותיסגר.
+        onRenderProcessGone={() => {
+          if (crashCountRef.current < 2) {
+            crashCountRef.current += 1;
+            setWvKey(k => k + 1);
+          } else {
+            try { navigation.goBack(); } catch (_) {}
+          }
+        }}
         onMessageForMainFrameOnly={false}
         injectedJavaScriptForMainFrameOnly={false}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
