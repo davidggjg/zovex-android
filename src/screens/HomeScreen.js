@@ -23,6 +23,8 @@ import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
+  fetchMoviesFast,
+  fetchItemDetail,
   fetchHistory,
   clearCache,
 } from '../api/movies';
@@ -111,6 +113,28 @@ function MovieDetailModal({
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
   const [seasonLoading, setSeasonLoading] = useState(false);
+  // ה-description לא נשלח ב-/content/lite (זה השדה הכבד). כשפותחים סרט
+  // מושכים אותו לפי דרישה מ-/content/item/{id}. אם הפריט כבר מכיל description
+  // (למשל מ-cache ישן) — משתמשים בו כמו שהוא.
+  const [fetchedDesc, setFetchedDesc] = useState(null);
+  useEffect(() => {
+    setFetchedDesc(null);
+    if (!item || item.description) return;
+    // לסדרה הפריט הוא פסאודו (id "series_..." בלי description); מושכים את
+    // התיאור מהפרק הראשון האמיתי. לסרט — לפי ה-id של הפריט עצמו.
+    let detailId = item.id;
+    if (item.series_name) {
+      const first = allMovies.find(m => m.series_name === item.series_name && m.id);
+      if (first) detailId = first.id;
+    }
+    if (!detailId || String(detailId).startsWith('series_')) return;
+    let alive = true;
+    fetchItemDetail(detailId).then(full => {
+      if (alive && full && full.description) setFetchedDesc(full.description);
+    });
+    return () => { alive = false; };
+  }, [item, allMovies]);
+  const description = item?.description || fetchedDesc || '';
 
   const episodes = useMemo(() => {
     if (!item?.series_name) return [];
@@ -162,8 +186,8 @@ function MovieDetailModal({
           )}
           <View style={mdStyles.body}>
             <Text style={mdStyles.title}>{displayTitle}</Text>
-            {!!item.description && (
-              <Text style={mdStyles.desc} numberOfLines={5}>{item.description}</Text>
+            {!!description && (
+              <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
             <View style={mdStyles.actionsRow}>
               <TouchableOpacity style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
@@ -560,14 +584,28 @@ export default function HomeScreen({navigation, route}) {
   }, []);
 
   // ── Data loading ──
+  // טעינה דו-שלבית: קודם fetchMoviesFast() מביא רק את 800 החדשים (payload קטן,
+  // ציור מיידי), המשתמש רואה תוכן מיד; ואז ברקע fetchMovies() משלים את כל
+  // הקטלוג. אם כבר יש cache חם — הולכים ישר למלא בלי הבהוב.
+  const _hydratedRef = useRef(false);
   const load = useCallback(async (refresh = false, loggedInUser = null) => {
-    if (refresh) { clearCache(); setRefreshing(true); }
+    if (refresh) { clearCache(); _hydratedRef.current = false; setRefreshing(true); }
+    const histP = loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]);
     try {
-      const [data, hist] = await Promise.all([
-        fetchMovies(),
-        loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]),
-      ]);
-      setMovies(data);
+      if (!_hydratedRef.current) {
+        // שלב 1 — ציור מהיר
+        const fast = await fetchMoviesFast();
+        if (fast && fast.length) setMovies(fast);
+        setLoading(false);
+        // שלב 2 — קטלוג מלא ברקע
+        fetchMovies().then(full => {
+          if (full && full.length) { setMovies(full); _hydratedRef.current = true; }
+        }).catch(() => {});
+      } else {
+        const full = await fetchMovies();
+        if (full && full.length) setMovies(full);
+      }
+      const hist = await histP;
       setHistory(hist);
     } catch {}
     setLoading(false);
