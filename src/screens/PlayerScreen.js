@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useMemo, useState} from 'react';
 import {View, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
+import TvNativePlayer from '../components/TvNativePlayer';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 // שים לב: CastLayer (ואיתו react-native-google-cast) *לא* מיובא כאן ברמת המודול
@@ -701,6 +702,37 @@ export default function PlayerScreen({route, navigation}) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // מעבר לפרק הבא (משמש גם ל-WebView וגם לנגן הנייטיב כשפרק נגמר). מחזיר
+  // true אם עבר לפרק הבא, false אם אין (סרט בודד / פרק אחרון).
+  const goNextEpisode = () => {
+    const eps = seriesEpisodesRef.current;
+    if (!eps) return false;
+    const idx = eps.findIndex(e => e.id === movie.id);
+    const next = idx >= 0 && idx < eps.length - 1 ? eps[idx + 1] : null;
+    if (next) {
+      navigation.replace('Player', {movie: next, startTime: 0, userId, seriesEpisodes: eps});
+      return true;
+    }
+    return false;
+  };
+
+  // ── נגן נייטיב לטלוויזיה: רק לתוכן ישיר (mp4/HLS), לא ל-iframe embeds ──
+  const useNative = isTv && !isIframe && !!src;
+  // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
+  const [nativeStart, setNativeStart] = useState(startTime || 0);
+  useEffect(() => {
+    if (!useNative || !userId || startTime > 0 || isLive) return;
+    let alive = true;
+    loadProgress(movie.id, userId).then(pos => {
+      if (alive && pos > 5) {
+        progressRef.current.position = pos;
+        setNativeStart(pos);
+      }
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onMessage = event => {
     try {
       const m = JSON.parse(event.nativeEvent.data);
@@ -715,11 +747,7 @@ export default function PlayerScreen({route, navigation}) {
       } else if (m.type === 'ctrls') {
         setCtrlsVisible(!!m.visible);
       } else if (m.type === 'next_episode') {
-        const eps = seriesEpisodesRef.current;
-        if (!eps) return;
-        const idx = eps.findIndex(e => e.id === movie.id);
-        const next = idx >= 0 && idx < eps.length - 1 ? eps[idx + 1] : null;
-        if (next) navigation.replace('Player', {movie: next, startTime: 0, userId, seriesEpisodes: eps});
+        goNextEpisode();
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
@@ -739,6 +767,19 @@ export default function PlayerScreen({route, navigation}) {
 
   return (
     <View style={styles.container}>
+      {useNative ? (
+        <TvNativePlayer
+          src={src}
+          isLive={isLive}
+          startTime={nativeStart}
+          onProgress={(pos, dur) => {
+            progressRef.current = {position: pos, duration: dur};
+            if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
+          }}
+          onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
+          onError={() => { try { navigation.goBack(); } catch (_) {} }}
+        />
+      ) : (
       <WebView
         key={wvKey}
         ref={webViewRef}
@@ -771,6 +812,7 @@ export default function PlayerScreen({route, navigation}) {
         mixedContentMode="always"
         originWhitelist={['*']}
       />
+      )}
       {castOk && castable && CastLayer ? (
         <CastLayer
           castUrl={castUrl}
