@@ -18,6 +18,7 @@ import {
   Animated,
   I18nManager,
   AppState,
+  Platform,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -45,8 +46,14 @@ import {DISCORD_URL, TELEGRAM_URL} from '../config/links';
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
 const {width: SW} = Dimensions.get('window');
-// 3 cards + 5px margin each side + 8px grid padding each side = 3*CARD_W + 30 + 16 = SW
-const CARD_W = Math.floor((SW - 46) / 3);
+// בטלוויזיה המסך רחב וברירת המחדל של 3 עמודות ייצרה אריחים ענקיים שקשה
+// לנווט ביניהם. בטלוויזיה עוברים ל-6 עמודות (אריחים קטנים כמו בטלפון,
+// מותאמים למרחק צפייה) ובטלפון נשארים 3.
+const IS_TV = Platform.isTV;
+const NUM_COLS = IS_TV ? 6 : 3;
+// לכל אריח 5px שוליים מכל צד (10) + לרשת 8px ריפוד מכל צד (16):
+// SW = N*CARD_W + N*10 + 16  →  CARD_W = (SW - 16 - N*10) / N
+const CARD_W = Math.floor((SW - 16 - NUM_COLS * 10) / NUM_COLS);
 const CARD_H = Math.floor(CARD_W * 1.48);
 // Hero banner: tall enough to show portrait thumbnails (2:3) with contain mode
 const HERO_H = Math.round(SW * 1.25);
@@ -454,14 +461,25 @@ function buildSeriesMap(movies) {
 
 // ── MovieCard ─────────────────────────────────────────────────────────────────
 
-const MovieCard = memo(function MovieCard({item, onPress}) {
+const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = false}) {
   if (!item || typeof item !== 'object') return null;
   const isLive = !!item.is_live;
   const displayTitle = String(item.name || item.title || '');
   if (!displayTitle) return null;
+  // בטלוויזיה חובה שיהיה סימון ברור לאן ה-focus הגיע — אחרת נראה כאילו השלט
+  // "לא עובד". onFocus/onBlur קיימים רק ב-TV; בטלפון הם פשוט לא נורים.
+  const [focused, setFocused] = useState(false);
+  const borderColor = focused ? '#fff' : (isLive ? '#e50914' : 'transparent');
+  const borderWidth = focused ? 3 : (isLive ? 2 : 0);
   return (
-    <TouchableOpacity style={[styles.card, {width: CARD_W}]} onPress={() => onPress(item)} activeOpacity={0.8}>
-      <View style={[styles.cardImg, {height: CARD_H, borderColor: isLive ? '#e50914' : 'transparent', borderWidth: isLive ? 2 : 0}]}>
+    <TouchableOpacity
+      style={[styles.card, {width: CARD_W}, focused && styles.cardFocused]}
+      onPress={() => onPress(item)}
+      activeOpacity={0.8}
+      hasTVPreferredFocus={hasTVPreferredFocus}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}>
+      <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
         {item.thumbnail_url ? (
           <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} fadeDuration={200} />
         ) : (
@@ -477,7 +495,7 @@ const MovieCard = memo(function MovieCard({item, onPress}) {
 
 // ── NetflixRow ────────────────────────────────────────────────────────────────
 
-const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) {
+const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, firstRow = false}) {
   if (!items || items.length === 0) return null;
   return (
     <View style={styles.rowWrap}>
@@ -495,7 +513,10 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) 
         maxToRenderPerBatch={5}
         windowSize={3}
         removeClippedSubviews
-        renderItem={({item}) => <MovieCard item={item} onPress={onPress} />}
+        renderItem={({item, index}) => (
+          <MovieCard item={item} onPress={onPress}
+            hasTVPreferredFocus={IS_TV && firstRow && index === 0} />
+        )}
       />
     </View>
   );
@@ -1104,8 +1125,8 @@ export default function HomeScreen({navigation, route}) {
           key="netflix-rows"
           data={netflixRows}
           keyExtractor={row => row.title}
-          renderItem={({item: row}) => (
-            <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
+          renderItem={({item: row, index}) => (
+            <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} firstRow={index === 0} />
           )}
           ListHeaderComponent={<HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />}
           ListFooterComponent={<HomeFooter navigation={navigation} />}
@@ -1121,10 +1142,10 @@ export default function HomeScreen({navigation, route}) {
         />
       ) : (
         <FlatList
-            key="search-grid"
+            key={`search-grid-${NUM_COLS}`}
             data={Array.isArray(gridItems) ? gridItems.filter(item => item && item.id) : []}
             keyExtractor={item => String(item?.id || '')}
-            numColumns={3}
+            numColumns={NUM_COLS}
             contentContainerStyle={styles.grid}
             initialNumToRender={9}
             maxToRenderPerBatch={9}
@@ -1133,7 +1154,7 @@ export default function HomeScreen({navigation, route}) {
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
             }
-            renderItem={({item}) => <MovieCard item={item} onPress={handleItemPress} />}
+            renderItem={({item, index}) => <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />}
             ListEmptyComponent={
               category === 'היסטוריה' ? (
                 <View style={styles.historyEmpty}>
@@ -1396,6 +1417,9 @@ const styles = StyleSheet.create({
 
   // ── Card ──
   card: {marginHorizontal: 5, borderRadius: 10, overflow: 'hidden'},
+  // הדגשת ה-focus בטלוויזיה: הכרטיס ה"נבחר" עולה מעל השכנים ומקבל רקע בהיר
+  // קל, בנוסף למסגרת הלבנה על התמונה. בלי scale כדי לא לחתוך/לחפוף שכנים.
+  cardFocused: {backgroundColor: '#2a2a2c', zIndex: 3, elevation: 6},
   cardImg: {width: '100%', borderRadius: 10, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},

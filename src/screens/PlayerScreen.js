@@ -637,11 +637,14 @@ export default function PlayerScreen({route, navigation}) {
     // את ה-Cast בכל מקרה שלא נזרקה שגיאה, ואז נטענה ספריית Cast שכבר הוסרה
     // מהאפליקציה במכשירים האלה (ראה MainApplication) — והאפליקציה קרסה
     // בכניסה לנגן. ב-App.js אותה בדיקה כבר נעשית נכון.
+    // בטלוויזיה אין טעם ב-Chromecast (היא היעד עצמה), ואתחול ה-Cast SDK הוא
+    // מקור קריסה ידוע בכניסה לנגן על מכשירי TV — לכן פשוט לא מדליקים אותו שם.
+    if (isTv) { setCastOk(false); return () => { alive = false; }; }
     GoogleSignin.hasPlayServices({showPlayServicesUpdateDialog: false})
       .then(ok => { if (alive) setCastOk(ok === true); })
       .catch(() => { if (alive) setCastOk(false); });
     return () => { alive = false; };
-  }, []);
+  }, [isTv]);
   // טעינה עצלנית: מושכים את react-native-google-cast רק כשיש GMS. על מכשירים בלי
   // GMS (Qin F22/F21 Pro) המודול הזה לא נטען כלל — אפס נגיעה ב-Cast.
   // ה-require עטוף גם ב-try: אם בכל זאת נגיע לכאן בלי המודול המקורי (הוא מוסר
