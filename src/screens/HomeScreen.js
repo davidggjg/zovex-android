@@ -985,18 +985,26 @@ export default function HomeScreen({navigation, route}) {
     <View style={styles.topBar}>
       <Text style={styles.appTitle}>ZOVEX</Text>
 
-      <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="חיפוש..."
-          placeholderTextColor="rgba(255,255,255,0.3)"
-          value={search}
-          onChangeText={handleSearchChange}
-          onFocus={onSearchFocus}
-          onBlur={onSearchBlur}
-          textAlign="right"
-        />
-      </Animated.View>
+      {/* בטלוויזיה תיבת הטקסט עצמה לא מקבלת focus מה-D-pad (אחרת השלט נתקע
+          בתוכה); במקום זה המרובע נעצר על העטיפה, ולחיצה מרכזית מעבירה את
+          ה-focus פנימה ופותחת את המקלדת. בטלפון אין עטיפה ושום דבר לא משתנה. */}
+      <TvFocusable
+        style={styles.searchTvWrap}
+        focusChildOnSelect
+        onPress={() => {}}>
+        <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
+          <TextInput
+            style={styles.searchInput}
+            placeholder="חיפוש..."
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            value={search}
+            onChangeText={handleSearchChange}
+            onFocus={onSearchFocus}
+            onBlur={onSearchBlur}
+            textAlign="right"
+          />
+        </Animated.View>
+      </TvFocusable>
 
       {user ? (
         <TvFocusable
@@ -1255,6 +1263,10 @@ export default function HomeScreen({navigation, route}) {
         onRequestClose={() => { setShowDonation(false); donationCallback.current = null; }}>
         <View style={styles.donOverlay}>
           <View style={styles.donCard}>
+            {/* X לסגירה — נגיש גם בשלט וגם באצבע, כדי שתמיד תהיה יציאה ברורה */}
+            <TvFocusable style={styles.donClose} onPress={handleDonationContinue}>
+              <Text style={styles.donCloseTxt}>✕</Text>
+            </TvFocusable>
             <Text style={styles.donEmoji}>🎬</Text>
             <Text style={styles.donTitle}>עזרו לנו לשפר את האפליקציה</Text>
             <Text style={styles.donBody}>
@@ -1352,6 +1364,9 @@ const styles = StyleSheet.create({
   heroDotActive: {backgroundColor: '#fff', width: 18},
 
   // ── Top bar search ──
+  // העטיפה יורשת את ה-flex של תיבת החיפוש כדי שהסרגל העליון יישאר בדיוק
+  // כפי שהיה; היא רק מוסיפה שכבה שאפשר לנווט אליה בשלט.
+  searchTvWrap: {flex: 1, borderRadius: 20},
   searchWrapper: {
     flex: 1, marginHorizontal: 10, borderRadius: 20, borderWidth: 1,
     backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden',
@@ -1495,6 +1510,13 @@ const styles = StyleSheet.create({
 
   // ── Donation modal ──
   donOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 20},
+  donClose: {
+    position: 'absolute', top: 8, right: 8, zIndex: 10,
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  donCloseTxt: {color: '#fff', fontSize: 16, fontWeight: '700', lineHeight: 18},
   donCard: {backgroundColor: '#111', borderRadius: 24, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#222'},
   donEmoji: {fontSize: 32, marginBottom: 10},
   donTitle: {fontSize: 20, fontWeight: '900', color: '#fff', textAlign: 'center', marginBottom: 10},

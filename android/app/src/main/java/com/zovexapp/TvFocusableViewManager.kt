@@ -5,7 +5,10 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.InputMethodManager
+import android.widget.EditText
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactContext
 import com.facebook.react.uimanager.ThemedReactContext
@@ -60,6 +63,18 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         emit("topFocusChange", gainFocus)
     }
 
+    /** true לשדה החיפוש: לחיצה על המקש המרכזי מעבירה את ה-focus לתיבת הטקסט
+     *  שבפנים, וכך נפתחת המקלדת של הטלוויזיה ואפשר להקליד. */
+    var focusChildOnSelect = false
+
+    private fun firstEditText(v: View = this): EditText? {
+        if (v is EditText) return v
+        if (v is ViewGroup) {
+            for (i in 0 until v.childCount) firstEditText(v.getChildAt(i))?.let { return it }
+        }
+        return null
+    }
+
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         // אישור בשלט: המקש המרכזי, Enter, או כפתור A בג'ויסטיק.
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
@@ -67,6 +82,25 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
             keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER ||
             keyCode == KeyEvent.KEYCODE_BUTTON_A
         ) {
+            if (focusChildOnSelect) {
+                val edit = firstEditText()
+                if (edit != null) {
+                    // פותחים זמנית את החסימה כדי שתיבת הטקסט תוכל לקבל focus,
+                    // ומבקשים את המקלדת. החסימה מוחזרת ברגע שהיא משחררת focus,
+                    // כדי שה-D-pad ימשיך לדלג בין הפקדים ולא ייתקע בתוך התיבה.
+                    descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+                    edit.isFocusableInTouchMode = true
+                    edit.requestFocus()
+                    (context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)
+                        ?.showSoftInput(edit, InputMethodManager.SHOW_IMPLICIT)
+                    edit.setOnFocusChangeListener { _, hasFocus ->
+                        if (!hasFocus) {
+                            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                        }
+                    }
+                    return true
+                }
+            }
             emit("topSelect", true)
             return true
         }
@@ -79,6 +113,12 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
     override fun getName() = "TvFocusable"
 
     override fun createViewInstance(ctx: ThemedReactContext) = TvFocusableView(ctx)
+
+    /** שדה חיפוש: לחיצה מרכזית מעבירה focus לתיבת הטקסט ופותחת מקלדת. */
+    @ReactProp(name = "focusChildOnSelect")
+    fun setFocusChildOnSelect(view: TvFocusableView, v: Boolean) {
+        view.focusChildOnSelect = v
+    }
 
     /** מבקש את ה-focus ההתחלתי — כך שלשלט יש מאיפה להתחיל כשהמסך נטען. */
     @ReactProp(name = "hasFocus")
