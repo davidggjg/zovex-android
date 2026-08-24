@@ -21,7 +21,25 @@ export default function TvNativePlayer({
     <View style={styles.wrap}>
       <Video
         ref={ref}
-        source={{uri: src}}
+        // type מפורש: הכתובות שלנו עוברות דרך ה-relay ולא תמיד נגמרות בסיומת
+        // שממנה ExoPlayer מסיק את הפורמט. בלי זה הוא עלול לנסות לנגן playlist
+        // כאילו היה קובץ רגיל ולהיתקע.
+        source={{
+          uri: src,
+          type: /\.m3u8|Manifest\.ism/i.test(src || '') ? 'm3u8' : undefined,
+          // הממסר איטי: נמדד 0.7–3s ל-playlist ועוד 1.6–3.7s למקטע של 6 שניות.
+          // עם ברירת המחדל אין מרווח ביטחון וכל עיכוב מרוקן את הבאפר — זה מה
+          // שנראה כ"מסתובב הרבה". כמה ניסיונות חוזרים מונעים נפילה על תקלה אחת.
+          minLoadRetryCount: 6,
+        }}
+        // באפר גדול יותר: קונה יציבות במחיר עוד כמה שניות של השהיה — עסקה
+        // משתלמת בשידור חי שנתקע כל כמה שניות.
+        bufferConfig={{
+          minBufferMs: 30000,
+          maxBufferMs: 90000,
+          bufferForPlaybackMs: 3500,
+          bufferForPlaybackAfterRebufferMs: 6000,
+        }}
         style={StyleSheet.absoluteFill}
         controls
         paused={false}
