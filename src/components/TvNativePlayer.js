@@ -16,6 +16,8 @@ export default function TvNativePlayer({
   const ref = useRef(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  // שידור חי/HLS מול קובץ שלם — שני מקרים עם צרכי באפר הפוכים לגמרי.
+  const isHls = isLive || /\.m3u8|Manifest\.ism/i.test(src || '');
 
   return (
     <View style={styles.wrap}>
@@ -26,20 +28,23 @@ export default function TvNativePlayer({
         // כאילו היה קובץ רגיל ולהיתקע.
         source={{
           uri: src,
-          type: /\.m3u8|Manifest\.ism/i.test(src || '') ? 'm3u8' : undefined,
+          type: isHls ? 'm3u8' : undefined,
           // הממסר איטי: נמדד 0.7–3s ל-playlist ועוד 1.6–3.7s למקטע של 6 שניות.
           // עם ברירת המחדל אין מרווח ביטחון וכל עיכוב מרוקן את הבאפר — זה מה
           // שנראה כ"מסתובב הרבה". כמה ניסיונות חוזרים מונעים נפילה על תקלה אחת.
           minLoadRetryCount: 6,
         }}
-        // באפר גדול יותר: קונה יציבות במחיר עוד כמה שניות של השהיה — עסקה
-        // משתלמת בשידור חי שנתקע כל כמה שניות.
-        bufferConfig={{
-          minBufferMs: 30000,
-          maxBufferMs: 90000,
-          bufferForPlaybackMs: 3500,
-          bufferForPlaybackAfterRebufferMs: 6000,
-        }}
+        // הבאפר המוגדל שייך ל-HLS/שידור חי בלבד. בגרסה קודמת הוא הוחל על כל
+        // ניגון נייטיבי, וזה שבר את הסרטים: 90 שניות של 1080p הן עשרות MB
+        // שהטלוויזיה צריכה להחזיק ולמלא לפני שמתחילה — ולכן "שידורים חיים
+        // עובדים אבל תכנים מסתובבים". לקובץ שלם משאירים את ברירת המחדל של
+        // ExoPlayer, שמכוילת בדיוק למקרה הזה.
+        bufferConfig={isHls ? {
+          minBufferMs: 15000,
+          maxBufferMs: 50000,
+          bufferForPlaybackMs: 2500,
+          bufferForPlaybackAfterRebufferMs: 5000,
+        } : undefined}
         style={StyleSheet.absoluteFill}
         controls
         paused={false}
