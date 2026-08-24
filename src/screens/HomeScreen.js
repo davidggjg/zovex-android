@@ -38,6 +38,7 @@ import {
   downloadEntryToMovie,
   isItemDownloadable,
 } from '../api/downloads';
+import TvFocusable from '../components/TvFocusable';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
@@ -472,13 +473,11 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
   const borderColor = focused ? '#fff' : (isLive ? '#e50914' : 'transparent');
   const borderWidth = focused ? 3 : (isLive ? 2 : 0);
   return (
-    <TouchableOpacity
+    <TvFocusable
       style={[styles.card, {width: CARD_W}, focused && styles.cardFocused]}
       onPress={() => onPress(item)}
-      activeOpacity={0.8}
-      hasTVPreferredFocus={hasTVPreferredFocus}
-      onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}>
+      hasFocus={hasTVPreferredFocus}
+      onFocusChange={setFocused}>
       <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
         {item.thumbnail_url ? (
           <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} fadeDuration={200} />
@@ -489,7 +488,7 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
         {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
       </View>
       <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
-    </TouchableOpacity>
+    </TvFocusable>
   );
 });
 
@@ -536,6 +535,10 @@ export default function HomeScreen({navigation, route}) {
   const [showSignIn, setShowSignIn] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  // סימון focus לפקדי הסרגל העליון בטלוויזיה (בטלפון נשאר תמיד false)
+  const [userBtnFocus, setUserBtnFocus] = useState(false);
+  const [catsBtnFocus, setCatsBtnFocus] = useState(false);
+  const [clearCatFocus, setClearCatFocus] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
   const donationCallback = useRef(null);
   const [showTgTip, setShowTgTip] = useState(false);
@@ -996,7 +999,10 @@ export default function HomeScreen({navigation, route}) {
       </Animated.View>
 
       {user ? (
-        <TouchableOpacity onPress={() => setShowUserMenu(true)} style={styles.userBtn}>
+        <TvFocusable
+          onPress={() => setShowUserMenu(true)}
+          onFocusChange={setUserBtnFocus}
+          style={[styles.userBtn, userBtnFocus && styles.tvFocusRing]}>
           {user.picture ? (
             <Image source={{uri: user.picture}} style={styles.userAvatar} />
           ) : (
@@ -1006,11 +1012,14 @@ export default function HomeScreen({navigation, route}) {
               </Text>
             </View>
           )}
-        </TouchableOpacity>
+        </TvFocusable>
       ) : (
-        <TouchableOpacity onPress={startSignIn} style={styles.signInBtn}>
+        <TvFocusable
+          onPress={startSignIn}
+          onFocusChange={setUserBtnFocus}
+          style={[styles.signInBtn, userBtnFocus && styles.tvFocusRing]}>
           <Text style={styles.signInTxt}>כניסה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       )}
     </View>
   );
@@ -1018,17 +1027,19 @@ export default function HomeScreen({navigation, route}) {
   const CatsButton = (
     <View style={styles.catsRow}>
       {category !== 'הכל' && (
-        <TouchableOpacity
+        <TvFocusable
           onPress={() => { setCategory('הכל'); setSearch(''); }}
-          style={styles.activeCatChip}>
+          onFocusChange={setClearCatFocus}
+          style={[styles.activeCatChip, clearCatFocus && styles.tvFocusRing]}>
           <Text style={styles.activeCatChipTxt}>✕  {category}</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       )}
-      <TouchableOpacity
+      <TvFocusable
         onPress={() => setShowCatModal(true)}
-        style={styles.catsModalBtn}>
+        onFocusChange={setCatsBtnFocus}
+        style={[styles.catsModalBtn, catsBtnFocus && styles.tvFocusRing]}>
         <Text style={styles.catsModalBtnTxt}>≡  קטגוריות</Text>
-      </TouchableOpacity>
+      </TvFocusable>
     </View>
   );
 
@@ -1420,6 +1431,8 @@ const styles = StyleSheet.create({
   // הדגשת ה-focus בטלוויזיה: הכרטיס ה"נבחר" עולה מעל השכנים ומקבל רקע בהיר
   // קל, בנוסף למסגרת הלבנה על התמונה. בלי scale כדי לא לחתוך/לחפוף שכנים.
   cardFocused: {backgroundColor: '#2a2a2c', zIndex: 3, elevation: 6},
+  // טבעת ה-focus לפקדים בסרגל העליון — אותו שפה ויזואלית כמו הכרטיסים
+  tvFocusRing: {borderWidth: 2, borderColor: '#fff', borderRadius: 8},
   cardImg: {width: '100%', borderRadius: 10, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},

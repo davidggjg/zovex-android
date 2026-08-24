@@ -10,5 +10,5 @@ class PipPackage : ReactPackage {
         listOf(PipModule(ctx), ApkInstallerModule(ctx))
 
     override fun createViewManagers(ctx: ReactApplicationContext): List<ViewManager<*, *>> =
-        emptyList()
+        listOf(TvFocusableViewManager())
 }
