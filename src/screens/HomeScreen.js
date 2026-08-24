@@ -179,8 +179,14 @@ function MovieDetailModal({
   const firstEp = visibleEpisodes.length > 0 ? visibleEpisodes[0] : null;
 
   return (
+    // Modal אמיתי ולא View: כשזה היה שכבה רגילה, הכרטיסים שמאחור נשארו
+    // focusable — ה-focus בשלט נשאר על הכרטיס, ולחיצה על OK הפעילה שוב את
+    // פתיחת הפריט (תרומה → פרטים → תרומה...) במקום לנגן. Modal מוציא את
+    // הרקע ממסלול ה-focus, וגם נותן טיפול נכון בכפתור "חזור".
+    <Modal transparent animationType="fade" visible onRequestClose={onClose}>
     <View style={mdStyles.overlay}>
-      <TvFocusable style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
+      {/* רקע לסגירה בלחיצה — נשאר Touchable כדי שלא ייתפס כיעד focus בשלט */}
+      <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
       <View style={mdStyles.sheet}>
         <TvFocusable style={mdStyles.closeBtn} onPress={onClose}>
           <Text style={mdStyles.closeTxt}>✕</Text>
@@ -199,7 +205,9 @@ function MovieDetailModal({
               <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
             <View style={mdStyles.actionsRow}>
-              <TvFocusable style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
+              <TvFocusable style={mdStyles.playBtn} activeOpacity={0.8}
+                hasFocus={IS_TV}
+                onPress={() => onPlayDirect(firstEp || item)}>
                 <Text style={mdStyles.playTxt}>▶ הפעל</Text>
               </TvFocusable>
               <DownloadControl
@@ -276,6 +284,7 @@ function MovieDetailModal({
         </Modal>
       )}
     </View>
+    </Modal>
   );
 }
 
