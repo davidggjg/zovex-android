@@ -986,7 +986,11 @@ export default function HomeScreen({navigation, route}) {
         <Text style={styles.signInLogo}>ZOVEX</Text>
         <Text style={styles.signInTitle}>ברוכים הבאים</Text>
         <Text style={styles.signInSub}>כניסה לחשבון לחוויה מלאה</Text>
-        <TvFocusable style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}>
+        {/* focus התחלתי: בלעדיו הלחיצה הראשונה בשלט לא פוגעת בכלום, והמשתמש
+            נאלץ ללחוץ קודם חץ למטה כדי ש"יתפוס" — בדיוק מה שדווח ("לוחץ
+            בפעם הראשונה, הוא לא מגיב"). */}
+        <TvFocusable style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}
+          hasFocus={IS_TV}>
           <Text style={styles.googleBtnText}>🔑 כניסה עם Google</Text>
         </TvFocusable>
         <TvFocusable
