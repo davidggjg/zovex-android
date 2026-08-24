@@ -1,5 +1,5 @@
 import React, {useEffect, useRef, useMemo, useState} from 'react';
-import {View, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
+import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
@@ -723,6 +723,7 @@ export default function PlayerScreen({route, navigation}) {
   const useNative = isTv && !isIframe && !!src;
   // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
   const [nativeStart, setNativeStart] = useState(startTime || 0);
+  const [nativeError, setNativeError] = useState(null);
   useEffect(() => {
     if (!useNative || !userId || startTime > 0 || isLive) return;
     let alive = true;
@@ -759,11 +760,17 @@ export default function PlayerScreen({route, navigation}) {
   };
 
   if (!src) {
+    // קודם הוצג כאן ריבוע ריק בלי שום טקסט, ולכן כשל בבניית הקישור נראה
+    // בדיוק כמו "לחצתי הפעל ולא קרה כלום". עכשיו אומרים מה קרה ומאיפה לצאת.
     return (
       <View style={styles.error}>
-        <View style={styles.errorBox}>
-          <View style={styles.errorClose} />
-        </View>
+        <Text style={styles.errorTitle}>לא נמצא קישור לניגון</Text>
+        <Text style={styles.errorBody}>
+          לפריט הזה אין כתובת וידאו תקינה. נסה פרק אחר, או דווח לנו כדי שנתקן.
+        </Text>
+        <TouchableOpacity style={styles.errorBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.errorBtnTxt}>חזרה</Text>
+        </TouchableOpacity>
       </View>
     );
   }
@@ -780,7 +787,10 @@ export default function PlayerScreen({route, navigation}) {
             if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
           }}
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
-          onError={() => { try { navigation.goBack(); } catch (_) {} }}
+          // קודם כשל ניגון החזיר את המשתמש אחורה בשקט, וזה נראה בדיוק כמו
+          // "לוחץ הפעל וזה מחזיר אותי". עכשיו נשארים במסך ומראים מה נכשל.
+          onError={e => setNativeError(
+            e?.error?.errorString || e?.error?.errorException || 'שגיאת ניגון')}
         />
       ) : (
       <WebView
@@ -816,6 +826,20 @@ export default function PlayerScreen({route, navigation}) {
         originWhitelist={['*']}
       />
       )}
+      {nativeError ? (
+        <View style={styles.errOverlay}>
+          <Text style={styles.errorTitle}>הניגון נכשל</Text>
+          <Text style={styles.errorBody}>{String(nativeError).slice(0, 220)}</Text>
+          <TouchableOpacity
+            style={styles.errorBtn}
+            onPress={() => { setNativeError(null); setWvKey(k => k + 1); }}>
+            <Text style={styles.errorBtnTxt}>נסה שוב</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.errorBtn} onPress={() => navigation.goBack()}>
+            <Text style={styles.errorBtnTxt}>חזרה</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       {castOk && castable && CastLayer ? (
         <CastLayer
           castUrl={castUrl}
@@ -836,7 +860,19 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
   castBtn: {position: 'absolute', top: 10, right: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
-  error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
+  error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 28},
+  errOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center', alignItems: 'center', padding: 28, zIndex: 30,
+  },
+  errorTitle: {color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 10, textAlign: 'center'},
+  errorBody: {color: '#bbb', fontSize: 14, lineHeight: 21, textAlign: 'center', marginBottom: 20},
+  errorBtn: {
+    backgroundColor: '#e50914', borderRadius: 10,
+    paddingHorizontal: 30, paddingVertical: 11, marginTop: 8,
+  },
+  errorBtnTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
 });

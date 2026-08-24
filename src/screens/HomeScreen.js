@@ -19,6 +19,7 @@ import {
   I18nManager,
   AppState,
   Platform,
+  BackHandler,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -531,6 +532,16 @@ export default function HomeScreen({navigation, route}) {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('הכל');
   const [detailItem, setDetailItem] = useState(null);
+  // חיפוש בטלוויזיה: המרובע נעצר על העטיפה, ולחיצה מרכזית מרימה את החסימה
+  // ומעבירה focus לתיבה — כך המקלדת נפתחת דרך RN, שאמין יותר מפתיחה ידנית.
+  const searchRef = useRef(null);
+  const [searchTyping, setSearchTyping] = useState(false);
+  useEffect(() => {
+    if (searchTyping) {
+      const t = setTimeout(() => searchRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [searchTyping]);
   const [user, setUser] = useState(null);
   const [showSignIn, setShowSignIn] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
@@ -794,6 +805,25 @@ export default function HomeScreen({navigation, route}) {
     return rows;
   }, [liveChannels, history, movies, allCategories, getItemsForCategory, qTokens]);
 
+  // כפתור "חזור" בשלט. בלי זה כל לחיצה הגיעה ישר לניווט, ומכיוון שמסך הבית
+  // הוא השורש — האפליקציה נסגרה ("הוא מנתק אותי מהאפליקציה"). חלון פרטי הסרט
+  // הוא View רגיל ולא Modal, ולכן הוא גם לא נסגר מעצמו. כאן סוגרים שכבה אחת
+  // בכל לחיצה, ורק כשאין מה לסגור נותנים לאנדרואיד לצאת כרגיל.
+  useEffect(() => {
+    const onBack = () => {
+      if (showDonation) { setShowDonation(false); donationCallback.current = null; return true; }
+      if (detailItem) { setDetailItem(null); return true; }
+      if (showCatModal) { setShowCatModal(false); return true; }
+      if (showUserMenu) { setShowUserMenu(false); return true; }
+      if (showSupport) { setShowSupport(false); return true; }
+      if (search) { setSearch(''); return true; }
+      if (category !== 'הכל') { setCategory('הכל'); return true; }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [showDonation, detailItem, showCatModal, showUserMenu, showSupport, search, category]);
+
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
     setShowDonation(true);
@@ -990,17 +1020,18 @@ export default function HomeScreen({navigation, route}) {
           ה-focus פנימה ופותחת את המקלדת. בטלפון אין עטיפה ושום דבר לא משתנה. */}
       <TvFocusable
         style={styles.searchTvWrap}
-        focusChildOnSelect
-        onPress={() => {}}>
+        allowChildFocus={searchTyping}
+        onPress={() => setSearchTyping(true)}>
         <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
           <TextInput
+            ref={searchRef}
             style={styles.searchInput}
             placeholder="חיפוש..."
             placeholderTextColor="rgba(255,255,255,0.3)"
             value={search}
             onChangeText={handleSearchChange}
             onFocus={onSearchFocus}
-            onBlur={onSearchBlur}
+            onBlur={() => { setSearchTyping(false); onSearchBlur && onSearchBlur(); }}
             textAlign="right"
           />
         </Animated.View>

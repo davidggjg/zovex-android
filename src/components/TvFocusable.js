@@ -22,6 +22,7 @@ export default function TvFocusable({
   onFocusChange,
   hasFocus = false,
   focusChildOnSelect = false,
+  allowChildFocus = false,
   disabled = false,
   activeOpacity = 0.8,
   children,
@@ -35,6 +36,7 @@ export default function TvFocusable({
         style={[style, focused && (focusStyle || styles.ring)]}
         hasFocus={hasFocus}
         focusChildOnSelect={focusChildOnSelect}
+        allowChildFocus={allowChildFocus}
         onFocusChange={e => {
           const f = !!(e && e.nativeEvent && e.nativeEvent.focused);
           setFocused(f);

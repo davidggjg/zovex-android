@@ -120,6 +120,16 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
         view.focusChildOnSelect = v
     }
 
+    /** פותח/סוגר את חסימת ה-focus לילדים. ה-JS מרים את זה רגע לפני שהוא
+     *  קורא ל-focus() על תיבת הטקסט — כך המקלדת נפתחת דרך המנגנון של RN,
+     *  שאמין יותר מ-showSoftInput ידני, ואז החסימה חוזרת. */
+    @ReactProp(name = "allowChildFocus")
+    fun setAllowChildFocus(view: TvFocusableView, allow: Boolean) {
+        view.descendantFocusability =
+            if (allow) android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+            else android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+    }
+
     /** מבקש את ה-focus ההתחלתי — כך שלשלט יש מאיפה להתחיל כשהמסך נטען. */
     @ReactProp(name = "hasFocus")
     fun setHasFocus(view: TvFocusableView, hasFocus: Boolean) {
