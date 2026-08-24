@@ -672,8 +672,13 @@ export default function PlayerScreen({route, navigation}) {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
       StatusBar.setHidden(false, 'fade');
-      PipModule?.setFullscreen(false);
-      PipModule?.setLandscape(false);
+      // בטלוויזיה לא נוגעים בכיוון המסך: היציאה מהנגן החזירה את הפעילות
+      // ל"לא-לרוחב", והחלון נפתח מחדש כמו של טלפון — בדיוק ה"מסך קטן כמו
+      // של טלפון" שדווח אחרי לחיצה על חזור. טלוויזיה ממילא תמיד לרוחב.
+      if (!isTv) {
+        PipModule?.setFullscreen(false);
+        PipModule?.setLandscape(false);
+      }
       PipModule?.setVideoPlaying(false);
       if (!userId) return;
       const {position, duration} = progressRef.current;
@@ -744,8 +749,12 @@ export default function PlayerScreen({route, navigation}) {
         navigation.goBack();
       } else if (m.type === 'fullscreen') {
         StatusBar.setHidden(m.enter, 'fade');
-        PipModule?.setFullscreen(!!m.enter);
-        PipModule?.setLandscape(!!m.enter);
+        // אותה סיבה כמו בניקוי: בטלוויזיה כפיית כיוון מסך משנה את גודל
+        // החלון ומקלקלת את הפריסה. הטלוויזיה כבר לרוחב ומסך-מלא.
+        if (!isTv) {
+          PipModule?.setFullscreen(!!m.enter);
+          PipModule?.setLandscape(!!m.enter);
+        }
       } else if (m.type === 'video_playing') {
         PipModule?.setVideoPlaying(!!m.value);
       } else if (m.type === 'ctrls') {

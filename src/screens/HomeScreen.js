@@ -47,7 +47,10 @@ import {DISCORD_URL, TELEGRAM_URL} from '../config/links';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
-const {width: SW} = Dimensions.get('window');
+// בטלוויזיה מודדים לפי המסך ולא לפי החלון: החלון עלול להימסר קטן יותר
+// (למשל אחרי חזרה מהנגן), וזה מה שהפך את הרשת ל"מסך של טלפון". המסך תמיד
+// מדווח את הרוחב המלא של הטלוויזיה.
+const {width: SW} = Dimensions.get(Platform.isTV ? 'screen' : 'window');
 // בטלוויזיה המסך רחב וברירת המחדל של 3 עמודות ייצרה אריחים ענקיים שקשה
 // לנווט ביניהם. בטלוויזיה עוברים ל-6 עמודות (אריחים קטנים כמו בטלפון,
 // מותאמים למרחק צפייה) ובטלפון נשארים 3.
@@ -1260,7 +1263,10 @@ export default function HomeScreen({navigation, route}) {
 
       {/* Telegram floating bubble */}
       <View style={styles.tgBubbleWrap} pointerEvents="box-none">
-        {showTgTip && (
+        {/* הטיפ הצף הוא רכיב מגע: הוא יושב מעל התוכן ויש לו X קטן שאי אפשר
+            להגיע אליו בשלט ("אי אפשר ללחוץ עליו כי זה לא טאצ'"). בטלוויזיה
+            פשוט לא מציגים אותו — כפתור התמיכה עצמו נשאר נגיש בניווט. */}
+        {showTgTip && !IS_TV && (
           <View style={styles.tgTip}>
             <TvFocusable
               style={styles.tgTipClose}
