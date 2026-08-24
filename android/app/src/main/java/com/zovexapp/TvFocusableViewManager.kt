@@ -1,6 +1,9 @@
 package com.zovexapp
 
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
+import android.util.TypedValue
 import android.view.KeyEvent
 import android.view.ViewGroup
 import com.facebook.react.bridge.Arguments
@@ -23,6 +26,18 @@ import com.facebook.react.views.view.ReactViewGroup
  */
 class TvFocusableView(context: Context) : ReactViewGroup(context) {
 
+    private fun dp(v: Float) = TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP, v, resources.displayMetrics)
+
+    /** המרובע שמסמן את הפריט הממוקד — נצבע *מעל* התוכן (foreground) ולכן אינו
+     *  משנה גודל או מיקום של שום דבר, ולא מזיז את השורה כמו מסגרת רגילה. */
+    private val focusRect = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = dp(8f)
+        setColor(Color.TRANSPARENT)
+        setStroke(dp(3f).toInt(), Color.WHITE)
+    }
+
     init {
         isFocusable = true
         isFocusableInTouchMode = true
@@ -39,6 +54,9 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
 
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, prev: android.graphics.Rect?) {
         super.onFocusChanged(gainFocus, direction, prev)
+        // מציירים/מסירים את המרובע מיד, בלי לחכות לסבב JS — כך הסימון עוקב
+        // אחרי החץ בלי השהיה, כמו בכל ממשק טלוויזיה.
+        foreground = if (gainFocus) focusRect else null
         emit("topFocusChange", gainFocus)
     }
 

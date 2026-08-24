@@ -4,6 +4,7 @@
 // והתשובה מופיעה כאן. כפתור טלגרם נשאר כאופציה.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {useEffect, useState, useRef, useCallback} from 'react';
+import TvFocusable from '../components/TvFocusable';
 import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView,
   StyleSheet, Linking, ActivityIndicator, KeyboardAvoidingView, Platform,
@@ -94,9 +95,9 @@ export default function SupportModal({visible, onClose, user}) {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.sheet}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={onClose} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
+            <TvFocusable onPress={onClose} hitSlop={{top: 10, bottom: 10, left: 10, right: 10}}>
               <Text style={styles.close}>✕</Text>
-            </TouchableOpacity>
+            </TvFocusable>
             <Text style={styles.title}>תמיכה וצ'אט עם המנהלים</Text>
             <View style={{width: 22}} />
           </View>
@@ -104,12 +105,12 @@ export default function SupportModal({visible, onClose, user}) {
           {/* בחירת סוג ההודעה */}
           <View style={styles.kinds}>
             {KINDS.map(x => (
-              <TouchableOpacity
+              <TvFocusable
                 key={x.k}
                 style={[styles.kindBtn, kind === x.k && styles.kindBtnOn]}
                 onPress={() => setKind(x.k)}>
                 <Text style={[styles.kindTxt, kind === x.k && styles.kindTxtOn]}>{x.label}</Text>
-              </TouchableOpacity>
+              </TvFocusable>
             ))}
           </View>
 
@@ -152,25 +153,25 @@ export default function SupportModal({visible, onClose, user}) {
               multiline
               textAlign="right"
             />
-            <TouchableOpacity
+            <TvFocusable
               style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnOff]}
               onPress={send}
               disabled={!text.trim() || sending}>
               <Text style={styles.sendTxt}>{sending ? '...' : 'שלח'}</Text>
-            </TouchableOpacity>
+            </TvFocusable>
           </View>
 
           {/* ערוצים חיצוניים */}
-          <TouchableOpacity
+          <TvFocusable
             style={styles.dcRow}
             onPress={() => Linking.openURL(DISCORD_URL).catch(() => {})}>
             <Text style={styles.dcTxt}>הצטרפו לשרת הדיסקורד</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.tgRow}
             onPress={() => Linking.openURL(TELEGRAM_URL).catch(() => {})}>
             <Text style={styles.tgTxt}>או פנו אלינו בטלגרם ➤</Text>
-          </TouchableOpacity>
+          </TvFocusable>
         </View>
       </KeyboardAvoidingView>
     </Modal>

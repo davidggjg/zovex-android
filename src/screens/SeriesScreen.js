@@ -1,4 +1,5 @@
 import React, {useMemo, useState, useCallback} from 'react';
+import TvFocusable from '../components/TvFocusable';
 import {
   View,
   Text,
@@ -76,7 +77,7 @@ export default function SeriesScreen({route, navigation}) {
                 showsHorizontalScrollIndicator={false}
                 style={styles.seasonsRow}>
                 {seasons.map(s => (
-                  <TouchableOpacity
+                  <TvFocusable
                     key={s}
                     onPress={() => setSelectedSeason(s)}
                     style={[
@@ -90,14 +91,14 @@ export default function SeriesScreen({route, navigation}) {
                       ]}>
                       עונה {s}
                     </Text>
-                  </TouchableOpacity>
+                  </TvFocusable>
                 ))}
               </ScrollView>
             )}
           </>
         }
         renderItem={({item}) => (
-          <TouchableOpacity
+          <TvFocusable
             style={styles.epRow}
             activeOpacity={0.7}
             onPress={() => openEpisode(item)}>
@@ -117,7 +118,7 @@ export default function SeriesScreen({route, navigation}) {
                 {item.episode_title || item.title}
               </Text>
             </View>
-          </TouchableOpacity>
+          </TvFocusable>
         )}
       />
     </View>

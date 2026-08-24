@@ -1,43 +1,67 @@
-import React from 'react';
-import {Platform, TouchableOpacity, requireNativeComponent} from 'react-native';
+import React, {useState} from 'react';
+import {Platform, TouchableOpacity, StyleSheet, requireNativeComponent} from 'react-native';
 
-// עוטף פריט כך שאפשר לנווט אליו עם שלט ולדעת מתי הוא ב-focus.
+// תחליף ישיר ל-TouchableOpacity שעובד גם עם שלט של טלוויזיה.
 //
-// בטלוויזיה: רכיב נייטיב (TvFocusable) שהוא focusable אמיתי, מדווח על
-// focus/blur ומזהה את מקש האישור בשלט. זה נדרש כי React Native הליבה לא
-// תומך ב-onFocus/onBlur על Touchable — הפרופס נבלעים בשקט, ולכן אי אפשר
-// לצייר סימון focus ולמשתמש נראה שהשלט לא עובד.
+// למה זה נחוץ: React Native הליבה (להבדיל מהפורק react-native-tvos) לא תומך
+// ב-onFocus/onBlur על Touchable/Pressable — הפרופס נבלעים בשקט. אנדרואיד כן
+// מזיז focus בין רכיבים focusable לבד, אבל בלי אירוע ל-JS אי אפשר לצייר שום
+// סימון, ולמשתמש זה נראה כאילו השלט מת.
 //
-// בטלפון: TouchableOpacity רגיל, בלי שום שינוי התנהגות.
+// בטלוויזיה: רכיב נייטיב focusable שמדווח focus ומזהה את מקש האישור, ומקבל
+// הדגשה אוטומטית. בטלפון: TouchableOpacity רגיל, בלי שינוי התנהגות.
 const NativeTvFocusable =
   Platform.isTV ? requireNativeComponent('TvFocusable') : null;
 
+export const IS_TV = Platform.isTV;
+
 export default function TvFocusable({
-  isTV,
   style,
+  focusStyle,
   onPress,
   onFocusChange,
   hasFocus = false,
+  disabled = false,
+  activeOpacity = 0.8,
   children,
   ...rest
 }) {
-  const tv = isTV !== undefined ? isTV : Platform.isTV;
+  const [focused, setFocused] = useState(false);
 
-  if (tv && NativeTvFocusable) {
+  if (IS_TV && NativeTvFocusable) {
     return (
       <NativeTvFocusable
-        style={style}
+        style={[style, focused && (focusStyle || styles.ring)]}
         hasFocus={hasFocus}
-        onFocusChange={e => onFocusChange && onFocusChange(!!e.nativeEvent.focused)}
-        onSelect={() => onPress && onPress()}>
+        onFocusChange={e => {
+          const f = !!(e && e.nativeEvent && e.nativeEvent.focused);
+          setFocused(f);
+          if (onFocusChange) onFocusChange(f);
+        }}
+        onSelect={() => { if (!disabled && onPress) onPress(); }}>
         {children}
       </NativeTvFocusable>
     );
   }
 
   return (
-    <TouchableOpacity style={style} onPress={onPress} activeOpacity={0.8} {...rest}>
+    <TouchableOpacity
+      style={style}
+      onPress={onPress}
+      disabled={disabled}
+      activeOpacity={activeOpacity}
+      {...rest}>
       {children}
     </TouchableOpacity>
   );
 }
+
+const styles = StyleSheet.create({
+  // המרובע הלבן עצמו מצויר בצד הנייטיב (foreground), כך שהוא לא משנה גודל
+  // או מיקום של כלום ומופיע מיד עם תזוזת החץ. כאן נשארת רק הבהרה עדינה של
+  // הרקע, שמדגישה את הפריט הממוקד גם על תמונות בהירות.
+  ring: {
+    backgroundColor: 'rgba(255,255,255,0.14)',
+    zIndex: 5,
+  },
+});

@@ -96,21 +96,21 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
   }
   if (isDownloaded) {
     return (
-      <TouchableOpacity
+      <TvFocusable
         style={[mdStyles.dlBtn, mdStyles.dlBtnDone, compact && mdStyles.dlBtnCompact]}
         activeOpacity={0.8}
         onPress={() => onDeleteDownload(id)}>
         <Text style={[mdStyles.dlBtnTxt, mdStyles.dlBtnDoneTxt]}>{compact ? '✓' : '✓ הורד · הסר'}</Text>
-      </TouchableOpacity>
+      </TvFocusable>
     );
   }
   return (
-    <TouchableOpacity
+    <TvFocusable
       style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}
       activeOpacity={0.8}
       onPress={() => onDownload(item)}>
       <Text style={mdStyles.dlBtnTxt}>{compact ? '⬇' : '⬇ הורדה'}</Text>
-    </TouchableOpacity>
+    </TvFocusable>
   );
 }
 
@@ -179,11 +179,11 @@ function MovieDetailModal({
 
   return (
     <View style={mdStyles.overlay}>
-      <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
+      <TvFocusable style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
       <View style={mdStyles.sheet}>
-        <TouchableOpacity style={mdStyles.closeBtn} onPress={onClose}>
+        <TvFocusable style={mdStyles.closeBtn} onPress={onClose}>
           <Text style={mdStyles.closeTxt}>✕</Text>
-        </TouchableOpacity>
+        </TvFocusable>
         <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
           {item.thumbnail_url ? (
             <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
@@ -198,9 +198,9 @@ function MovieDetailModal({
               <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
             <View style={mdStyles.actionsRow}>
-              <TouchableOpacity style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
+              <TvFocusable style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
                 <Text style={mdStyles.playTxt}>▶ הפעל</Text>
-              </TouchableOpacity>
+              </TvFocusable>
               <DownloadControl
                 item={firstEp || item}
                 downloadedIds={downloadedIds}
@@ -215,9 +215,9 @@ function MovieDetailModal({
             <View style={mdStyles.epsSection}>
               {seasons.length > 1 && (
                 <View style={mdStyles.seasonRow}>
-                  <TouchableOpacity style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
+                  <TvFocusable style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
                     <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
-                  </TouchableOpacity>
+                  </TvFocusable>
                 </View>
               )}
               <Text style={mdStyles.epsHeader}>פרקים ({visibleEpisodes.length})</Text>
@@ -227,7 +227,7 @@ function MovieDetailModal({
                 </View>
               ) : (
                 visibleEpisodes.map(ep => (
-                  <TouchableOpacity key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
+                  <TvFocusable key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
                     {ep.thumbnail_url ? (
                       <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
                     ) : (
@@ -253,7 +253,7 @@ function MovieDetailModal({
                       onDeleteDownload={onDeleteDownload}
                     />
                     <Text style={mdStyles.epPlayIcon}>▶</Text>
-                  </TouchableOpacity>
+                  </TvFocusable>
                 ))
               )}
             </View>
@@ -266,9 +266,9 @@ function MovieDetailModal({
           <TouchableOpacity style={mdStyles.seasonPickerOverlay} activeOpacity={1} onPress={() => setShowSeasonPicker(false)}>
             <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
               {seasons.map(s => (
-                <TouchableOpacity key={s} style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]} onPress={() => handleSeasonSelect(s)}>
+                <TvFocusable key={s} style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]} onPress={() => handleSeasonSelect(s)}>
                   <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>
-                </TouchableOpacity>
+                </TvFocusable>
               ))}
             </View>
           </TouchableOpacity>
@@ -339,14 +339,14 @@ function HomeFooter({navigation}) {
   return (
     <View style={ftStyles.wrap}>
       <View style={ftStyles.row}>
-        <TouchableOpacity onPress={link('about')}><Text style={ftStyles.link}>אודות</Text></TouchableOpacity>
-        <TouchableOpacity onPress={link('terms')}><Text style={ftStyles.link}>תנאי שימוש</Text></TouchableOpacity>
-        <TouchableOpacity onPress={link('privacy')}><Text style={ftStyles.link}>פרטיות</Text></TouchableOpacity>
-        <TouchableOpacity onPress={link('copyright')}><Text style={ftStyles.link}>זכויות יוצרים</Text></TouchableOpacity>
+        <TvFocusable onPress={link('about')}><Text style={ftStyles.link}>אודות</Text></TvFocusable>
+        <TvFocusable onPress={link('terms')}><Text style={ftStyles.link}>תנאי שימוש</Text></TvFocusable>
+        <TvFocusable onPress={link('privacy')}><Text style={ftStyles.link}>פרטיות</Text></TvFocusable>
+        <TvFocusable onPress={link('copyright')}><Text style={ftStyles.link}>זכויות יוצרים</Text></TvFocusable>
       </View>
       <View style={ftStyles.row}>
-        <TouchableOpacity onPress={open(DISCORD_URL)}><Text style={[ftStyles.link, {color: '#7c85f5'}]}>דיסקורד</Text></TouchableOpacity>
-        <TouchableOpacity onPress={open(TELEGRAM_URL)}><Text style={[ftStyles.link, {color: '#5b9bd5'}]}>טלגרם</Text></TouchableOpacity>
+        <TvFocusable onPress={open(DISCORD_URL)}><Text style={[ftStyles.link, {color: '#7c85f5'}]}>דיסקורד</Text></TvFocusable>
+        <TvFocusable onPress={open(TELEGRAM_URL)}><Text style={[ftStyles.link, {color: '#5b9bd5'}]}>טלגרם</Text></TvFocusable>
       </View>
       <Text style={ftStyles.note}>ZOVEX · שירות חינמי, ללא מטרות רווח</Text>
     </View>
@@ -406,12 +406,12 @@ function HeroBanner({movies, onPlay, onInfo}) {
             <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
             {!!movie.description && <Text style={styles.heroDesc} numberOfLines={2}>{movie.description}</Text>}
             <View style={styles.heroBtns}>
-              <TouchableOpacity style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
+              <TvFocusable style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
                 <Text style={styles.heroBtnPlayText}>▶ צפה</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.heroBtnInfo} activeOpacity={0.8} onPress={() => onInfo(movie)}>
+              </TvFocusable>
+              <TvFocusable style={styles.heroBtnInfo} activeOpacity={0.8} onPress={() => onInfo(movie)}>
                 <Text style={styles.heroBtnInfoText}>מידע נוסף</Text>
-              </TouchableOpacity>
+              </TvFocusable>
             </View>
           </View>
         </ImageBackground>
@@ -420,9 +420,9 @@ function HeroBanner({movies, onPlay, onInfo}) {
           <View style={styles.heroContent}>
             <Text style={styles.heroTitle}>{movie.series_name || movie.title}</Text>
             <View style={styles.heroBtns}>
-              <TouchableOpacity style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
+              <TvFocusable style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
                 <Text style={styles.heroBtnPlayText}>▶ צפה</Text>
-              </TouchableOpacity>
+              </TvFocusable>
             </View>
           </View>
         </View>
@@ -944,17 +944,17 @@ export default function HomeScreen({navigation, route}) {
         <Text style={styles.signInLogo}>ZOVEX</Text>
         <Text style={styles.signInTitle}>ברוכים הבאים</Text>
         <Text style={styles.signInSub}>כניסה לחשבון לחוויה מלאה</Text>
-        <TouchableOpacity style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}>
+        <TvFocusable style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}>
           <Text style={styles.googleBtnText}>🔑 כניסה עם Google</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+        </TvFocusable>
+        <TvFocusable
           style={styles.skipBtn}
           onPress={async () => {
             await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
             setShowSignIn(false);
           }}>
           <Text style={styles.skipBtnText}>המשך ללא כניסה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
         {/* מדיניות Google Play מחייבת קישור נגיש לתנאים ולפרטיות במסך הכניסה,
             והמסך הזה מוצג עוד לפני שיש תפריט משתמש — אחרת אורח לא מגיע לתנאים כלל. */}
         <Text style={styles.signInLegal}>
@@ -1055,7 +1055,7 @@ export default function HomeScreen({navigation, route}) {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.catScrollContent}>
           {allCategories.map(c => (
-            <TouchableOpacity
+            <TvFocusable
               key={c}
               onPress={() => { setCategory(c); setSearch(''); setShowCatModal(false); }}
               style={styles.catOverlayItem}
@@ -1063,12 +1063,12 @@ export default function HomeScreen({navigation, route}) {
               <Text style={[styles.catOverlayText, category === c && styles.catOverlayTextActive]}>
                 {c}
               </Text>
-            </TouchableOpacity>
+            </TvFocusable>
           ))}
         </ScrollView>
-        <TouchableOpacity style={styles.catCloseBtn} onPress={() => setShowCatModal(false)} activeOpacity={0.85}>
+        <TvFocusable style={styles.catCloseBtn} onPress={() => setShowCatModal(false)} activeOpacity={0.85}>
           <Text style={styles.catCloseTxt}>✕</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       </View>
     </Modal>
   );
@@ -1097,26 +1097,26 @@ export default function HomeScreen({navigation, route}) {
           <Text style={styles.menuName}>{user?.name || user?.given_name || ''}</Text>
           <Text style={styles.menuEmail}>{user?.email || ''}</Text>
           <View style={styles.menuDivider} />
-          <TouchableOpacity
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); setSearch(''); }}>
             <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); navigation.navigate('Legal'); }}>
             <Text style={styles.menuItemText}>📄  מידע ותנאים</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); Linking.openURL(DISCORD_URL).catch(() => {}); }}>
             <Text style={styles.menuItemText}>💬  שרת הדיסקורד</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); signOut(); }}>
             <Text style={[styles.menuItemText, {color: '#e50914'}]}>🚪  יציאה מהחשבון</Text>
-          </TouchableOpacity>
+          </TvFocusable>
         </View>
       </TouchableOpacity>
     </Modal>
@@ -1214,7 +1214,7 @@ export default function HomeScreen({navigation, route}) {
       <View style={styles.tgBubbleWrap} pointerEvents="box-none">
         {showTgTip && (
           <View style={styles.tgTip}>
-            <TouchableOpacity
+            <TvFocusable
               style={styles.tgTipClose}
               onPress={() => {
                 setShowTgTip(false);
@@ -1222,12 +1222,12 @@ export default function HomeScreen({navigation, route}) {
               }}
               hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
               <Text style={styles.tgTipCloseTxt}>✕</Text>
-            </TouchableOpacity>
+            </TvFocusable>
             <Text style={styles.tgTipTitle}>לחצו כאן לתמיכה 💬</Text>
             <Text style={styles.tgTipSub}>או להוספת סרט חדש</Text>
           </View>
         )}
-        <TouchableOpacity
+        <TvFocusable
           style={styles.tgBtn}
           activeOpacity={0.85}
           onPress={() => {
@@ -1237,7 +1237,7 @@ export default function HomeScreen({navigation, route}) {
           }}>
           <Text style={styles.tgBtnIcon}>➤</Text>
           <Text style={styles.tgBtnLabel}>תמיכה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       </View>
 
       <SupportModal
@@ -1260,18 +1260,22 @@ export default function HomeScreen({navigation, route}) {
             <Text style={styles.donBody}>
               {'ZOVEX פועל ללא מטרות רווח ובהתנדבות מלאה.\nתרומה קטנה תעזור לנו לשפר את איכות האפליקציה,\nלשדרג את הנגנים ולהוסיף עוד תכנים כיפיים לצפייה 💙'}
             </Text>
-            <TouchableOpacity
+            <TvFocusable
               style={styles.donBitBtn}
               activeOpacity={0.85}
               onPress={() => Linking.openURL('https://www.bitpay.co.il/app/me/F062649F-7124-4CDF-88DD-A1FEA14185EB').catch(() => {})}>
               <Text style={styles.donBitTxt}>💳 תרום בביט</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </TvFocusable>
+            <TvFocusable
               style={styles.donContinueBtn}
               activeOpacity={0.85}
+              /* בטלוויזיה ה-focus מתחיל דווקא כאן ולא על כפתור התרומה: בשלט
+                 אין "לחיצה מחוץ לחלון", ולכן אם ה-focus נוחת על התרומה המשתמש
+                 נתקע ולא מצליח לצאת מהחלון בכלל. */
+              hasFocus={IS_TV}
               onPress={handleDonationContinue}>
               <Text style={styles.donContinueTxt}>המשך לצפייה</Text>
-            </TouchableOpacity>
+            </TvFocusable>
           </View>
         </View>
       </Modal>
