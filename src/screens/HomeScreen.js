@@ -563,6 +563,8 @@ export default function HomeScreen({navigation, route}) {
   const [catsBtnFocus, setCatsBtnFocus] = useState(false);
   const [clearCatFocus, setClearCatFocus] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
+  // אישור יציאה — בטלוויזיה בלבד. ראה את המטפל ב-hardwareBackPress.
+  const [showExit, setShowExit] = useState(false);
   const donationCallback = useRef(null);
   const [showTgTip, setShowTgTip] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
@@ -681,9 +683,13 @@ export default function HomeScreen({navigation, route}) {
   useEffect(() => { refreshDownloads(); }, [refreshDownloads]);
   const downloadedIds = useMemo(() => new Set(downloads.map(d => d.id)), [downloads]);
 
-  // Clear detail modal when returning from Player so no flash on back-navigate
+  // חזרה מהנגן: לסרט בודד סוגרים את חלון הפרטים (אין לאן לחזור, וההשארה
+  // גורמת להבהוב). לסדרה *משאירים אותו פתוח* — הצופה סיים פרק ורוצה לבחור
+  // את הבא, וסגירה זרקה אותו למסך הבית ואילצה אותו לחפש את הסדרה מחדש.
   useEffect(() => {
-    const unsub = navigation.addListener('focus', () => setDetailItem(null));
+    const unsub = navigation.addListener('focus', () => {
+      setDetailItem(cur => (cur && cur.series_name ? cur : null));
+    });
     return unsub;
   }, [navigation]);
 
@@ -823,6 +829,7 @@ export default function HomeScreen({navigation, route}) {
   // בכל לחיצה, ורק כשאין מה לסגור נותנים לאנדרואיד לצאת כרגיל.
   useEffect(() => {
     const onBack = () => {
+      if (showExit) { setShowExit(false); return true; }
       if (showDonation) { setShowDonation(false); donationCallback.current = null; return true; }
       if (detailItem) { setDetailItem(null); return true; }
       if (showCatModal) { setShowCatModal(false); return true; }
@@ -830,11 +837,15 @@ export default function HomeScreen({navigation, route}) {
       if (showSupport) { setShowSupport(false); return true; }
       if (search) { setSearch(''); return true; }
       if (category !== 'הכל') { setCategory('הכל'); return true; }
+      // אין יותר מה לסגור — כאן אנדרואיד סוגר את האפליקציה. בטלוויזיה זה קורה
+      // בלחיצה אחת על השלט, בלי שום אזהרה, ולכן צופים נזרקו החוצה באמצע. שואלים
+      // קודם. בטלפון משאירים את התנהגות ה"אחורה" הרגילה שמשתמשים מצפים לה.
+      if (IS_TV) { setShowExit(true); return true; }
       return false;
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [showDonation, detailItem, showCatModal, showUserMenu, showSupport, search, category]);
+  }, [showDonation, detailItem, showCatModal, showUserMenu, showSupport, search, category, showExit]);
 
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
@@ -1341,12 +1352,57 @@ export default function HomeScreen({navigation, route}) {
           </View>
         </View>
       </Modal>
+
+      {/* אישור יציאה. בשלט אין "לחיצה מחוץ לחלון", ולכן ה-focus חייב להתחיל
+          על "לא" — הכפתור הבטוח — ושתי האפשרויות חייבות להיות נגישות. */}
+      <Modal
+        visible={showExit}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExit(false)}>
+        <View style={styles.donOverlay}>
+          <View style={styles.exitCard}>
+            <Text style={styles.donEmoji}>👋</Text>
+            <Text style={styles.donTitle}>לצאת מ-ZOVEX?</Text>
+            <View style={styles.exitRow}>
+              <TvFocusable
+                style={styles.exitNoBtn}
+                activeOpacity={0.85}
+                hasFocus={IS_TV}
+                onPress={() => setShowExit(false)}>
+                <Text style={styles.exitNoTxt}>לא, להישאר</Text>
+              </TvFocusable>
+              <TvFocusable
+                style={styles.exitYesBtn}
+                activeOpacity={0.85}
+                onPress={() => { setShowExit(false); BackHandler.exitApp(); }}>
+                <Text style={styles.exitYesTxt}>כן, לצאת</Text>
+              </TvFocusable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0a0a0a'},
+  exitCard: {
+    backgroundColor: '#161616', borderRadius: 18, paddingVertical: 28,
+    paddingHorizontal: 26, width: '86%', maxWidth: 460, alignItems: 'center',
+  },
+  exitRow: {flexDirection: 'row-reverse', gap: 12, marginTop: 22},
+  exitNoBtn: {
+    backgroundColor: '#e50914', borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 26,
+  },
+  exitNoTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
+  exitYesBtn: {
+    backgroundColor: '#2a2a2a', borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 26,
+  },
+  exitYesTxt: {color: '#ddd', fontSize: 16, fontWeight: '700'},
   center: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a'},
   loadingText: {color: '#aaa', marginTop: 12, fontSize: 14},
 
