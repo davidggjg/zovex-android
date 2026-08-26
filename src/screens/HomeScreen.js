@@ -20,6 +20,7 @@ import {
   AppState,
   Platform,
   BackHandler,
+  Share,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -54,6 +55,7 @@ const {width: SW} = Dimensions.get(Platform.isTV ? 'screen' : 'window');
 // בטלוויזיה המסך רחב וברירת המחדל של 3 עמודות ייצרה אריחים ענקיים שקשה
 // לנווט ביניהם. בטלוויזיה עוברים ל-6 עמודות (אריחים קטנים כמו בטלפון,
 // מותאמים למרחק צפייה) ובטלפון נשארים 3.
+const MAIN_SITE = 'https://zovex.duckdns.org';
 const IS_TV = Platform.isTV;
 const NUM_COLS = IS_TV ? 6 : 3;
 // לכל אריח 5px שוליים מכל צד (10) + לרשת 8px ריפוד מכל צד (16):
@@ -179,6 +181,15 @@ function MovieDetailModal({
 
   if (!item) return null;
   const displayTitle = item.series_name || item.title || item.name || '';
+
+  // קישור לשיתוף. ה-slug הוא מה שהאתר משתמש בו (‎/<slug>/watch); בלעדיו
+  // נופלים לקישור לפי מזהה, שגם הוא נפתח באתר.
+  const onShare = useCallback(() => {
+    const base = item.custom_slug
+      ? `${MAIN_SITE}/${item.custom_slug}/watch`
+      : `${MAIN_SITE}/watch?id=${encodeURIComponent(item.id || '')}`;
+    Share.share({message: `${displayTitle}\n${base}`}).catch(() => {});
+  }, [item, displayTitle]);
   const firstEp = visibleEpisodes.length > 0 ? visibleEpisodes[0] : null;
 
   return (
@@ -221,6 +232,13 @@ function MovieDetailModal({
                 onDownload={onDownload}
                 onDeleteDownload={onDeleteDownload}
               />
+              {/* שיתוף — מוסתר בטלוויזיה: אין שם למי לשתף ואין מקלדת, והכפתור
+                  רק גוזל תחנה בניווט עם השלט. */}
+              {!IS_TV && (
+                <TvFocusable style={mdStyles.shareBtn} activeOpacity={0.8} onPress={onShare}>
+                  <Text style={mdStyles.shareTxt}>שתף</Text>
+                </TvFocusable>
+              )}
             </View>
           </View>
           {episodes.length > 1 && (
@@ -311,6 +329,11 @@ const mdStyles = StyleSheet.create({
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
   actionsRow: {flexDirection: 'row', gap: 10},
   playBtn: {flex: 1, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
+  shareBtn: {
+    backgroundColor: '#1f1f1f', borderRadius: 12, paddingVertical: 14,
+    paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
+  },
+  shareTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
   dlBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
