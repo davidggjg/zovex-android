@@ -3,7 +3,11 @@ import {
   View, Text, Image, ScrollView, StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
 import TvFocusable from './TvFocusable';
-import {fetchChannelSchedule, splitNowNext} from '../api/epg';
+import {fetchChannelSchedule, splitNowNext, channelSlug} from '../api/epg';
+import {
+  remindersSupported, reminderId, listReminders, addReminder, removeReminder,
+  canNotify, requestNotificationPermission,
+} from '../api/reminders';
 
 // ── דף ערוץ שידור חי ─────────────────────────────────────────────────────────
 // עד עכשיו לחיצה על ערוץ קפצה ישר לנגן, בלי לומר מה בכלל משודר. כאן אותו
@@ -36,7 +40,32 @@ export default function LiveChannelModal({channel, onPlay, onClose}) {
     return () => clearInterval(id);
   }, []);
 
+  // אילו תוכניות כבר יש להן תזכורת. האזעקה עצמה חיה במערכת ואי אפשר לשאול
+  // אותה מה קיים, ולכן הרשימה נשמרת מקומית — רק כדי שהכפתור יידע להראות
+  // "יזכיר" כשחוזרים לאותו ערוץ.
+  const [reminded, setReminded] = useState({});
+  useEffect(() => {
+    let alive = true;
+    listReminders().then(m => { if (alive) setReminded(m); });
+    return () => { alive = false; };
+  }, [channel]);
+
   const play = useCallback(() => onPlay(channel), [onPlay, channel]);
+
+  const toggleRemind = useCallback(async program => {
+    const slug = channelSlug(channel);
+    const id = reminderId(slug, program);
+    if (reminded[id]) {
+      await removeReminder(slug, program);
+      setReminded(m => { const n = {...m}; delete n[id]; return n; });
+      return;
+    }
+    // אם ההתראות כבויות, בקשה אחת — אחרת התזכורת תיקבע ולא תופיע לעולם.
+    if (!(await canNotify())) requestNotificationPermission();
+    if (await addReminder(slug, channel.title || channel.name || '', program)) {
+      setReminded(m => ({...m, [id]: program.start}));
+    }
+  }, [channel, reminded]);
 
   if (!channel) return null;
   const title = channel.title || channel.name || 'שידור חי';
@@ -87,6 +116,8 @@ export default function LiveChannelModal({channel, onPlay, onClose}) {
                 <Text style={s.schedHead}>לוח שידורים</Text>
                 {upcoming.slice(0, 40).map((p, i) => {
                   const isNow = current && p.start === current.start;
+                  const rid = reminderId(channelSlug(channel), p);
+                  const isSet = !!reminded[rid];
                   return (
                     <View key={`${p.start}_${i}`} style={[s.row, isNow && s.rowNow]}>
                       <Text style={[s.rowTime, isNow && s.rowTimeNow]}>{fmt(p.start)}</Text>
@@ -96,7 +127,17 @@ export default function LiveChannelModal({channel, onPlay, onClose}) {
                         </Text>
                         {!!p.desc && <Text style={s.rowDesc} numberOfLines={1}>{p.desc}</Text>}
                       </View>
-                      {isNow && <Text style={s.rowLive}>● עכשיו</Text>}
+                      {isNow ? (
+                        <Text style={s.rowLive}>● עכשיו</Text>
+                      ) : remindersSupported ? (
+                        <TvFocusable
+                          style={[s.remindBtn, isSet && s.remindBtnOn]}
+                          onPress={() => toggleRemind(p)}>
+                          <Text style={[s.remindTxt, isSet && s.remindTxtOn]}>
+                            {isSet ? '🔔 יזכיר' : 'הזכר לי'}
+                          </Text>
+                        </TvFocusable>
+                      ) : null}
                     </View>
                   );
                 })}
@@ -152,4 +193,11 @@ const s = StyleSheet.create({
   rowTitleNow: {fontWeight: '800'},
   rowDesc: {color: '#888', fontSize: 12, textAlign: 'right', marginTop: 2},
   rowLive: {color: '#e50914', fontSize: 12, fontWeight: '800'},
+  remindBtn: {
+    borderWidth: 1, borderColor: '#444', borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
+  },
+  remindBtnOn: {backgroundColor: '#e50914', borderColor: '#e50914'},
+  remindTxt: {color: '#bbb', fontSize: 12, fontWeight: '700'},
+  remindTxtOn: {color: '#fff'},
 });

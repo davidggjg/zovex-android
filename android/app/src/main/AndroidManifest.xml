@@ -102,6 +102,12 @@
                     android:pathPrefix="/zovex" />
             </intent-filter>
         </activity>
-    </application>
+    
+        <!-- מקבל את אזעקת "הזכר לי" ומציג את ההתראה. exported=false: רק
+             AlarmManager של המערכת מפעיל אותו, אף אפליקציה אחרת. -->
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
+</application>
 
 </manifest>
