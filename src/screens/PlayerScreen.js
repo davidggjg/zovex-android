@@ -685,7 +685,9 @@ export default function PlayerScreen({route, navigation}) {
       if (position > 5 && duration > 0)
         saveProgress(movie.id, position, duration, userId);
     };
-  }, [movie.id, movie.title, movie.thumbnail_url, userId]);
+    // isTv הוא Platform.isTV — קבוע לאורך חיי האפליקציה, ולכן הוספתו כאן לא
+    // מריצה את ה-effect מחדש אף פעם. נכלל רק כדי שהרשימה תהיה מלאה ואמיתית.
+  }, [movie.id, movie.title, movie.thumbnail_url, userId, isTv]);
 
   // Offline-download playback decrypts to a short-lived temp file before
   // navigating here (see HomeScreen's playDownloadedItem) - delete it once

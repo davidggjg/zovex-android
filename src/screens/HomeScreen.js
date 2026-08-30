@@ -518,13 +518,18 @@ function buildSeriesMap(movies) {
 // ── MovieCard ─────────────────────────────────────────────────────────────────
 
 const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = false}) {
+  // בטלוויזיה חובה שיהיה סימון ברור לאן ה-focus הגיע — אחרת נראה כאילו השלט
+  // "לא עובד". onFocus/onBlur קיימים רק ב-TV; בטלפון הם פשוט לא נורים.
+  //
+  // ה-useState חייב להיות כאן, לפני הבדיקות: קודם הוא ישב אחריהן, כך שכרטיס
+  // בלי כותרת יצא עם אפס hooks וכרטיס תקין עם אחד. React מזהה רכיבים לפי
+  // מיקום ברשימה, ובגלילה מהירה — שבה אותו מקום מתמלא בכרטיס אחר — זה בדיוק
+  // המצב שמפיל אותו. וזה הרכיב שמצויר יותר מכל אחר באפליקציה.
+  const [focused, setFocused] = useState(false);
   if (!item || typeof item !== 'object') return null;
   const isLive = !!item.is_live;
   const displayTitle = String(item.name || item.title || '');
   if (!displayTitle) return null;
-  // בטלוויזיה חובה שיהיה סימון ברור לאן ה-focus הגיע — אחרת נראה כאילו השלט
-  // "לא עובד". onFocus/onBlur קיימים רק ב-TV; בטלפון הם פשוט לא נורים.
-  const [focused, setFocused] = useState(false);
   const borderColor = focused ? '#fff' : (isLive ? '#e50914' : 'transparent');
   const borderWidth = focused ? 3 : (isLive ? 2 : 0);
   return (
@@ -1030,7 +1035,7 @@ export default function HomeScreen({navigation, route}) {
   const handleSearchChange = useCallback(v => {
     setSearch(v);
     if (!v) setCategory('הכל');
-  }, [navigation]);
+  }, []);
 
   const onSearchFocus = useCallback(() => {
     Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
@@ -1044,6 +1049,28 @@ export default function HomeScreen({navigation, route}) {
     inputRange: [0, 1],
     outputRange: ['rgba(255,255,255,0.08)', '#e50914'],
   });
+
+  // אלמנטים יציבים ל-FlatList. כשהם נכתבים inline הם נוצרים מחדש בכל רינדור,
+  // והרשימה מחשיבה אותם כשונים ומציירת מחדש את הכותרת, התחתית והשורות
+  // הגלויות — בכל לחיצה ובכל תזוזת focus בשלט.
+  const heroHeader = useMemo(
+    () => <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />,
+    [movies, handleHeroPlay, handleHeroInfo],
+  );
+  const homeFooter = useMemo(() => <HomeFooter navigation={navigation} />, [navigation]);
+  const renderNetflixRow = useCallback(
+    ({item: row, index}) => (
+      <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow}
+                  onPress={handleItemPress} firstRow={index === 0} />
+    ),
+    [handleItemPress],
+  );
+  const renderGridItem = useCallback(
+    ({item, index}) => (
+      <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />
+    ),
+    [handleItemPress],
+  );
 
   // ── First-launch sign-in screen ──
   if (!loading && showSignIn) {
@@ -1241,28 +1268,6 @@ export default function HomeScreen({navigation, route}) {
         </View>
       </TouchableOpacity>
     </Modal>
-  );
-
-  // אלמנטים יציבים ל-FlatList. כשהם נכתבים inline הם נוצרים מחדש בכל רינדור,
-  // והרשימה מחשיבה אותם כשונים ומציירת מחדש את הכותרת, התחתית והשורות
-  // הגלויות — בכל לחיצה ובכל תזוזת focus בשלט.
-  const heroHeader = useMemo(
-    () => <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />,
-    [movies, handleHeroPlay, handleHeroInfo],
-  );
-  const homeFooter = useMemo(() => <HomeFooter navigation={navigation} />, [navigation]);
-  const renderNetflixRow = useCallback(
-    ({item: row, index}) => (
-      <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow}
-                  onPress={handleItemPress} firstRow={index === 0} />
-    ),
-    [handleItemPress],
-  );
-  const renderGridItem = useCallback(
-    ({item, index}) => (
-      <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />
-    ),
-    [handleItemPress],
   );
 
   return (
