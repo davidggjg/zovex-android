@@ -40,6 +40,7 @@ import {
   downloadEntryToMovie,
   isItemDownloadable,
 } from '../api/downloads';
+import {useIsFocused} from '@react-navigation/native';
 import TvFocusable from '../components/TvFocusable';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
@@ -51,7 +52,7 @@ const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 // בטלוויזיה מודדים לפי המסך ולא לפי החלון: החלון עלול להימסר קטן יותר
 // (למשל אחרי חזרה מהנגן), וזה מה שהפך את הרשת ל"מסך של טלפון". המסך תמיד
 // מדווח את הרוחב המלא של הטלוויזיה.
-const {width: SW} = Dimensions.get(Platform.isTV ? 'screen' : 'window');
+const {width: SW, height: SH} = Dimensions.get(Platform.isTV ? 'screen' : 'window');
 // בטלוויזיה המסך רחב וברירת המחדל של 3 עמודות ייצרה אריחים ענקיים שקשה
 // לנווט ביניהם. בטלוויזיה עוברים ל-6 עמודות (אריחים קטנים כמו בטלפון,
 // מותאמים למרחק צפייה) ובטלפון נשארים 3.
@@ -62,8 +63,14 @@ const NUM_COLS = IS_TV ? 6 : 3;
 // SW = N*CARD_W + N*10 + 16  →  CARD_W = (SW - 16 - N*10) / N
 const CARD_W = Math.floor((SW - 16 - NUM_COLS * 10) / NUM_COLS);
 const CARD_H = Math.floor(CARD_W * 1.48);
-// Hero banner: tall enough to show portrait thumbnails (2:3) with contain mode
-const HERO_H = Math.round(SW * 1.25);
+// באנר הראשי. בטלפון הפוסטרים לאורך (2:3), ולכן הגובה נגזר מהרוחב. בטלוויזיה
+// אותה נוסחה נתנה 1.25 × 1920 = 2400 פיקסלים על מסך שגובהו 1080 — באנר גבוה
+// פי שניים מהמסך, וזה מה שחרג. כאן הוא נחסם מול *גובה* המסך: בטלוויזיה 58%,
+// כך שנשארת הצצה לשורת האריחים הראשונה מתחתיו, ובטלפון תקרה של 70% כדי שגם
+// מסכים צרים לא יאבדו את שאר הדף.
+const HERO_H = IS_TV
+  ? Math.round(SH * 0.58)
+  : Math.min(Math.round(SW * 1.25), Math.round(SH * 0.7));
 
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
@@ -176,20 +183,29 @@ function MovieDetailModal({
     setShowSeasonPicker(false);
     if (s === activeSeason) return;
     setSeasonLoading(true);
-    setTimeout(() => { setSelectedSeason(s); setSeasonLoading(false); }, 600);
+    // ההשהיה כאן הייתה כדי להספיק להראות ספינר, אבל היא נוספה לכל החלפת
+    // עונה — ובשלט זה מרגיש כמו אפליקציה תקועה. הרשימה מתחלפת מיד.
+    setSelectedSeason(s);
+    setSeasonLoading(false);
   }, [activeSeason]);
 
-  if (!item) return null;
-  const displayTitle = item.series_name || item.title || item.name || '';
+  const displayTitle = item ? (item.series_name || item.title || item.name || '') : '';
 
   // קישור לשיתוף. ה-slug הוא מה שהאתר משתמש בו (‎/<slug>/watch); בלעדיו
   // נופלים לקישור לפי מזהה, שגם הוא נפתח באתר.
+  //
+  // חייב להיות *לפני* ה-return המוקדם: קודם הוא ישב אחריו, כלומר מספר
+  // ה-hooks השתנה בין רינדור עם פריט לרינדור בלעדיו — הפרה של כללי ה-hooks
+  // שמבלבלת את React ומייצרת התנהגות לא צפויה בדיוק במסך הזה.
   const onShare = useCallback(() => {
+    if (!item) return;
     const base = item.custom_slug
       ? `${MAIN_SITE}/${item.custom_slug}/watch`
       : `${MAIN_SITE}/watch?id=${encodeURIComponent(item.id || '')}`;
     Share.share({message: `${displayTitle}\n${base}`}).catch(() => {});
   }, [item, displayTitle]);
+
+  if (!item) return null;
   const firstEp = visibleEpisodes.length > 0 ? visibleEpisodes[0] : null;
 
   return (
@@ -396,7 +412,9 @@ const ftStyles = StyleSheet.create({
   note: {color: '#555', fontSize: 11, textAlign: 'center', marginTop: 4},
 });
 
-function HeroBanner({movies, onPlay, onInfo}) {
+// memo: הבאנר מחזיק טיימר ואנימציה משלו, ובלי memo הוא צויר מחדש בכל רינדור
+// של מסך הבית — כלומר בכל לחיצה, בכל מעבר focus ובכל שינוי חיפוש.
+const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
   const heroMovies = useMemo(() => {
     // Sort by created_date first (newest first) - movies.json isn't
     // guaranteed to be in any particular order (different tools that write
@@ -472,7 +490,7 @@ function HeroBanner({movies, onPlay, onInfo}) {
       )}
     </Animated.View>
   );
-}
+});
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -850,8 +868,15 @@ export default function HomeScreen({navigation, route}) {
   // הוא השורש — האפליקציה נסגרה ("הוא מנתק אותי מהאפליקציה"). חלון פרטי הסרט
   // הוא View רגיל ולא Modal, ולכן הוא גם לא נסגר מעצמו. כאן סוגרים שכבה אחת
   // בכל לחיצה, ורק כשאין מה לסגור נותנים לאנדרואיד לצאת כרגיל.
+  // המאזין הזה רשום כל עוד מסך הבית *מותקן*, לא רק כשהוא מוצג — ומסך הבית
+  // נשאר מותקן מתחת לנגן ולמסך הסדרה. לכן לחיצה על "חזור" בתוך פרק הגיעה
+  // לכאן, לא מצאה שכבה לסגור, והציגה את שאלת היציאה מהאפליקציה במקום לחזור
+  // אחורה; הלחיצה הבאה רק סגרה את השאלה, ומכאן ההרגשה ש"לא מגיב". כשהמסך
+  // אינו במוקד מחזירים false, וההחלטה עוברת לניווט שיודע לחזור אחורה.
+  const isFocused = useIsFocused();
   useEffect(() => {
     const onBack = () => {
+      if (!isFocused) return false;
       if (showExit) { setShowExit(false); return true; }
       if (showDonation) { setShowDonation(false); donationCallback.current = null; return true; }
       if (detailItem) { setDetailItem(null); return true; }
@@ -868,7 +893,7 @@ export default function HomeScreen({navigation, route}) {
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [showDonation, detailItem, showCatModal, showUserMenu, showSupport, search, category, showExit]);
+  }, [isFocused, showDonation, detailItem, showCatModal, showUserMenu, showSupport, search, category, showExit]);
 
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
@@ -1211,6 +1236,28 @@ export default function HomeScreen({navigation, route}) {
     </Modal>
   );
 
+  // אלמנטים יציבים ל-FlatList. כשהם נכתבים inline הם נוצרים מחדש בכל רינדור,
+  // והרשימה מחשיבה אותם כשונים ומציירת מחדש את הכותרת, התחתית והשורות
+  // הגלויות — בכל לחיצה ובכל תזוזת focus בשלט.
+  const heroHeader = useMemo(
+    () => <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />,
+    [movies, handleHeroPlay, handleHeroInfo],
+  );
+  const homeFooter = useMemo(() => <HomeFooter navigation={navigation} />, [navigation]);
+  const renderNetflixRow = useCallback(
+    ({item: row, index}) => (
+      <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow}
+                  onPress={handleItemPress} firstRow={index === 0} />
+    ),
+    [handleItemPress],
+  );
+  const renderGridItem = useCallback(
+    ({item, index}) => (
+      <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />
+    ),
+    [handleItemPress],
+  );
+
   return (
     <View style={styles.container}>
       {TopBar}
@@ -1225,11 +1272,9 @@ export default function HomeScreen({navigation, route}) {
           key="netflix-rows"
           data={netflixRows}
           keyExtractor={row => row.title}
-          renderItem={({item: row, index}) => (
-            <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} firstRow={index === 0} />
-          )}
-          ListHeaderComponent={<HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />}
-          ListFooterComponent={<HomeFooter navigation={navigation} />}
+          renderItem={renderNetflixRow}
+          ListHeaderComponent={heroHeader}
+          ListFooterComponent={homeFooter}
           ListEmptyComponent={<Text style={styles.empty}>אין תוכן זמין</Text>}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
@@ -1254,7 +1299,7 @@ export default function HomeScreen({navigation, route}) {
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
             }
-            renderItem={({item, index}) => <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />}
+            renderItem={renderGridItem}
             ListEmptyComponent={
               category === 'היסטוריה' ? (
                 <View style={styles.historyEmpty}>
