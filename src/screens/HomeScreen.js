@@ -42,6 +42,7 @@ import {
 } from '../api/downloads';
 import {useIsFocused} from '@react-navigation/native';
 import TvFocusable from '../components/TvFocusable';
+import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
@@ -585,6 +586,7 @@ export default function HomeScreen({navigation, route}) {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('הכל');
   const [detailItem, setDetailItem] = useState(null);
+  const [liveChannel, setLiveChannel] = useState(null);   // דף הערוץ החי הפתוח
   // חיפוש בטלוויזיה: המרובע נעצר על העטיפה, ולחיצה מרכזית מרימה את החסימה
   // ומעבירה focus לתיבה — כך המקלדת נפתחת דרך RN, שאמין יותר מפתיחה ידנית.
   const searchRef = useRef(null);
@@ -878,6 +880,7 @@ export default function HomeScreen({navigation, route}) {
     const onBack = () => {
       if (!isFocused) return false;
       if (showExit) { setShowExit(false); return true; }
+      if (liveChannel) { setLiveChannel(null); return true; }
       if (showDonation) { setShowDonation(false); donationCallback.current = null; return true; }
       if (detailItem) { setDetailItem(null); return true; }
       if (showCatModal) { setShowCatModal(false); return true; }
@@ -893,7 +896,7 @@ export default function HomeScreen({navigation, route}) {
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [isFocused, showDonation, detailItem, showCatModal, showUserMenu, showSupport, search, category, showExit]);
+  }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, category, showExit]);
 
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
@@ -956,22 +959,26 @@ export default function HomeScreen({navigation, route}) {
   const handleItemPress = useCallback(item => {
     if (item.__isDownload) { playDownloadedItem(item); return; }
     showDonationModal(() => {
-      if (item.is_live) {
-        navigation.navigate('Player', {
-          movie: {
-            ...item,
-            is_live: true,
-            type: item.type || 'direct',
-            video_url: item.video_url || item.url || '',
-            title: item.title || item.name || 'שידור חי',
-          },
-          userId: user?.id || null,
-        });
-      } else {
-        setDetailItem(item);
-      }
+      // ערוץ חי נפתח לדף שלו — תמונה, מה משודר עכשיו, ולוח השידורים — ולא
+      // ישר לנגן. קפיצה ישירה לשידור לא נותנת שום דרך לדעת מה רואים.
+      if (item.is_live) setLiveChannel(item);
+      else setDetailItem(item);
     });
-  }, [navigation, user, showDonationModal, playDownloadedItem]);
+  }, [showDonationModal, playDownloadedItem]);
+
+  const playLiveChannel = useCallback(ch => {
+    setLiveChannel(null);
+    navigation.navigate('Player', {
+      movie: {
+        ...ch,
+        is_live: true,
+        type: ch.type || 'direct',
+        video_url: ch.video_url || ch.url || '',
+        title: ch.title || ch.name || 'שידור חי',
+      },
+      userId: user?.id || null,
+    });
+  }, [navigation, user]);
 
   // Deep link support: zovex://<slug> or https://davidggjg.github.io/zovex/<slug>
   // land here with the slug in route.params.deepPath (see linking config in
@@ -1316,6 +1323,14 @@ export default function HomeScreen({navigation, route}) {
               )
             }
           />
+      )}
+
+      {liveChannel && (
+        <LiveChannelModal
+          channel={liveChannel}
+          onPlay={playLiveChannel}
+          onClose={() => setLiveChannel(null)}
+        />
       )}
 
       {detailItem && (
