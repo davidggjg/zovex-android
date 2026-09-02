@@ -40,6 +40,7 @@ import {
   isItemDownloadable,
 } from '../api/downloads';
 import {useIsFocused} from '@react-navigation/native';
+import {verifyPanelCode} from '../api/savedUpload';
 import TvFocusable from '../components/TvFocusable';
 import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
@@ -1073,10 +1074,36 @@ export default function HomeScreen({navigation, route}) {
     showDonationModal(() => setDetailItem(d));
   }, [seriesMap, showDonationModal]);
 
+  // כניסה נסתרת לפאנל ההעלאה: מקלידים את קוד הגישה בשדה החיפוש.
+  // הקוד עצמו *אינו* כאן אלא בשרת. APK הוא קובץ ZIP, ו-`strings` מוציא ממנו
+  // כל מחרוזת בשניות — קוד ששמור באפליקציה שקול לקוד פומבי, וזה לא מספיק
+  // לפאנל שדוחף קבצים לחשבון הטלגרם הפרטי.
+  // נשלח לשרת רק מה שנראה כמו מועמד (מילה אחת, 12 תווים ומעלה) ורק אחרי
+  // שההקלדה נחה, כדי לא לשלוח בקשה על כל תו שמקלידים בחיפוש רגיל.
+  const codeTimer = useRef(null);
+  useEffect(() => () => clearTimeout(codeTimer.current), []);
+
+  const tryPanelCode = useCallback(v => {
+    clearTimeout(codeTimer.current);
+    const c = (v || '').trim();
+    if (c.length < 12 || /\s/.test(c)) return;
+    codeTimer.current = setTimeout(async () => {
+      try {
+        const d = await verifyPanelCode(c);
+        if (!d || !d.ok) return;
+        setSearch('');
+        navigation.navigate('SavedUpload', {code: c, account: d.account});
+      } catch (_) {
+        // קוד שגוי — בשקט ובכוונה. הודעת שגיאה הייתה מסגירה שיש כאן פאנל.
+      }
+    }, 700);
+  }, [navigation]);
+
   const handleSearchChange = useCallback(v => {
     setSearch(v);
     if (!v) setCategory('הכל');
-  }, []);
+    tryPanelCode(v);
+  }, [tryPanelCode]);
 
   const onSearchFocus = useCallback(() => {
     Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
