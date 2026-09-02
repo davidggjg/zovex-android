@@ -2,7 +2,7 @@
 // פאנל העלאה: בוחרים סרטון מהגלריה, והוא עולה ל"הודעות שמורות" בטלגרם.
 //
 // שני שלבי התקדמות, כי אלה שתי העברות רשת נפרדות:
-//   ① הטלפון → השרת   (נמדד כאן, ע"י react-native-fs)
+//   ① הטלפון → השרת   (נמדד כאן, מאירועי ההתקדמות של ה-XHR)
 //   ② השרת → טלגרם    (נמדד בשרת, נשאב בתשאול כל שנייה)
 //
 // אחרי שלב ② השרת מוחק את הקובץ הזמני — גם אם ההעלאה נכשלה.
@@ -35,6 +35,10 @@ export default function SavedUploadScreen({route, navigation}) {
   const [caption, setCaption] = useState('');
   const [phase, setPhase] = useState('idle');     // idle|sending|telegram|done|error
   const [sent, setSent] = useState(0);
+  // הבורר לא תמיד יודע לומר את גודל הקובץ (fileSize חוזר 0 בחלק ממכשירי
+  // אנדרואיד). במקרה כזה הגודל האמיתי מגיע עם אירוע ההתקדמות הראשון, ובלעדיו
+  // האחוזים היו תקועים על אפס לכל אורך ההעלאה.
+  const [total, setTotal] = useState(0);
   const [tg, setTg] = useState(null);             // מצב מהשרת
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -49,8 +53,8 @@ export default function SavedUploadScreen({route, navigation}) {
       const a = res.assets && res.assets[0];
       if (!a) return;
       setFile({uri: a.uri, name: a.fileName || 'video.mp4', size: a.fileSize || 0,
-               duration: a.duration});
-      setPhase('idle'); setSent(0); setTg(null); setError('');
+               type: a.type || 'video/mp4', duration: a.duration});
+      setPhase('idle'); setSent(0); setTotal(a.fileSize || 0); setTg(null); setError('');
     });
   }, []);
 
@@ -73,12 +77,12 @@ export default function SavedUploadScreen({route, navigation}) {
 
   const start = useCallback(async () => {
     if (!file || phase === 'sending' || phase === 'telegram') return;
-    setPhase('sending'); setSent(0); setTg(null); setError('');
+    setPhase('sending'); setSent(0); setTotal(file.size || 0); setTg(null); setError('');
     startedRef.current = Date.now();
     try {
       const r = await uploadToServer({
-        code, uri: file.uri, name: file.name, caption,
-        onProgress: s => setSent(s),
+        code, uri: file.uri, name: file.name, type: file.type, caption,
+        onProgress: (s, t) => { setSent(s); if (t > 0) setTotal(t); },
       });
       setPhase('telegram');
       poll(r.job);
@@ -89,7 +93,7 @@ export default function SavedUploadScreen({route, navigation}) {
   }, [file, phase, code, caption, poll]);
 
   const busy = phase === 'sending' || phase === 'telegram';
-  const upPct = file && file.size ? (100 * sent) / file.size : 0;
+  const upPct = total ? (100 * sent) / total : 0;
   const upElapsed = (Date.now() - startedRef.current) / 1000;
   const upSpeed = phase === 'sending' && upElapsed > 0.5 ? sent / upElapsed : 0;
 
@@ -125,7 +129,7 @@ export default function SavedUploadScreen({route, navigation}) {
           <View style={styles.card}>
             <Text style={styles.fileName} numberOfLines={2}>{file.name}</Text>
             <Text style={styles.meta}>
-              {fmtBytes(file.size)}
+              {total ? fmtBytes(total) : '—'}
               {file.duration ? ` · ${Math.round(file.duration)} שנ׳` : ''}
             </Text>
           </View>
@@ -149,8 +153,8 @@ export default function SavedUploadScreen({route, navigation}) {
             <Bar pct={phase === 'sending' ? upPct : 100} color="#3ba55d" />
             <Text style={styles.meta}>
               {phase === 'sending'
-                ? `${upPct.toFixed(1)}% · ${fmtBytes(sent)} מתוך ${fmtBytes(file.size)}` +
-                  (upSpeed ? ` · ${fmtBytes(upSpeed)}/שנ׳ · נותרו ${fmtEta((file.size - sent) / upSpeed)}` : '')
+                ? `${upPct.toFixed(1)}% · ${fmtBytes(sent)} מתוך ${total ? fmtBytes(total) : '—'}` +
+                  (upSpeed && total ? ` · ${fmtBytes(upSpeed)}/שנ׳ · נותרו ${fmtEta((total - sent) / upSpeed)}` : '')
                 : '✓ הושלם'}
             </Text>
           </View>

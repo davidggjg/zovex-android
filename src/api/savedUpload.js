@@ -11,8 +11,6 @@
 // בשניות; קוד שיושב באפליקציה שקול לקוד פומבי. מה שהוקלד נשלח לשרת לאימות,
 // והשרת הוא זה שמחזיק את הסוד — כך גם אפשר להחליף אותו בלי לבנות APK חדש.
 // ─────────────────────────────────────────────────────────────────────────────
-import RNFS from 'react-native-fs';
-
 const BASE = 'https://zovex.duckdns.org';
 
 /** בודק קוד מול השרת. מחזיר {ok, account, ready} או זורק שגיאה מוסברת. */
@@ -30,30 +28,48 @@ export async function verifyPanelCode(code) {
 /**
  * שלב ①: מעלה את הקובץ לשרת ומחזיר את מזהה המשימה.
  * onProgress מקבל (בייטים שנשלחו, סה"כ).
+ *
+ * הגוף נשלח גולמי, לא multipart: השרת אינו תומך ב-multipart בכוונה (הוא היה
+ * דורש חבילה נוספת שאם היא חסרה השירות כולו לא עולה), וגם ככה חוסכים קידוד
+ * ופענוח על קובץ של גיגה־בייטים.
+ *
+ * למה XMLHttpRequest ולא react-native-fs: `RNFS.uploadFiles` פותח את הקובץ
+ * ב-`new File(filepath)`, כלומר נתיב מערכת קבצים בלבד. בורר הגלריה לעולם לא
+ * מחזיר נתיב כזה — הוא מחזיר `content://…` (ולפעמים `file://…`), ושניהם
+ * נכשלים שם ב-FileNotFoundException. RNFS מדווח על הכשל הזה עם ה-URL של
+ * היעד במקום עם הנתיב, ומכאן הודעת ה-ENOENT המבלבלת שהצביעה על הכתובת.
+ * ה-XHR של React Native, לעומת זאת, מקבל `{uri}` ופותח אותו דרך
+ * ContentResolver — שיודע לטפל בשתי הסכימות — ומדווח התקדמות אמיתית.
  */
-export function uploadToServer({code, uri, name, caption, onProgress}) {
-  // binaryStreamOnly: הקובץ נשלח כגוף גולמי ולא כ-multipart. השרת אינו תומך
-  // ב-multipart בכוונה (הוא היה דורש חבילה נוספת שאם היא חסרה השירות כולו
-  // לא עולה), וגם ככה חוסכים קידוד ופענוח על קובץ של גיגה־בייטים.
+export function uploadToServer({code, uri, name, type, caption, onProgress}) {
   const q = `name=${encodeURIComponent(name || 'video.mp4')}` +
             `&caption=${encodeURIComponent(caption || '')}`;
-  const {promise} = RNFS.uploadFiles({
-    toUrl: `${BASE}/panel/saved-upload?${q}`,
-    method: 'POST',
-    binaryStreamOnly: true,
-    headers: {'x-upload-code': code},
-    files: [{name: 'file', filename: name || 'video.mp4', filepath: uri}],
-    progress: r => {
-      if (onProgress) onProgress(r.totalBytesSent, r.totalBytesExpectedToSend);
-    },
-  });
-  return promise.then(r => {
-    let body = {};
-    try { body = JSON.parse(r.body); } catch { /* גוף שאינו JSON */ }
-    if (r.statusCode !== 200) {
-      throw new Error(body.detail || `השרת החזיר ${r.statusCode}`);
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${BASE}/panel/saved-upload?${q}`);
+    // חובה: בלי Content-Type המודול הצדדי דוחה גוף מסוג uri על הסף.
+    xhr.setRequestHeader('Content-Type', type || 'application/octet-stream');
+    xhr.setRequestHeader('x-upload-code', code);
+    xhr.timeout = 0;                       // קובץ גדול הוא לא תקלה
+
+    if (onProgress && xhr.upload) {
+      xhr.upload.onprogress = e => onProgress(e.loaded, e.total);
     }
-    return body;              // {ok, job, size}
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* גוף שאינו JSON */ }
+      if (xhr.status !== 200) {
+        reject(new Error(body.detail || `השרת החזיר ${xhr.status}`));
+        return;
+      }
+      resolve(body);                       // {ok, job, size}
+    };
+    xhr.onerror = () => reject(new Error('אין חיבור לשרת'));
+    xhr.onabort = () => reject(new Error('ההעלאה בוטלה'));
+    xhr.ontimeout = () => reject(new Error('פג הזמן'));
+
+    xhr.send({uri});
   });
 }
 
