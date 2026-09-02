@@ -53,7 +53,8 @@ export default function SavedUploadScreen({route, navigation}) {
       const a = res.assets && res.assets[0];
       if (!a) return;
       setFile({uri: a.uri, name: a.fileName || 'video.mp4', size: a.fileSize || 0,
-               type: a.type || 'video/mp4', duration: a.duration});
+               type: a.type || 'video/mp4', duration: a.duration,
+               width: a.width, height: a.height});
       setPhase('idle'); setSent(0); setTotal(a.fileSize || 0); setTg(null); setError('');
     });
   }, []);
@@ -82,6 +83,7 @@ export default function SavedUploadScreen({route, navigation}) {
     try {
       const r = await uploadToServer({
         code, uri: file.uri, name: file.name, type: file.type, caption,
+        duration: file.duration, width: file.width, height: file.height,
         onProgress: (s, t) => { setSent(s); if (t > 0) setTotal(t); },
       });
       setPhase('telegram');

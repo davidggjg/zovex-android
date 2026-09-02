@@ -41,9 +41,16 @@ export async function verifyPanelCode(code) {
  * ה-XHR של React Native, לעומת זאת, מקבל `{uri}` ופותח אותו דרך
  * ContentResolver — שיודע לטפל בשתי הסכימות — ומדווח התקדמות אמיתית.
  */
-export function uploadToServer({code, uri, name, type, caption, onProgress}) {
+export function uploadToServer({code, uri, name, type, caption,
+                                duration, width, height, onProgress}) {
+  // אורך ומידות נשלחים לשרת כדי שיעביר אותם לטלגרם. בלעדיהם ההודעה בטלגרם
+  // מציגה 0:00 ותצוגה מקדימה שחורה: טלגרם שומר בדיוק את מה שנמסר לו, ומי
+  // ששולח וידאו בלי המטא־דאטה הזאת שולח אפסים. הקובץ עצמו תקין — רק
+  // ההודעה משקרת, וכל דבר שיקרא את המטא־דאטה הזאת בהמשך יקבל אפס.
+  const n = v => (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
   const q = `name=${encodeURIComponent(name || 'video.mp4')}` +
-            `&caption=${encodeURIComponent(caption || '')}`;
+            `&caption=${encodeURIComponent(caption || '')}` +
+            `&duration=${n(duration)}&width=${n(width)}&height=${n(height)}`;
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
