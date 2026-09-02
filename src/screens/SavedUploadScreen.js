@@ -10,9 +10,13 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator, TextInput, Alert,
+  ActivityIndicator, TextInput, Alert, NativeModules,
 } from 'react-native';
-import {launchImageLibrary} from 'react-native-image-picker';
+
+// בורר משלנו ולא react-native-image-picker: זה פתח את גוגל תמונות, שמציג
+// פריטים שיושבים בענן ולא במכשיר — וסרט שהורדת יושב ב"הורדות" ובכלל לא מופיע
+// שם. VideoPicker פותח את בורר הקבצים של המערכת ומסנן לקבצים מקומיים בלבד.
+const {VideoPicker} = NativeModules;
 import {
   uploadToServer, fetchJobStatus, fmtBytes, fmtEta,
 } from '../api/savedUpload';
@@ -46,17 +50,18 @@ export default function SavedUploadScreen({route, navigation}) {
 
   useEffect(() => () => clearInterval(pollRef.current), []);
 
-  const pick = useCallback(() => {
-    launchImageLibrary({mediaType: 'video', selectionLimit: 1}, res => {
-      if (res.didCancel) return;
-      if (res.errorCode) { setError(res.errorMessage || res.errorCode); return; }
-      const a = res.assets && res.assets[0];
-      if (!a) return;
-      setFile({uri: a.uri, name: a.fileName || 'video.mp4', size: a.fileSize || 0,
+  const pick = useCallback(async () => {
+    if (!VideoPicker) { setError('בורר הסרטונים אינו זמין בגרסה הזאת'); return; }
+    try {
+      const a = await VideoPicker.pick();
+      if (!a || a.cancelled) return;
+      setFile({uri: a.uri, name: a.name || 'video.mp4', size: a.size || 0,
                type: a.type || 'video/mp4', duration: a.duration,
                width: a.width, height: a.height});
-      setPhase('idle'); setSent(0); setTotal(a.fileSize || 0); setTg(null); setError('');
-    });
+      setPhase('idle'); setSent(0); setTotal(a.size || 0); setTg(null); setError('');
+    } catch (e) {
+      setError(e.message || 'בחירת הסרטון נכשלה');
+    }
   }, []);
 
   const poll = useCallback(job => {
@@ -123,7 +128,7 @@ export default function SavedUploadScreen({route, navigation}) {
       <ScrollView contentContainerStyle={styles.body}>
         <TouchableOpacity style={styles.pickBtn} onPress={pick} disabled={busy}>
           <Text style={styles.pickTxt}>
-            {file ? '🎬 בחר סרטון אחר' : '🎬 בחר סרטון מהגלריה'}
+            {file ? '🎬 בחר סרטון אחר' : '🎬 בחר סרטון מהמכשיר'}
           </Text>
         </TouchableOpacity>
 
