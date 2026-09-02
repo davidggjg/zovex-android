@@ -18,7 +18,8 @@ import {
 // שם. VideoPicker פותח את בורר הקבצים של המערכת ומסנן לקבצים מקומיים בלבד.
 const {VideoPicker} = NativeModules;
 import {
-  uploadToServer, fetchJobStatus, fmtBytes, fmtEta,
+  startUpload, onUpload, getUploadState, cancelUpload,
+  fetchJobStatus, fmtBytes, fmtEta,
 } from '../api/savedUpload';
 
 const RED = '#e50914';
@@ -34,6 +35,11 @@ function Bar({pct, color}) {
 export default function SavedUploadScreen({route, navigation}) {
   const code = route?.params?.code || '';
   const account = route?.params?.account || '';
+  // מגבלות שהשרת דיווח עליהן בכניסה: הגודל שטלגרם מרשה לחשבון הזה, והמקום
+  // הפנוי בדיסק השרת. הבדיקה נעשית גם בשרת — כאן היא רק חוסכת העלאה שלמה
+  // שנועדה להידחות.
+  const maxSize = route?.params?.maxSize || 0;
+  const freeDisk = route?.params?.freeDisk || 0;
 
   const [file, setFile] = useState(null);
   const [caption, setCaption] = useState('');
@@ -81,25 +87,61 @@ export default function SavedUploadScreen({route, navigation}) {
     }, 1000);
   }, []);
 
+  // ההעלאה חיה בצד הנייטיבי ושורדת את המסך הזה, ולכן ההתקדמות מגיעה
+  // באירועים. בפתיחת המסך שואבים את המצב הנוכחי: אם העלאה כבר רצה — למשל
+  // כשחוזרים לאפליקציה אחרי שיצאנו ממנה — מתחברים אליה במקום להתחיל מאפס.
+  useEffect(() => {
+    const sub = onUpload(e => {
+      if (typeof e.sent === 'number') setSent(e.sent);
+      if (e.total > 0) setTotal(e.total);
+      if (e.type === 'done') {
+        if (e.job) { setPhase('telegram'); poll(e.job); }
+        else { setPhase('error'); setError('השרת לא החזיר מזהה משימה'); }
+      } else if (e.type === 'error') {
+        setPhase('error');
+        setError(e.error || 'ההעלאה לשרת נכשלה');
+      } else {
+        setPhase(p => (p === 'idle' || p === 'error' ? 'sending' : p));
+      }
+    });
+    getUploadState().then(st => {
+      if (!st) return;
+      if (st.running) {
+        setPhase('sending');
+        setSent(st.sent || 0);
+        setTotal(st.total || 0);
+        // המהירות נמדדת מרגע החיבור מחדש, כי אין לנו את זמן ההתחלה המקורי.
+        startedRef.current = Date.now();
+      } else if (st.stage === 'done' && st.job) {
+        setPhase('telegram');
+        poll(st.job);
+      }
+    }).catch(() => {});
+    return () => sub.remove();
+  }, [poll]);
+
   const start = useCallback(async () => {
     if (!file || phase === 'sending' || phase === 'telegram') return;
     setPhase('sending'); setSent(0); setTotal(file.size || 0); setTg(null); setError('');
     startedRef.current = Date.now();
     try {
-      const r = await uploadToServer({
-        code, uri: file.uri, name: file.name, type: file.type, caption,
+      await startUpload({
+        code, uri: file.uri, name: file.name, type: file.type,
+        size: file.size, caption,
         duration: file.duration, width: file.width, height: file.height,
-        onProgress: (s, t) => { setSent(s); if (t > 0) setTotal(t); },
       });
-      setPhase('telegram');
-      poll(r.job);
     } catch (e) {
       setPhase('error');
       setError(e.message || 'ההעלאה לשרת נכשלה');
     }
-  }, [file, phase, code, caption, poll]);
+  }, [file, phase, code, caption]);
 
   const busy = phase === 'sending' || phase === 'telegram';
+  // הקובץ גדול מהמותר — אין טעם להתחיל. עדיף לומר את זה עכשיו מאשר אחרי
+  // שהוא כבר עבר במלואו על רשת סלולרית.
+  const tooBig = !!(file && maxSize && file.size > maxSize);
+  const noRoom = !!(file && freeDisk && file.size + 536870912 > freeDisk);
+  const blocked = tooBig || noRoom;
   const upPct = total ? (100 * sent) / total : 0;
   const upElapsed = (Date.now() - startedRef.current) / 1000;
   const upSpeed = phase === 'sending' && upElapsed > 0.5 ? sent / upElapsed : 0;
@@ -110,8 +152,15 @@ export default function SavedUploadScreen({route, navigation}) {
         <TouchableOpacity
           onPress={() => {
             if (busy) {
-              Alert.alert('העלאה פעילה', 'לצאת עכשיו יבטל את המעקב. ההעלאה בשרת תמשיך.',
-                [{text: 'הישאר'}, {text: 'צא', onPress: () => navigation.goBack()}]);
+              Alert.alert(
+                'העלאה פעילה',
+                'ההעלאה תמשיך גם אם תצא מהאפליקציה, ותוכל לעקוב אחריה בהתראה.',
+                [
+                  {text: 'הישאר'},
+                  {text: 'צא — שימשיך', onPress: () => navigation.goBack()},
+                  {text: 'בטל העלאה', style: 'destructive',
+                   onPress: () => { cancelUpload(); navigation.goBack(); }},
+                ]);
               return;
             }
             navigation.goBack();
@@ -189,6 +238,17 @@ export default function SavedUploadScreen({route, navigation}) {
           </View>
         )}
 
+        {blocked && !busy && (
+          <View style={[styles.card, styles.errCard]}>
+            <Text style={styles.errTxt}>
+              {tooBig
+                ? `הקובץ ${fmtBytes(file.size)}, וטלגרם מגביל את החשבון הזה ל-${fmtBytes(maxSize)}.` +
+                  (maxSize <= 2147483648 ? ' חשבון Premium מגיע ל-4GB.' : '')
+                : `אין מספיק מקום בשרת: פנויים ${fmtBytes(freeDisk)} והקובץ ${fmtBytes(file.size)}.`}
+            </Text>
+          </View>
+        )}
+
         {!!error && (
           <View style={[styles.card, styles.errCard]}>
             <Text style={styles.errTxt}>{error}</Text>
@@ -196,9 +256,9 @@ export default function SavedUploadScreen({route, navigation}) {
         )}
 
         <TouchableOpacity
-          style={[styles.go, (!file || busy) && styles.goOff]}
+          style={[styles.go, (!file || busy || blocked) && styles.goOff]}
           onPress={start}
-          disabled={!file || busy}>
+          disabled={!file || busy || blocked}>
           {busy ? <ActivityIndicator color="#fff" />
                 : <Text style={styles.goTxt}>{phase === 'done' ? 'העלה עוד סרטון' : 'העלה'}</Text>}
         </TouchableOpacity>

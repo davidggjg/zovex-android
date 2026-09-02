@@ -1092,7 +1092,12 @@ export default function HomeScreen({navigation, route}) {
         const d = await verifyPanelCode(c);
         if (!d || !d.ok) return;
         setSearch('');
-        navigation.navigate('SavedUpload', {code: c, account: d.account});
+        // maxSize מגיע מהשרת לפי סוג חשבון הטלגרם (2GB רגיל, 4GB Premium),
+        // כדי שהפאנל יוכל לומר מראש שקובץ גדול מדי במקום להעלות אותו לחינם.
+        navigation.navigate('SavedUpload', {
+          code: c, account: d.account,
+          maxSize: d.max_size || 0, freeDisk: d.free_disk || 0,
+        });
       } catch (_) {
         // קוד שגוי — בשקט ובכוונה. הודעת שגיאה הייתה מסגירה שיש כאן פאנל.
       }

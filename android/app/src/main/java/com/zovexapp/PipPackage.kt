@@ -8,7 +8,7 @@ import com.facebook.react.uimanager.ViewManager
 class PipPackage : ReactPackage {
     override fun createNativeModules(ctx: ReactApplicationContext): List<NativeModule> =
         listOf(PipModule(ctx), ApkInstallerModule(ctx), ReminderModule(ctx),
-               VideoPickerModule(ctx))
+               VideoPickerModule(ctx), UploadModule(ctx))
 
     override fun createViewManagers(ctx: ReactApplicationContext): List<ViewManager<*, *>> =
         listOf(TvFocusableViewManager())

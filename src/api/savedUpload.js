@@ -11,6 +11,9 @@
 // בשניות; קוד שיושב באפליקציה שקול לקוד פומבי. מה שהוקלד נשלח לשרת לאימות,
 // והשרת הוא זה שמחזיק את הסוד — כך גם אפשר להחליף אותו בלי לבנות APK חדש.
 // ─────────────────────────────────────────────────────────────────────────────
+import {NativeModules, DeviceEventEmitter} from 'react-native';
+
+const {ZovexUploader} = NativeModules;
 const BASE = 'https://zovex.duckdns.org';
 
 /** בודק קוד מול השרת. מחזיר {ok, account, ready} או זורק שגיאה מוסברת. */
@@ -26,23 +29,28 @@ export async function verifyPanelCode(code) {
 }
 
 /**
- * שלב ①: מעלה את הקובץ לשרת ומחזיר את מזהה המשימה.
- * onProgress מקבל (בייטים שנשלחו, סה"כ).
+ * שלב ①: מעלה את הקובץ לשרת. ההעלאה עצמה רצה בצד הנייטיבי.
  *
  * הגוף נשלח גולמי, לא multipart: השרת אינו תומך ב-multipart בכוונה (הוא היה
  * דורש חבילה נוספת שאם היא חסרה השירות כולו לא עולה), וגם ככה חוסכים קידוד
  * ופענוח על קובץ של גיגה־בייטים.
  *
- * למה XMLHttpRequest ולא react-native-fs: `RNFS.uploadFiles` פותח את הקובץ
- * ב-`new File(filepath)`, כלומר נתיב מערכת קבצים בלבד. בורר הגלריה לעולם לא
- * מחזיר נתיב כזה — הוא מחזיר `content://…` (ולפעמים `file://…`), ושניהם
- * נכשלים שם ב-FileNotFoundException. RNFS מדווח על הכשל הזה עם ה-URL של
- * היעד במקום עם הנתיב, ומכאן הודעת ה-ENOENT המבלבלת שהצביעה על הכתובת.
- * ה-XHR של React Native, לעומת זאת, מקבל `{uri}` ופותח אותו דרך
- * ContentResolver — שיודע לטפל בשתי הסכימות — ומדווח התקדמות אמיתית.
+ * למה נייטיבי ולא ה-XHR של React Native, שהיה כאן קודם: RN קובע את אורך הגוף
+ * לפי `inputStream.available()`, שמחזיר int — תקרה של 2GB. הזרם עצמו מחמיר,
+ * כי הבנאי של AssetFileDescriptor.AutoCloseInputStream ב-AOSP כותב
+ * `mRemaining = (int)fd.getLength()`, כלומר חותך long ל-int. קובץ של 3.34GB
+ * הצהיר על אורך שגוי, החיבור נשבר, וכל מה שהגיע לכאן היה "כשל רשת".
+ * הצד הנייטיבי לוקח את הגודל מ-ContentResolver כ-long ומוסר אותו ל-
+ * setFixedLengthStreamingMode(long), ולכן גודל הקובץ אינו מגביל אותו.
+ *
+ * הוא גם רץ לצד שירות חזית, כך שיציאה מהאפליקציה אינה קוטעת את ההעלאה.
+ * ההתקדמות מגיעה באירועים ולא ב-callback, כי ההעלאה שורדת גם מסך שנסגר.
  */
-export function uploadToServer({code, uri, name, type, caption,
-                                duration, width, height, onProgress}) {
+export function startUpload({code, uri, name, type, size, caption,
+                             duration, width, height}) {
+  if (!ZovexUploader) {
+    return Promise.reject(new Error('מנגנון ההעלאה אינו זמין בגרסה הזאת'));
+  }
   // אורך ומידות נשלחים לשרת כדי שיעביר אותם לטלגרם. בלעדיהם ההודעה בטלגרם
   // מציגה 0:00 ותצוגה מקדימה שחורה: טלגרם שומר בדיוק את מה שנמסר לו, ומי
   // ששולח וידאו בלי המטא־דאטה הזאת שולח אפסים. הקובץ עצמו תקין — רק
@@ -52,32 +60,29 @@ export function uploadToServer({code, uri, name, type, caption,
             `&caption=${encodeURIComponent(caption || '')}` +
             `&duration=${n(duration)}&width=${n(width)}&height=${n(height)}`;
 
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', `${BASE}/panel/saved-upload?${q}`);
-    // חובה: בלי Content-Type המודול הצדדי דוחה גוף מסוג uri על הסף.
-    xhr.setRequestHeader('Content-Type', type || 'application/octet-stream');
-    xhr.setRequestHeader('x-upload-code', code);
-    xhr.timeout = 0;                       // קובץ גדול הוא לא תקלה
-
-    if (onProgress && xhr.upload) {
-      xhr.upload.onprogress = e => onProgress(e.loaded, e.total);
-    }
-    xhr.onload = () => {
-      let body = {};
-      try { body = JSON.parse(xhr.responseText); } catch { /* גוף שאינו JSON */ }
-      if (xhr.status !== 200) {
-        reject(new Error(body.detail || `השרת החזיר ${xhr.status}`));
-        return;
-      }
-      resolve(body);                       // {ok, job, size}
-    };
-    xhr.onerror = () => reject(new Error('אין חיבור לשרת'));
-    xhr.onabort = () => reject(new Error('ההעלאה בוטלה'));
-    xhr.ontimeout = () => reject(new Error('פג הזמן'));
-
-    xhr.send({uri});
+  return ZovexUploader.start({
+    uri,
+    url: `${BASE}/panel/saved-upload?${q}`,
+    code: code || '',
+    // חובה: בלי Content-Type השרת אינו יודע לזהות את הגוף.
+    type: type || 'application/octet-stream',
+    name: name || 'video.mp4',
+    size: size || 0,
   });
+}
+
+/** מנוי לאירועי ההעלאה: {type: progress|done|error, sent, total, job, error}. */
+export function onUpload(handler) {
+  return DeviceEventEmitter.addListener('zovexUpload', handler);
+}
+
+/** מצב ההעלאה כרגע — כדי שמסך שנפתח מחדש יתחבר להעלאה שכבר רצה. */
+export function getUploadState() {
+  return ZovexUploader ? ZovexUploader.getState() : Promise.resolve(null);
+}
+
+export function cancelUpload() {
+  return ZovexUploader ? ZovexUploader.cancel() : Promise.resolve(false);
 }
 
 /** שלב ②: מצב ההעלאה מהשרת לטלגרם. */

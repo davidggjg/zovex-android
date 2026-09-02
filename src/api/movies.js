@@ -131,7 +131,7 @@ export async function fetchHistory(userId) {
 // חייבת להתאים ל-versionName ב-build.gradle. היא עמדה על 1.0.22 בעוד
 // ה-gradle כבר על 1.0.24 — שתי גרסאות פער, כלומר האפליקציה דיווחה על
 // עצמה מספר שאינו נכון והשוואת הגרסאות מול השרת התבססה עליו.
-export const APP_VERSION = '1.0.28';
+export const APP_VERSION = '1.0.29';
 
 export async function sendFeedback({userId, name, email, text, kind}) {
   if (!userId || !text) return false;
