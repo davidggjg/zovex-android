@@ -14,7 +14,6 @@ import {
   ScrollView,
   RefreshControl,
   Dimensions,
-  ImageBackground,
   Animated,
   I18nManager,
   AppState,
@@ -260,11 +259,22 @@ function MovieDetailModal({
           </View>
           {episodes.length > 1 && (
             <View style={mdStyles.epsSection}>
-              {seasons.length > 1 && (
+              {seasons.length > 0 && (
                 <View style={mdStyles.seasonRow}>
-                  <TvFocusable style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
-                    <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
-                  </TvFocusable>
+                  {seasons.length > 1 ? (
+                    <TvFocusable style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
+                      <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
+                    </TvFocusable>
+                  ) : (
+                    // עונה יחידה: תווית, לא כפתור. קודם השורה הוסתרה לגמרי
+                    // כשהייתה עונה אחת, ולכן 82 מתוך 179 הסדרות "דילגו על
+                    // אריח העונה ישר לפרקים" — מה שנראה כמו תקלה ולא כמו
+                    // כוונה. עכשיו העונה תמיד מוצגת, אבל בלי לגזול תחנת
+                    // focus בשלט על בחירה שאין בה מה לבחור.
+                    <View style={[mdStyles.seasonBtn, mdStyles.seasonBtnStatic]}>
+                      <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason}</Text>
+                    </View>
+                  )}
                 </View>
               )}
               <Text style={mdStyles.epsHeader}>פרקים ({visibleEpisodes.length})</Text>
@@ -312,8 +322,20 @@ function MovieDetailModal({
         <Modal transparent animationType="fade" visible={showSeasonPicker} onRequestClose={() => setShowSeasonPicker(false)}>
           <TouchableOpacity style={mdStyles.seasonPickerOverlay} activeOpacity={1} onPress={() => setShowSeasonPicker(false)}>
             <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
-              {seasons.map(s => (
-                <TvFocusable key={s} style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]} onPress={() => handleSeasonSelect(s)}>
+              {seasons.map((s, i) => (
+                <TvFocusable
+                  key={s}
+                  // בלי זריעת focus אף פריט אינו ממוקד כשהחלון נפתח, ואז
+                  // בטלוויזיה אין מאיפה לזוז — הבודק תיאר את זה כ"השלט לא
+                  // מגיב". אותו דפוס בדיוק שמשמש את כפתור ההפעלה בחלון
+                  // הראשי, שם הוא כבר עובד.
+                  // ה-fallback ל-i === 0 חשוב: אם activeSeason אינו ברשימה
+                  // (למשל עונה שנעלמה מהקטלוג) שום פריט לא היה מתאים, והחלון
+                  // היה נפתח שוב בלי focus — בדיוק התקלה שאנחנו מתקנים.
+                  hasFocus={IS_TV && (s === activeSeason ||
+                                      (!seasons.includes(activeSeason) && i === 0))}
+                  style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]}
+                  onPress={() => handleSeasonSelect(s)}>
                   <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>
                 </TvFocusable>
               ))}
@@ -365,6 +387,8 @@ const mdStyles = StyleSheet.create({
   epsSection: {paddingHorizontal: 16, paddingBottom: 24},
   seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: '#222'},
   seasonBtn: {backgroundColor: '#2a2a2a', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
+  // עונה יחידה — נראית כתווית ולא ככפתור, כדי שלא תזמין לחיצה שלא תעשה כלום
+  seasonBtnStatic: {backgroundColor: '#1c1c1e', opacity: 0.85},
   seasonBtnTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
   seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
   seasonPickerBox: {backgroundColor: '#1c1c1e', borderRadius: 16, overflow: 'hidden', minWidth: 180},
@@ -455,7 +479,24 @@ const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
   return (
     <Animated.View style={[styles.hero, {opacity: fadeAnim}]}>
       {movie.thumbnail_url ? (
-        <ImageBackground source={{uri: movie.thumbnail_url}} style={styles.heroBg} resizeMode="contain">
+        <View style={styles.heroBg}>
+          {/* שתי שכבות של אותה תמונה, וזה מכוון.
+              המסגרת בגובה קבוע, ולכן contain לבדו מצייר תמונת פוסטר (צרה
+              וגבוהה) קטנה במרכז בעוד תמונה רוחבית ממלאת את הרוחב — כלומר
+              האריח נראה בגודל אחר לכל פריט בקרוסלה. השכבה המטושטשת ב-cover
+              ממלאת תמיד את המסגרת, וה-contain מעליה מציג את התמונה בשלמותה
+              בלי חיתוך. כך הגודל קבוע והתוכן עדיין שלם. */}
+          <Image
+            source={{uri: movie.thumbnail_url}}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            blurRadius={14}
+          />
+          <Image
+            source={{uri: movie.thumbnail_url}}
+            style={StyleSheet.absoluteFill}
+            resizeMode="contain"
+          />
           <View style={styles.heroGradient} />
           <View style={styles.heroContent}>
             <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
@@ -469,7 +510,7 @@ const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
               </TvFocusable>
             </View>
           </View>
-        </ImageBackground>
+        </View>
       ) : (
         <View style={[styles.heroBg, {backgroundColor: '#111'}]}>
           <View style={styles.heroContent}>
