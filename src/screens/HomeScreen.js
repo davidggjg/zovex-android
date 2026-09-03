@@ -603,6 +603,7 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, f
       <View style={styles.rowHeader}>
         {isLiveRow && <Text style={styles.liveIcon}>●</Text>}
         <Text style={styles.rowTitle}>{title}</Text>
+        <View style={styles.rowTitleAccent} />
       </View>
       <FlatList
         data={items}
@@ -1708,18 +1709,31 @@ const styles = StyleSheet.create({
   // ── Netflix rows ──
   rowWrap: {marginBottom: 24},
   rowHeader: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10, justifyContent: 'flex-end'},
+  // מבטא אדום קטן ליד כותרת השורה — אותה שפה כמו הפס האדום שמסמן שידור חי,
+  // רק כאן קבוע. באתר זה מגיע מ-gradient על הטקסט; כאן, בלי ליצור תלות
+  // חדשה, פס צר ומעוגל נותן אפקט דומה בעלות אפסית.
+  rowTitleAccent: {width: 3, height: 15, borderRadius: 2, backgroundColor: '#e50914', marginLeft: 8},
   liveIcon: {color: '#e50914', fontSize: 10, marginLeft: 6},
   rowTitle: {color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'right'},
   rowList: {paddingHorizontal: 10},
 
   // ── Card ──
-  card: {marginHorizontal: 5, borderRadius: 10, overflow: 'hidden'},
+  // 14 ולא 10: אותו רדיוס עיגול שכבר כויל באתר (.zv-card__art), כדי
+  // שהאפליקציה תרגיש כמו המשך של אותו עיצוב ולא כמו גרסה ישנה יותר.
+  card: {marginHorizontal: 5, borderRadius: 14, overflow: 'hidden'},
   // הדגשת ה-focus בטלוויזיה: הכרטיס ה"נבחר" עולה מעל השכנים ומקבל רקע בהיר
-  // קל, בנוסף למסגרת הלבנה על התמונה. בלי scale כדי לא לחתוך/לחפוף שכנים.
-  cardFocused: {backgroundColor: '#2a2a2c', zIndex: 3, elevation: 6},
+  // קל, בנוסף למסגרת הלבנה על התמונה. בלי scale כדי לא לחתוך/לחפוף שכנים —
+  // זו בדיוק הסיבה שבאתר אפשר להגדיל כרטיס בפוקוס (רשת CSS רגילה, בלי
+  // חיתוך שכנים) ובאפליקציה לא (FlatList אופקי עם removeClippedSubviews).
+  // הצללית מפצה על ההיעדר: elevation גבוה יותר מרים את הכרטיס בעין בלי
+  // לגעת בגודל שלו.
+  cardFocused: {
+    backgroundColor: '#2a2a2c', zIndex: 3, elevation: 9,
+    shadowColor: '#fff', shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: {width: 0, height: 4},
+  },
   // טבעת ה-focus לפקדים בסרגל העליון — אותו שפה ויזואלית כמו הכרטיסים
   tvFocusRing: {borderWidth: 2, borderColor: '#fff', borderRadius: 8},
-  cardImg: {width: '100%', borderRadius: 10, overflow: 'hidden', backgroundColor: '#1c1c1e'},
+  cardImg: {width: '100%', borderRadius: 14, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},
   noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1c1c1e'},
