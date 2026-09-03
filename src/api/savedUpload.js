@@ -51,23 +51,20 @@ export function startUpload({code, uri, name, type, size, caption,
   if (!ZovexUploader) {
     return Promise.reject(new Error('מנגנון ההעלאה אינו זמין בגרסה הזאת'));
   }
-  // אורך ומידות נשלחים לשרת כדי שיעביר אותם לטלגרם. בלעדיהם ההודעה בטלגרם
-  // מציגה 0:00 ותצוגה מקדימה שחורה: טלגרם שומר בדיוק את מה שנמסר לו, ומי
-  // ששולח וידאו בלי המטא־דאטה הזאת שולח אפסים. הקובץ עצמו תקין — רק
-  // ההודעה משקרת, וכל דבר שיקרא את המטא־דאטה הזאת בהמשך יקבל אפס.
   const n = v => (Number.isFinite(v) && v > 0 ? Math.round(v) : 0);
-  const q = `name=${encodeURIComponent(name || 'video.mp4')}` +
-            `&caption=${encodeURIComponent(caption || '')}` +
-            `&duration=${n(duration)}&width=${n(width)}&height=${n(height)}`;
-
+  // הצד הנייטיבי בונה את הכתובות בעצמו: הוא צריך כמה מהן (begin/part/finish),
+  // ובנפילה לאחור גם את המסלול הישן בבקשה אחת.
   return ZovexUploader.start({
     uri,
-    url: `${BASE}/panel/saved-upload?${q}`,
+    base: BASE,
     code: code || '',
-    // חובה: בלי Content-Type השרת אינו יודע לזהות את הגוף.
     type: type || 'application/octet-stream',
     name: name || 'video.mp4',
+    caption: caption || '',
     size: size || 0,
+    duration: n(duration),
+    width: n(width),
+    height: n(height),
   });
 }
 
