@@ -13,8 +13,8 @@ android {
         applicationId "com.zovexapp"
         minSdk rootProject.ext.minSdkVersion
         targetSdk rootProject.ext.targetSdkVersion
-        versionCode 33
-        versionName "1.0.31"
+        versionCode 34
+        versionName "1.0.32"
     }
 
     signingConfigs {

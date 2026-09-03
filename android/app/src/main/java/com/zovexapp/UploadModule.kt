@@ -112,6 +112,10 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         val width = if (opts.hasKey("width")) opts.getInt("width") else 0
         val height = if (opts.hasKey("height")) opts.getInt("height") else 0
 
+        // ברירת המחדל של אנדרואיד היא לשמור חמישה חיבורי-סרק לכל שרת, ולכן
+        // מעבר לחמישה עובדים כל חלק פתח חיבור חדש ועשה לחיצת יד TLS מחדש.
+        try { System.setProperty("http.maxConnections", "64") } catch (_: Exception) {}
+
         running = true
         cancelRequested = false
         sentBytes.set(0)
@@ -169,7 +173,10 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                 val partSize = begun.optLong("part_size", 8L * 1024 * 1024)
                 val nParts = begun.optInt("n_parts", 0)
                 if (job.isEmpty() || nParts <= 0) throw IOException("תשובת begin שגויה")
-                uploadParts(uri, base, code, partSize, nParts)
+                // השרת קובע כמה חיבורים לפתוח. כך אפשר למדוד 12/16/20 בשינוי
+                // משתנה סביבה, בלי לבנות ולהתקין APK חדש לכל ניסיון.
+                val want = begun.optInt("workers", PARALLEL).coerceIn(1, 32)
+                uploadParts(uri, base, code, partSize, nParts, want)
                 if (cancelRequested) throw IOException("ההעלאה בוטלה")
                 finish(base, code, job)
             } else {
@@ -222,11 +229,12 @@ class UploadModule(private val ctx: ReactApplicationContext) :
     // ── שלב 2: החלקים, במקביל ────────────────────────────────────────────────
 
     private fun uploadParts(
-        uri: Uri, base: String, code: String, partSize: Long, nParts: Int
+        uri: Uri, base: String, code: String, partSize: Long, nParts: Int,
+        wanted: Int
     ) {
         val next = AtomicInteger(0)
         val failure = AtomicReference<Exception?>(null)
-        val workers = minOf(PARALLEL, nParts)
+        val workers = minOf(wanted, nParts)
         activeWorkers = workers
 
         val threads = (0 until workers).map { w ->
