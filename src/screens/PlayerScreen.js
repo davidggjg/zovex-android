@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useMemo, useState} from 'react';
-import {View, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
+import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
+import TvNativePlayer from '../components/TvNativePlayer';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 // שים לב: CastLayer (ואיתו react-native-google-cast) *לא* מיובא כאן ברמת המודול
@@ -29,8 +30,30 @@ const TG_PROXY = 'https://zovex.duckdns.org';
 // Maps channel names → numeric IDs (same as CustomVideoPlayer.jsx)
 const TG_CHANNELS = {zove8: '7282626428', ZOVE8: '7282626428'};
 
+// שתי צורות שבורות שקיימות בקטלוג בפועל, ושתיהן ניתנות לשחזור ודאי:
+//
+//   <iframe src="https://…"></iframe>   הודבק קוד ההטמעה במקום הכתובת.
+//                                       ב"פאוור קאפל" 7 פרקים שמורים כתובת
+//                                       נקייה ו-3 כ-iframe שלם — אותו יעד
+//                                       בדיוק, ולכן החילוץ אינו ניחוש.
+//   ttps://…                            נבלעה ה-h הראשונה. ב"הכבוד של אשרף"
+//                                       9 פרקים כאלה; הם ניצלו במקרה כי זיהוי
+//                                       dailymotion מסתכל על הדומיין ולא על
+//                                       הסכימה, אבל אותה תקלה בכתובת ישירה
+//                                       שוברת אותה לגמרי.
+//
+// מנקים כאן, בכניסה, כדי שכל ענפי הזיהוי שלמטה יקבלו כתובת אמיתית.
+function cleanVideoRef(raw) {
+  let v = (raw || '').trim();
+  if (!v) return '';
+  const iframe = v.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
+  if (iframe) v = iframe[1].trim();
+  v = v.replace(/^(?:ttps?):\/\//i, m => (m.toLowerCase().startsWith('ttps') ? 'https://' : 'http://'));
+  return v.replace(/&amp;/g, '&');
+}
+
 function buildSrc(movie, startTime = 0) {
-  const vid = (movie.video_id || movie.video_url || '').trim();
+  const vid = cleanVideoRef(movie.video_id || movie.video_url || '');
   const type = movie.type || 'direct';
   const t = Math.max(0, Math.floor(startTime || 0));
   if (!vid) return null;
@@ -625,6 +648,10 @@ export default function PlayerScreen({route, navigation}) {
   // סרגל הבקרה חי בתוך ה-WebView; הוא מדווח על כל הצגה/הסתרה כדי שכפתור
   // השידור הנייטיב שמעליו יופיע וייעלם באותו רגע בדיוק.
   const [ctrlsVisible, setCtrlsVisible] = useState(true);
+  // התאוששות מקריסת renderer בטלוויזיה: במקום לזרוק את המשתמש החוצה מיד,
+  // טוענים מחדש את הנגן (renderer טרי) עד פעמיים. רק אם גם זה נכשל — יוצאים.
+  const [wvKey, setWvKey] = useState(0);
+  const crashCountRef = useRef(0);
   useEffect(() => {
     let alive = true;
     // חובה לבדוק את *הערך* שחוזר ולא רק שההבטחה לא נדחתה: במכשירים בלי GMS
@@ -632,11 +659,14 @@ export default function PlayerScreen({route, navigation}) {
     // את ה-Cast בכל מקרה שלא נזרקה שגיאה, ואז נטענה ספריית Cast שכבר הוסרה
     // מהאפליקציה במכשירים האלה (ראה MainApplication) — והאפליקציה קרסה
     // בכניסה לנגן. ב-App.js אותה בדיקה כבר נעשית נכון.
+    // בטלוויזיה אין טעם ב-Chromecast (היא היעד עצמה), ואתחול ה-Cast SDK הוא
+    // מקור קריסה ידוע בכניסה לנגן על מכשירי TV — לכן פשוט לא מדליקים אותו שם.
+    if (isTv) { setCastOk(false); return () => { alive = false; }; }
     GoogleSignin.hasPlayServices({showPlayServicesUpdateDialog: false})
       .then(ok => { if (alive) setCastOk(ok === true); })
       .catch(() => { if (alive) setCastOk(false); });
     return () => { alive = false; };
-  }, []);
+  }, [isTv]);
   // טעינה עצלנית: מושכים את react-native-google-cast רק כשיש GMS. על מכשירים בלי
   // GMS (Qin F22/F21 Pro) המודול הזה לא נטען כלל — אפס נגיעה ב-Cast.
   // ה-require עטוף גם ב-try: אם בכל זאת נגיע לכאן בלי המודול המקורי (הוא מוסר
@@ -664,15 +694,22 @@ export default function PlayerScreen({route, navigation}) {
     if (userId) saveHistory(movie.id, movie.title, movie.thumbnail_url, userId);
     return () => {
       StatusBar.setHidden(false, 'fade');
-      PipModule?.setFullscreen(false);
-      PipModule?.setLandscape(false);
+      // בטלוויזיה לא נוגעים בכיוון המסך: היציאה מהנגן החזירה את הפעילות
+      // ל"לא-לרוחב", והחלון נפתח מחדש כמו של טלפון — בדיוק ה"מסך קטן כמו
+      // של טלפון" שדווח אחרי לחיצה על חזור. טלוויזיה ממילא תמיד לרוחב.
+      if (!isTv) {
+        PipModule?.setFullscreen(false);
+        PipModule?.setLandscape(false);
+      }
       PipModule?.setVideoPlaying(false);
       if (!userId) return;
       const {position, duration} = progressRef.current;
       if (position > 5 && duration > 0)
         saveProgress(movie.id, position, duration, userId);
     };
-  }, [movie.id, movie.title, movie.thumbnail_url, userId]);
+    // isTv הוא Platform.isTV — קבוע לאורך חיי האפליקציה, ולכן הוספתו כאן לא
+    // מריצה את ה-effect מחדש אף פעם. נכלל רק כדי שהרשימה תהיה מלאה ואמיתית.
+  }, [movie.id, movie.title, movie.thumbnail_url, userId, isTv]);
 
   // Offline-download playback decrypts to a short-lived temp file before
   // navigating here (see HomeScreen's playDownloadedItem) - delete it once
@@ -697,6 +734,38 @@ export default function PlayerScreen({route, navigation}) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // מעבר לפרק הבא (משמש גם ל-WebView וגם לנגן הנייטיב כשפרק נגמר). מחזיר
+  // true אם עבר לפרק הבא, false אם אין (סרט בודד / פרק אחרון).
+  const goNextEpisode = () => {
+    const eps = seriesEpisodesRef.current;
+    if (!eps) return false;
+    const idx = eps.findIndex(e => e.id === movie.id);
+    const next = idx >= 0 && idx < eps.length - 1 ? eps[idx + 1] : null;
+    if (next) {
+      navigation.replace('Player', {movie: next, startTime: 0, userId, seriesEpisodes: eps});
+      return true;
+    }
+    return false;
+  };
+
+  // ── נגן נייטיב לטלוויזיה: רק לתוכן ישיר (mp4/HLS), לא ל-iframe embeds ──
+  const useNative = isTv && !isIframe && !!src;
+  // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
+  const [nativeStart, setNativeStart] = useState(startTime || 0);
+  const [nativeError, setNativeError] = useState(null);
+  useEffect(() => {
+    if (!useNative || !userId || startTime > 0 || isLive) return;
+    let alive = true;
+    loadProgress(movie.id, userId).then(pos => {
+      if (alive && pos > 5) {
+        progressRef.current.position = pos;
+        setNativeStart(pos);
+      }
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const onMessage = event => {
     try {
       const m = JSON.parse(event.nativeEvent.data);
@@ -704,18 +773,18 @@ export default function PlayerScreen({route, navigation}) {
         navigation.goBack();
       } else if (m.type === 'fullscreen') {
         StatusBar.setHidden(m.enter, 'fade');
-        PipModule?.setFullscreen(!!m.enter);
-        PipModule?.setLandscape(!!m.enter);
+        // אותה סיבה כמו בניקוי: בטלוויזיה כפיית כיוון מסך משנה את גודל
+        // החלון ומקלקלת את הפריסה. הטלוויזיה כבר לרוחב ומסך-מלא.
+        if (!isTv) {
+          PipModule?.setFullscreen(!!m.enter);
+          PipModule?.setLandscape(!!m.enter);
+        }
       } else if (m.type === 'video_playing') {
         PipModule?.setVideoPlaying(!!m.value);
       } else if (m.type === 'ctrls') {
         setCtrlsVisible(!!m.visible);
       } else if (m.type === 'next_episode') {
-        const eps = seriesEpisodesRef.current;
-        if (!eps) return;
-        const idx = eps.findIndex(e => e.id === movie.id);
-        const next = idx >= 0 && idx < eps.length - 1 ? eps[idx + 1] : null;
-        if (next) navigation.replace('Player', {movie: next, startTime: 0, userId, seriesEpisodes: eps});
+        goNextEpisode();
       } else if (m.type === 'progress' && userId) {
         progressRef.current = {position: m.position, duration: m.duration};
         saveProgress(movie.id, m.position, m.duration, userId);
@@ -724,18 +793,41 @@ export default function PlayerScreen({route, navigation}) {
   };
 
   if (!src) {
+    // קודם הוצג כאן ריבוע ריק בלי שום טקסט, ולכן כשל בבניית הקישור נראה
+    // בדיוק כמו "לחצתי הפעל ולא קרה כלום". עכשיו אומרים מה קרה ומאיפה לצאת.
     return (
       <View style={styles.error}>
-        <View style={styles.errorBox}>
-          <View style={styles.errorClose} />
-        </View>
+        <Text style={styles.errorTitle}>לא נמצא קישור לניגון</Text>
+        <Text style={styles.errorBody}>
+          לפריט הזה אין כתובת וידאו תקינה. נסה פרק אחר, או דווח לנו כדי שנתקן.
+        </Text>
+        <TouchableOpacity style={styles.errorBtn} onPress={() => navigation.goBack()}>
+          <Text style={styles.errorBtnTxt}>חזרה</Text>
+        </TouchableOpacity>
       </View>
     );
   }
 
   return (
     <View style={styles.container}>
+      {useNative ? (
+        <TvNativePlayer
+          src={src}
+          isLive={isLive}
+          startTime={nativeStart}
+          onProgress={(pos, dur) => {
+            progressRef.current = {position: pos, duration: dur};
+            if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
+          }}
+          onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
+          // קודם כשל ניגון החזיר את המשתמש אחורה בשקט, וזה נראה בדיוק כמו
+          // "לוחץ הפעל וזה מחזיר אותי". עכשיו נשארים במסך ומראים מה נכשל.
+          onError={e => setNativeError(
+            e?.error?.errorString || e?.error?.errorException || 'שגיאת ניגון')}
+        />
+      ) : (
       <WebView
+        key={wvKey}
         ref={webViewRef}
         source={{html}}
         style={styles.player}
@@ -749,15 +841,38 @@ export default function PlayerScreen({route, navigation}) {
         allowUniversalAccessFromFileURLs
         startInLoadingState={false}
         onMessage={onMessage}
-        // אם ה-renderer של ה-WebView קורס (למשל מחוסר זיכרון בטלוויזיה),
-        // חוזרים אחורה בעדינות במקום שכל האפליקציה תיפול ותיסגר.
-        onRenderProcessGone={() => { try { navigation.goBack(); } catch (_) {} }}
+        // אם ה-renderer של ה-WebView קורס (בעיקר מחוסר זיכרון בטלוויזיה),
+        // מנסים לטעון מחדש renderer טרי עד פעמיים; רק אם גם זה נכשל — יוצאים
+        // בעדינות במקום שכל האפליקציה תיפול ותיסגר.
+        onRenderProcessGone={() => {
+          if (crashCountRef.current < 2) {
+            crashCountRef.current += 1;
+            setWvKey(k => k + 1);
+          } else {
+            try { navigation.goBack(); } catch (_) {}
+          }
+        }}
         onMessageForMainFrameOnly={false}
         injectedJavaScriptForMainFrameOnly={false}
         injectedJavaScriptBeforeContentLoadedForMainFrameOnly={false}
         mixedContentMode="always"
         originWhitelist={['*']}
       />
+      )}
+      {nativeError ? (
+        <View style={styles.errOverlay}>
+          <Text style={styles.errorTitle}>הניגון נכשל</Text>
+          <Text style={styles.errorBody}>{String(nativeError).slice(0, 220)}</Text>
+          <TouchableOpacity
+            style={styles.errorBtn}
+            onPress={() => { setNativeError(null); setWvKey(k => k + 1); }}>
+            <Text style={styles.errorBtnTxt}>נסה שוב</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.errorBtn} onPress={() => navigation.goBack()}>
+            <Text style={styles.errorBtnTxt}>חזרה</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       {castOk && castable && CastLayer ? (
         <CastLayer
           castUrl={castUrl}
@@ -778,7 +893,19 @@ const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
   castBtn: {position: 'absolute', top: 10, right: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
-  error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000'},
+  error: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 28},
+  errOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.92)',
+    justifyContent: 'center', alignItems: 'center', padding: 28, zIndex: 30,
+  },
+  errorTitle: {color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 10, textAlign: 'center'},
+  errorBody: {color: '#bbb', fontSize: 14, lineHeight: 21, textAlign: 'center', marginBottom: 20},
+  errorBtn: {
+    backgroundColor: '#e50914', borderRadius: 10,
+    paddingHorizontal: 30, paddingVertical: 11, marginTop: 8,
+  },
+  errorBtnTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
 });

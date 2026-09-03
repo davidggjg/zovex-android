@@ -1,4 +1,5 @@
 import React, {useMemo, useState, useCallback} from 'react';
+import TvFocusable from '../components/TvFocusable';
 import {
   View,
   Text,
@@ -13,7 +14,10 @@ import {getUserId} from '../api/userStore';
 
 export default function SeriesScreen({route, navigation}) {
   const {seriesName, movies} = route.params;
-  const [selectedSeason, setSelectedSeason] = useState(1);
+  // null = "עוד לא נבחרה עונה", ולא 1. ברירת מחדל קשיחה של 1 מציגה רשימת
+  // פרקים ריקה לכל סדרה שאין לה עונה שמסומנת 1 — והמסך נראה כאילו הסדרה
+  // שבורה. העונה בפועל נגזרת למטה מהעונה הראשונה שקיימת בנתונים.
+  const [selectedSeason, setSelectedSeason] = useState(null);
 
   const episodes = useMemo(
     () => movies.filter(m => m.series_name === seriesName),
@@ -27,12 +31,14 @@ export default function SeriesScreen({route, navigation}) {
     return s;
   }, [episodes]);
 
+  const activeSeason = selectedSeason ?? (seasons.length ? seasons[0] : null);
+
   const filtered = useMemo(
     () =>
       episodes
-        .filter(e => (e.season_number || 1) === selectedSeason)
+        .filter(e => activeSeason == null || (e.season_number || 1) === activeSeason)
         .sort((a, b) => (a.episode_number || 0) - (b.episode_number || 0)),
-    [episodes, selectedSeason],
+    [episodes, activeSeason],
   );
 
   const openEpisode = useCallback(item => {
@@ -76,28 +82,28 @@ export default function SeriesScreen({route, navigation}) {
                 showsHorizontalScrollIndicator={false}
                 style={styles.seasonsRow}>
                 {seasons.map(s => (
-                  <TouchableOpacity
+                  <TvFocusable
                     key={s}
                     onPress={() => setSelectedSeason(s)}
                     style={[
                       styles.seasonBtn,
-                      selectedSeason === s && styles.seasonBtnActive,
+                      activeSeason === s && styles.seasonBtnActive,
                     ]}>
                     <Text
                       style={[
                         styles.seasonText,
-                        selectedSeason === s && styles.seasonTextActive,
+                        activeSeason === s && styles.seasonTextActive,
                       ]}>
                       עונה {s}
                     </Text>
-                  </TouchableOpacity>
+                  </TvFocusable>
                 ))}
               </ScrollView>
             )}
           </>
         }
         renderItem={({item}) => (
-          <TouchableOpacity
+          <TvFocusable
             style={styles.epRow}
             activeOpacity={0.7}
             onPress={() => openEpisode(item)}>
@@ -117,7 +123,7 @@ export default function SeriesScreen({route, navigation}) {
                 {item.episode_title || item.title}
               </Text>
             </View>
-          </TouchableOpacity>
+          </TvFocusable>
         )}
       />
     </View>
