@@ -55,7 +55,11 @@ class UploadModule(private val ctx: ReactApplicationContext) :
     companion object {
         private const val EVENT = "zovexUpload"
         private const val BUF = 256 * 1024
-        private const val PARALLEL = 4          // 3–6 הוא הטווח המקובל
+        // נמדד: עם 4 חיבורים ההעלאה הגיעה ל-9.2 מגהביט, ובמקביל אליה
+        // Speedtest הוציא מאותו קו עוד 5.55 — כלומר הקו נותן ~14.75 ורק 62%
+        // ממנו נוצלו. כל חיבור נחנק בנפרד סביב 2.3 מגהביט, ולכן התשובה היא
+        // עוד חיבורים ולא חיבורים מהירים יותר.
+        private const val PARALLEL = 8
         private const val PART_RETRIES = 4
         private const val PROGRESS_MS = 250L
         private const val NOTIF_MS = 1000L
@@ -68,6 +72,7 @@ class UploadModule(private val ctx: ReactApplicationContext) :
     @Volatile private var job = ""
     @Volatile private var lastError = ""
     @Volatile private var mode = ""          // parallel|single
+    @Volatile private var activeWorkers = 0
     private val sentBytes = AtomicLong(0)
     @Volatile private var startedAt = 0L
 
@@ -222,6 +227,7 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         val next = AtomicInteger(0)
         val failure = AtomicReference<Exception?>(null)
         val workers = minOf(PARALLEL, nParts)
+        activeWorkers = workers
 
         val threads = (0 until workers).map { w ->
             Thread(Runnable {
@@ -468,6 +474,9 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         putDouble("total", total.toDouble())
         putString("job", job)
         putString("mode", mode)
+        // כמה חיבורים באמת פתוחים. בלי זה נאלצנו להסיק את המסלול ממהירות
+        // ההעלאה במקום פשוט לראות אותו.
+        putInt("workers", if (mode == "parallel") activeWorkers else if (mode == "single") 1 else 0)
         putString("error", lastError)
     }
 

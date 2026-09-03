@@ -2,7 +2,7 @@
 // פאנל העלאה: בוחרים סרטון מהגלריה, והוא עולה ל"הודעות שמורות" בטלגרם.
 //
 // שני שלבי התקדמות, כי אלה שתי העברות רשת נפרדות:
-//   ① הטלפון → השרת   (נמדד כאן, מאירועי ההתקדמות של ה-XHR)
+//   ① הטלפון → השרת   (נמדד בצד הנייטיבי, בכמה חיבורים במקביל)
 //   ② השרת → טלגרם    (נמדד בשרת, נשאב בתשאול כל שנייה)
 //
 // אחרי שלב ② השרת מוחק את הקובץ הזמני — גם אם ההעלאה נכשלה.
@@ -49,6 +49,9 @@ export default function SavedUploadScreen({route, navigation}) {
   // אנדרואיד). במקרה כזה הגודל האמיתי מגיע עם אירוע ההתקדמות הראשון, ובלעדיו
   // האחוזים היו תקועים על אפס לכל אורך ההעלאה.
   const [total, setTotal] = useState(0);
+  // באיזה מסלול ההעלאה רצה וכמה חיבורים פתוחים. בלי זה נאלצנו לבדוק את
+  // השרת מבחוץ כדי לדעת אם המקביליות בכלל הופעלה.
+  const [link, setLink] = useState({mode: '', workers: 0});
   const [tg, setTg] = useState(null);             // מצב מהשרת
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -94,6 +97,7 @@ export default function SavedUploadScreen({route, navigation}) {
     const sub = onUpload(e => {
       if (typeof e.sent === 'number') setSent(e.sent);
       if (e.total > 0) setTotal(e.total);
+      if (e.mode) setLink({mode: e.mode, workers: e.workers || 0});
       if (e.type === 'done') {
         if (e.job) { setPhase('telegram'); poll(e.job); }
         else { setPhase('error'); setError('השרת לא החזיר מזהה משימה'); }
@@ -110,6 +114,7 @@ export default function SavedUploadScreen({route, navigation}) {
         setPhase('sending');
         setSent(st.sent || 0);
         setTotal(st.total || 0);
+        if (st.mode) setLink({mode: st.mode, workers: st.workers || 0});
         // המהירות נמדדת מרגע החיבור מחדש, כי אין לנו את זמן ההתחלה המקורי.
         startedRef.current = Date.now();
       } else if (st.stage === 'done' && st.job) {
@@ -123,6 +128,7 @@ export default function SavedUploadScreen({route, navigation}) {
   const start = useCallback(async () => {
     if (!file || phase === 'sending' || phase === 'telegram') return;
     setPhase('sending'); setSent(0); setTotal(file.size || 0); setTg(null); setError('');
+    setLink({mode: '', workers: 0});
     startedRef.current = Date.now();
     try {
       await startUpload({
@@ -205,7 +211,11 @@ export default function SavedUploadScreen({route, navigation}) {
         {/* ① טלפון → שרת */}
         {(phase === 'sending' || phase === 'telegram' || phase === 'done') && (
           <View style={styles.card}>
-            <Text style={styles.stage}>① מהטלפון לשרת</Text>
+            <Text style={styles.stage}>
+              ① מהטלפון לשרת
+              {link.mode === 'parallel' ? `  ·  ${link.workers} חיבורים במקביל`
+                : link.mode === 'single' ? '  ·  חיבור אחד (השרת ישן)' : ''}
+            </Text>
             <Bar pct={phase === 'sending' ? upPct : 100} color="#3ba55d" />
             <Text style={styles.meta}>
               {phase === 'sending'
