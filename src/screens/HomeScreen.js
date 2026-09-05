@@ -46,6 +46,7 @@ import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
+import AmbientGlow from '../components/AmbientGlow';
 import {DISCORD_URL, TELEGRAM_URL} from '../config/links';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
@@ -1346,6 +1347,7 @@ export default function HomeScreen({navigation, route}) {
 
   return (
     <View style={styles.container}>
+      <AmbientGlow />
       {TopBar}
       {CatsButton}
       {isNetflixMode ? (
