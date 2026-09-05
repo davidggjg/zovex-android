@@ -19,6 +19,7 @@ import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import HomeScreen from './screens/HomeScreen';
 import PlayerScreen from './screens/PlayerScreen';
 import SeriesScreen from './screens/SeriesScreen';
+import SavedUploadScreen from './screens/SavedUploadScreen';
 import LegalScreen from './screens/LegalScreen';
 import ZovexIntro from './components/ZovexIntro';
 import {initUserId} from './api/userStore';
@@ -335,6 +336,7 @@ export default function App() {
         <Stack.Screen name="Home" component={HomeScreen} />
         <Stack.Screen name="Player" component={PlayerScreen} />
         <Stack.Screen name="Series" component={SeriesScreen} />
+        <Stack.Screen name="SavedUpload" component={SavedUploadScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
       </Stack.Navigator>
     </NavigationContainer>

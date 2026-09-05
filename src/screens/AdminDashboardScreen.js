@@ -95,6 +95,9 @@ async function ghSaveApiKeys(keys){
 function extractVideoInfo(url){
   if(!url)return{type:'direct',video_id:''};
   if(url.includes('<iframe')){const m=url.match(/src=["']([^"']+)['"]/);if(m)url=m[1];}
+  // "ttps://" — ה-h הראשונה נבלעה בהעתקה. בלי התיקון הבדיקה הבאה נכשלת,
+  // הפריט נשמר כ-direct עם כתובת פגומה ולא מתנגן לעולם.
+  url=url.replace(/^(?:ttps?):\/\//i,m=>(m.toLowerCase().startsWith('ttps')?'https://':'http://'));
   if(!url.startsWith('http'))return{type:'direct',video_id:url};
   if(url.includes('youtube.com')||url.includes('youtu.be')){const m=url.match(/(?:v=|youtu\\.be\\/)([^&/?]+)/);return{type:'youtube',video_id:m?.[1]||url};}
   if(url.includes('drive.google.com')){const m=url.match(/\\/d\\/([^/]+)/);return{type:'drive',video_id:m?.[1]||url};}

@@ -1,6 +1,10 @@
 package com.zovexapp
 
 import android.app.Application
+import android.app.UiModeManager
+import android.content.Context
+import android.content.res.Configuration
+import android.content.pm.PackageManager
 import com.facebook.react.PackageList
 import com.facebook.react.ReactApplication
 import com.facebook.react.ReactHost
@@ -25,6 +29,17 @@ class MainApplication : Application(), ReactApplication {
         false
     }
 
+    // האם המכשיר הוא טלוויזיה (Android TV). לרוב הטלוויזיות יש GMS, ולכן חבילת
+    // ה-Cast לא הוסרה שם — אבל אתחול ה-Cast מקריס בכניסה לנגן, ובטלוויזיה אין לו
+    // שום ערך (היא היעד של השידור, לא המקור). לכן מסירים את Cast גם על TV.
+    fun isTelevision(): Boolean = try {
+        val ui = getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+        ui.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+            packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    } catch (_: Throwable) {
+        false
+    }
+
     override val reactNativeHost: ReactNativeHost =
         object : DefaultReactNativeHost(this) {
             override fun getPackages(): List<ReactPackage> {
@@ -34,7 +49,8 @@ class MainApplication : Application(), ReactApplication {
                 // האתחול זורק חריגה מקורית שמקריסה את האפליקציה בעלייה — עוד לפני
                 // שקוד ה-JS בכלל רץ. מסירים אותה כשאין GMS (ל-Cast אין ערך בלי GMS
                 // ממילא); האפליקציה עולה תקין ורק כפתור השידור נעלם.
-                if (!this@MainApplication.hasPlayServices()) {
+                if (!this@MainApplication.hasPlayServices() ||
+                    this@MainApplication.isTelevision()) {
                     packages.removeAll {
                         it.javaClass.name.contains("googlecast", ignoreCase = true)
                     }

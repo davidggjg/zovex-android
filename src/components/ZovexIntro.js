@@ -13,15 +13,15 @@ const INTRO_HTML = `<!DOCTYPE html><html><head>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden;background:#000}
 #root{position:fixed;inset:0;overflow:hidden;
-  background:radial-gradient(circle at 50% 44%,#140609 0%,#06070c 55%,#000 100%);
+  background:radial-gradient(circle at 50% 44%,#210608 0%,#0d0509 55%,#000 100%);
   opacity:1;transition:opacity .65s ease}
 #root.fade{opacity:0}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 #vig{position:absolute;inset:0;z-index:3;pointer-events:none;
   background:radial-gradient(ellipse 75% 60% at 50% 46%,transparent 55%,rgba(0,0,0,.55) 100%)}
 #tag{position:absolute;left:0;right:0;z-index:4;text-align:center;bottom:calc(50% - 15vh);
-  font-family:Arial;font-size:clamp(12px,3.2vw,18px);font-weight:600;color:#ffd9c4;direction:rtl;
-  letter-spacing:.55em;padding-inline-start:.55em;text-shadow:0 0 20px rgba(255,90,20,.55);
+  font-family:Arial;font-size:clamp(12px,3.2vw,18px);font-weight:600;color:#ffdccb;direction:rtl;
+  letter-spacing:.55em;padding-inline-start:.55em;text-shadow:0 0 20px rgba(255,50,40,.55);
   opacity:0;transform:translateY(12px);
   transition:opacity .8s ease,transform .8s cubic-bezier(.2,.8,.3,1),letter-spacing 1.4s ease}
 #tag.show{opacity:1;transform:none;letter-spacing:.36em}
@@ -44,7 +44,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
   var reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   var DPR=Math.min(window.devicePixelRatio||1,2);
   var WORD='ZOVEX';
-  var COOL=['#ff3d00','#ff7a00','#ffb020','#ffd000','#fff0b0'];
+  var COOL=['#ff1f3d','#ff3d00','#ff7a00','#ffb020','#ffe066'];
   var W,H,CX,CY,fontSize=0,wordBox=null;
   var particles=[],embers=[],sparks=[],ring=null,flash=0,ignited=false;
   var raf=0,T0=0,IGNITE=0;
@@ -104,8 +104,8 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     x.font='900 '+fontSize+'px "Arial Black","Arial Narrow",Arial,sans-serif';
     x.textBaseline='middle';x.textAlign='left';
     var g=x.createLinearGradient(0,wordBox.top,0,wordBox.top+wordBox.h);
-    g.addColorStop(0,'#ff7a3c');g.addColorStop(0.42,'#ff2d16');g.addColorStop(0.66,'#e50914');g.addColorStop(1,'#9c040e');
-    x.shadowColor='rgba(255,80,10,'+(0.55*glow)+')';x.shadowBlur=38*glow*DPR;
+    g.addColorStop(0,'#ff5c3c');g.addColorStop(0.3,'#ff1f2e');g.addColorStop(0.62,'#e50914');g.addColorStop(1,'#8a0510');
+    x.shadowColor='rgba(255,35,30,'+(0.55*glow)+')';x.shadowBlur=38*glow*DPR;
     x.fillStyle=g;x.fillText(WORD,wordBox.left,CY);x.shadowBlur=0;x.restore();
   }
   function drawShimmer(alpha,pos){
@@ -121,7 +121,7 @@ canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
     var glowPhase=Math.min(1,t/IGNITE);
     var gr=x.createRadialGradient(CX,CY,0,CX,CY,Math.max(W,H)*0.5);
     var gi=t<IGNITE?0.12+0.18*glowPhase:0.30;
-    gr.addColorStop(0,'rgba(255,70,10,'+gi+')');gr.addColorStop(0.4,'rgba(180,20,10,'+(gi*0.4)+')');gr.addColorStop(1,'rgba(0,0,0,0)');
+    gr.addColorStop(0,'rgba(255,35,30,'+gi+')');gr.addColorStop(0.4,'rgba(170,15,15,'+(gi*0.4)+')');gr.addColorStop(1,'rgba(0,0,0,0)');
     x.fillStyle=gr;x.fillRect(0,0,W,H);
     if(!reduce&&Math.random()<0.5)embers.push({x:rnd(0,W),y:H+10,vx:rnd(-0.15,0.15)*DPR,vy:-rnd(0.3,1.1)*DPR,r:rnd(0.7,2)*DPR,a:rnd(0.2,0.6),col:COOL[(Math.random()*4)|0]});
     for(var e=embers.length-1;e>=0;e--){var m=embers[e];m.x+=m.vx;m.y+=m.vy;m.a-=0.004;

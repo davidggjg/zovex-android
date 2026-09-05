@@ -1,4 +1,5 @@
 import React, {useState} from 'react';
+import TvFocusable from '../components/TvFocusable';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking, StatusBar,
 } from 'react-native';
@@ -19,9 +20,9 @@ export default function LegalScreen({route, navigation}) {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0b0b0b" />
       <View style={styles.topBar}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TvFocusable onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Text style={styles.backTxt}>✕</Text>
-        </TouchableOpacity>
+        </TvFocusable>
         <Text style={styles.topTitle}>מידע ותנאים</Text>
         <View style={styles.backBtn} />
       </View>
@@ -31,13 +32,13 @@ export default function LegalScreen({route, navigation}) {
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.tabs}>
         {LEGAL_DOCS.map((d, i) => (
-          <TouchableOpacity
+          <TvFocusable
             key={d.key}
             onPress={() => setIndex(i)}
             style={[styles.tab, i === index && styles.tabOn]}
             activeOpacity={0.8}>
             <Text style={[styles.tabTxt, i === index && styles.tabTxtOn]}>{d.tab}</Text>
-          </TouchableOpacity>
+          </TvFocusable>
         ))}
       </ScrollView>
 
@@ -55,12 +56,12 @@ export default function LegalScreen({route, navigation}) {
         ))}
 
         <View style={styles.footer}>
-          <TouchableOpacity onPress={() => open(DISCORD_URL)}>
+          <TvFocusable onPress={() => open(DISCORD_URL)}>
             <Text style={[styles.link, {color: '#7c85f5'}]}>דיסקורד</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => open(TELEGRAM_URL)}>
+          </TvFocusable>
+          <TvFocusable onPress={() => open(TELEGRAM_URL)}>
             <Text style={[styles.link, {color: '#5b9bd5'}]}>טלגרם</Text>
-          </TouchableOpacity>
+          </TvFocusable>
         </View>
       </ScrollView>
     </View>

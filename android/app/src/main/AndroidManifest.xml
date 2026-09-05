@@ -9,6 +9,13 @@
          בלי לצאת לדפדפן/גיטהאב. אנדרואיד 8+ עדיין דורש אישור חד-פעמי מהמשתמש. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- העלאת סרטון שממשיכה כשיוצאים מהאפליקציה. בלי שירות חזית אנדרואיד
+         רשאי להרוג את התהליך ברקע, ואיתו העלאה של גיגה־בייטים באמצע הדרך.
+         מאנדרואיד 14 שירות כזה חייב סוג מוצהר והרשאה תואמת; "dataSync" הוא
+         הסוג של העברת נתונים. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <!-- Android TV: לא דורש מסך מגע / leanback, כדי שגם טלוויזיות יוכלו להתקין -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
@@ -21,7 +28,9 @@
         android:allowBackup="false"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true"
-        android:banner="@drawable/tv_banner">
+        android:banner="@drawable/tv_banner"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true">
 
         <!-- מכבים את האתחול-האוטומטי של FCM בעלייה. על מכשירים בלי Google Play
              Services (Qin F22/F21 Pro, טלוויזיות מסוימות) האתחול האוטומטי מנסה
@@ -100,6 +109,20 @@
                     android:pathPrefix="/zovex" />
             </intent-filter>
         </activity>
-    </application>
+    
+        <!-- מקבל את אזעקת "הזכר לי" ומציג את ההתראה. exported=false: רק
+             AlarmManager של המערכת מפעיל אותו, אף אפליקציה אחרת. -->
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
+
+        <!-- שומר על תהליך האפליקציה בחיים כל עוד ההעלאה רצה, כדי שיציאה
+             מהאפליקציה לא תקטע קובץ של גיגה־בייטים באמצע. exported=false:
+             רק אנחנו מפעילים אותו. -->
+        <service
+            android:name=".UploadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+</application>
 
 </manifest>

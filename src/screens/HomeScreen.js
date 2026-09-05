@@ -14,15 +14,19 @@ import {
   ScrollView,
   RefreshControl,
   Dimensions,
-  ImageBackground,
   Animated,
   I18nManager,
   AppState,
+  Platform,
+  BackHandler,
+  Share,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
+  fetchMoviesFast,
+  fetchItemDetail,
   fetchHistory,
   clearCache,
 } from '../api/movies';
@@ -35,6 +39,10 @@ import {
   downloadEntryToMovie,
   isItemDownloadable,
 } from '../api/downloads';
+import {useIsFocused} from '@react-navigation/native';
+import {verifyPanelCode} from '../api/savedUpload';
+import TvFocusable from '../components/TvFocusable';
+import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
@@ -42,12 +50,28 @@ import {DISCORD_URL, TELEGRAM_URL} from '../config/links';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
-const {width: SW} = Dimensions.get('window');
-// 3 cards + 5px margin each side + 8px grid padding each side = 3*CARD_W + 30 + 16 = SW
-const CARD_W = Math.floor((SW - 46) / 3);
+// בטלוויזיה מודדים לפי המסך ולא לפי החלון: החלון עלול להימסר קטן יותר
+// (למשל אחרי חזרה מהנגן), וזה מה שהפך את הרשת ל"מסך של טלפון". המסך תמיד
+// מדווח את הרוחב המלא של הטלוויזיה.
+const {width: SW, height: SH} = Dimensions.get(Platform.isTV ? 'screen' : 'window');
+// בטלוויזיה המסך רחב וברירת המחדל של 3 עמודות ייצרה אריחים ענקיים שקשה
+// לנווט ביניהם. בטלוויזיה עוברים ל-6 עמודות (אריחים קטנים כמו בטלפון,
+// מותאמים למרחק צפייה) ובטלפון נשארים 3.
+const MAIN_SITE = 'https://zovex.duckdns.org';
+const IS_TV = Platform.isTV;
+const NUM_COLS = IS_TV ? 6 : 3;
+// לכל אריח 5px שוליים מכל צד (10) + לרשת 8px ריפוד מכל צד (16):
+// SW = N*CARD_W + N*10 + 16  →  CARD_W = (SW - 16 - N*10) / N
+const CARD_W = Math.floor((SW - 16 - NUM_COLS * 10) / NUM_COLS);
 const CARD_H = Math.floor(CARD_W * 1.48);
-// Hero banner: tall enough to show portrait thumbnails (2:3) with contain mode
-const HERO_H = Math.round(SW * 1.25);
+// באנר הראשי. בטלפון הפוסטרים לאורך (2:3), ולכן הגובה נגזר מהרוחב. בטלוויזיה
+// אותה נוסחה נתנה 1.25 × 1920 = 2400 פיקסלים על מסך שגובהו 1080 — באנר גבוה
+// פי שניים מהמסך, וזה מה שחרג. כאן הוא נחסם מול *גובה* המסך: בטלוויזיה 58%,
+// כך שנשארת הצצה לשורת האריחים הראשונה מתחתיו, ובטלפון תקרה של 70% כדי שגם
+// מסכים צרים לא יאבדו את שאר הדף.
+const HERO_H = IS_TV
+  ? Math.round(SH * 0.58)
+  : Math.min(Math.round(SW * 1.25), Math.round(SH * 0.7));
 
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
@@ -86,21 +110,21 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
   }
   if (isDownloaded) {
     return (
-      <TouchableOpacity
+      <TvFocusable
         style={[mdStyles.dlBtn, mdStyles.dlBtnDone, compact && mdStyles.dlBtnCompact]}
         activeOpacity={0.8}
         onPress={() => onDeleteDownload(id)}>
         <Text style={[mdStyles.dlBtnTxt, mdStyles.dlBtnDoneTxt]}>{compact ? '✓' : '✓ הורד · הסר'}</Text>
-      </TouchableOpacity>
+      </TvFocusable>
     );
   }
   return (
-    <TouchableOpacity
+    <TvFocusable
       style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}
       activeOpacity={0.8}
       onPress={() => onDownload(item)}>
       <Text style={mdStyles.dlBtnTxt}>{compact ? '⬇' : '⬇ הורדה'}</Text>
-    </TouchableOpacity>
+    </TvFocusable>
   );
 }
 
@@ -111,6 +135,28 @@ function MovieDetailModal({
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
   const [seasonLoading, setSeasonLoading] = useState(false);
+  // ה-description לא נשלח ב-/content/lite (זה השדה הכבד). כשפותחים סרט
+  // מושכים אותו לפי דרישה מ-/content/item/{id}. אם הפריט כבר מכיל description
+  // (למשל מ-cache ישן) — משתמשים בו כמו שהוא.
+  const [fetchedDesc, setFetchedDesc] = useState(null);
+  useEffect(() => {
+    setFetchedDesc(null);
+    if (!item || item.description) return;
+    // לסדרה הפריט הוא פסאודו (id "series_..." בלי description); מושכים את
+    // התיאור מהפרק הראשון האמיתי. לסרט — לפי ה-id של הפריט עצמו.
+    let detailId = item.id;
+    if (item.series_name) {
+      const first = allMovies.find(m => m.series_name === item.series_name && m.id);
+      if (first) detailId = first.id;
+    }
+    if (!detailId || String(detailId).startsWith('series_')) return;
+    let alive = true;
+    fetchItemDetail(detailId).then(full => {
+      if (alive && full && full.description) setFetchedDesc(full.description);
+    });
+    return () => { alive = false; };
+  }, [item, allMovies]);
+  const description = item?.description || fetchedDesc || '';
 
   const episodes = useMemo(() => {
     if (!item?.series_name) return [];
@@ -138,20 +184,44 @@ function MovieDetailModal({
     setShowSeasonPicker(false);
     if (s === activeSeason) return;
     setSeasonLoading(true);
-    setTimeout(() => { setSelectedSeason(s); setSeasonLoading(false); }, 600);
+    // ההשהיה כאן הייתה כדי להספיק להראות ספינר, אבל היא נוספה לכל החלפת
+    // עונה — ובשלט זה מרגיש כמו אפליקציה תקועה. הרשימה מתחלפת מיד.
+    setSelectedSeason(s);
+    setSeasonLoading(false);
   }, [activeSeason]);
 
+  const displayTitle = item ? (item.series_name || item.title || item.name || '') : '';
+
+  // קישור לשיתוף. ה-slug הוא מה שהאתר משתמש בו (‎/<slug>/watch); בלעדיו
+  // נופלים לקישור לפי מזהה, שגם הוא נפתח באתר.
+  //
+  // חייב להיות *לפני* ה-return המוקדם: קודם הוא ישב אחריו, כלומר מספר
+  // ה-hooks השתנה בין רינדור עם פריט לרינדור בלעדיו — הפרה של כללי ה-hooks
+  // שמבלבלת את React ומייצרת התנהגות לא צפויה בדיוק במסך הזה.
+  const onShare = useCallback(() => {
+    if (!item) return;
+    const base = item.custom_slug
+      ? `${MAIN_SITE}/${item.custom_slug}/watch`
+      : `${MAIN_SITE}/watch?id=${encodeURIComponent(item.id || '')}`;
+    Share.share({message: `${displayTitle}\n${base}`}).catch(() => {});
+  }, [item, displayTitle]);
+
   if (!item) return null;
-  const displayTitle = item.series_name || item.title || item.name || '';
   const firstEp = visibleEpisodes.length > 0 ? visibleEpisodes[0] : null;
 
   return (
+    // Modal אמיתי ולא View: כשזה היה שכבה רגילה, הכרטיסים שמאחור נשארו
+    // focusable — ה-focus בשלט נשאר על הכרטיס, ולחיצה על OK הפעילה שוב את
+    // פתיחת הפריט (תרומה → פרטים → תרומה...) במקום לנגן. Modal מוציא את
+    // הרקע ממסלול ה-focus, וגם נותן טיפול נכון בכפתור "חזור".
+    <Modal transparent animationType="fade" visible onRequestClose={onClose}>
     <View style={mdStyles.overlay}>
+      {/* רקע לסגירה בלחיצה — נשאר Touchable כדי שלא ייתפס כיעד focus בשלט */}
       <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
       <View style={mdStyles.sheet}>
-        <TouchableOpacity style={mdStyles.closeBtn} onPress={onClose}>
+        <TvFocusable style={mdStyles.closeBtn} onPress={onClose}>
           <Text style={mdStyles.closeTxt}>✕</Text>
-        </TouchableOpacity>
+        </TvFocusable>
         <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
           {item.thumbnail_url ? (
             <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
@@ -162,13 +232,15 @@ function MovieDetailModal({
           )}
           <View style={mdStyles.body}>
             <Text style={mdStyles.title}>{displayTitle}</Text>
-            {!!item.description && (
-              <Text style={mdStyles.desc} numberOfLines={5}>{item.description}</Text>
+            {!!description && (
+              <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
             <View style={mdStyles.actionsRow}>
-              <TouchableOpacity style={mdStyles.playBtn} activeOpacity={0.8} onPress={() => onPlayDirect(firstEp || item)}>
+              <TvFocusable style={mdStyles.playBtn} activeOpacity={0.8}
+                hasFocus={IS_TV}
+                onPress={() => onPlayDirect(firstEp || item)}>
                 <Text style={mdStyles.playTxt}>▶ הפעל</Text>
-              </TouchableOpacity>
+              </TvFocusable>
               <DownloadControl
                 item={firstEp || item}
                 downloadedIds={downloadedIds}
@@ -177,15 +249,33 @@ function MovieDetailModal({
                 onDownload={onDownload}
                 onDeleteDownload={onDeleteDownload}
               />
+              {/* שיתוף — מוסתר בטלוויזיה: אין שם למי לשתף ואין מקלדת, והכפתור
+                  רק גוזל תחנה בניווט עם השלט. */}
+              {!IS_TV && (
+                <TvFocusable style={mdStyles.shareBtn} activeOpacity={0.8} onPress={onShare}>
+                  <Text style={mdStyles.shareTxt}>שתף</Text>
+                </TvFocusable>
+              )}
             </View>
           </View>
           {episodes.length > 1 && (
             <View style={mdStyles.epsSection}>
-              {seasons.length > 1 && (
+              {seasons.length > 0 && (
                 <View style={mdStyles.seasonRow}>
-                  <TouchableOpacity style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
-                    <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
-                  </TouchableOpacity>
+                  {seasons.length > 1 ? (
+                    <TvFocusable style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
+                      <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
+                    </TvFocusable>
+                  ) : (
+                    // עונה יחידה: תווית, לא כפתור. קודם השורה הוסתרה לגמרי
+                    // כשהייתה עונה אחת, ולכן 82 מתוך 179 הסדרות "דילגו על
+                    // אריח העונה ישר לפרקים" — מה שנראה כמו תקלה ולא כמו
+                    // כוונה. עכשיו העונה תמיד מוצגת, אבל בלי לגזול תחנת
+                    // focus בשלט על בחירה שאין בה מה לבחור.
+                    <View style={[mdStyles.seasonBtn, mdStyles.seasonBtnStatic]}>
+                      <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason}</Text>
+                    </View>
+                  )}
                 </View>
               )}
               <Text style={mdStyles.epsHeader}>פרקים ({visibleEpisodes.length})</Text>
@@ -195,7 +285,7 @@ function MovieDetailModal({
                 </View>
               ) : (
                 visibleEpisodes.map(ep => (
-                  <TouchableOpacity key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
+                  <TvFocusable key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
                     {ep.thumbnail_url ? (
                       <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
                     ) : (
@@ -221,7 +311,7 @@ function MovieDetailModal({
                       onDeleteDownload={onDeleteDownload}
                     />
                     <Text style={mdStyles.epPlayIcon}>▶</Text>
-                  </TouchableOpacity>
+                  </TvFocusable>
                 ))
               )}
             </View>
@@ -233,16 +323,29 @@ function MovieDetailModal({
         <Modal transparent animationType="fade" visible={showSeasonPicker} onRequestClose={() => setShowSeasonPicker(false)}>
           <TouchableOpacity style={mdStyles.seasonPickerOverlay} activeOpacity={1} onPress={() => setShowSeasonPicker(false)}>
             <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
-              {seasons.map(s => (
-                <TouchableOpacity key={s} style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]} onPress={() => handleSeasonSelect(s)}>
+              {seasons.map((s, i) => (
+                <TvFocusable
+                  key={s}
+                  // בלי זריעת focus אף פריט אינו ממוקד כשהחלון נפתח, ואז
+                  // בטלוויזיה אין מאיפה לזוז — הבודק תיאר את זה כ"השלט לא
+                  // מגיב". אותו דפוס בדיוק שמשמש את כפתור ההפעלה בחלון
+                  // הראשי, שם הוא כבר עובד.
+                  // ה-fallback ל-i === 0 חשוב: אם activeSeason אינו ברשימה
+                  // (למשל עונה שנעלמה מהקטלוג) שום פריט לא היה מתאים, והחלון
+                  // היה נפתח שוב בלי focus — בדיוק התקלה שאנחנו מתקנים.
+                  hasFocus={IS_TV && (s === activeSeason ||
+                                      (!seasons.includes(activeSeason) && i === 0))}
+                  style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]}
+                  onPress={() => handleSeasonSelect(s)}>
                   <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>
-                </TouchableOpacity>
+                </TvFocusable>
               ))}
             </View>
           </TouchableOpacity>
         </Modal>
       )}
     </View>
+    </Modal>
   );
 }
 
@@ -266,6 +369,11 @@ const mdStyles = StyleSheet.create({
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
   actionsRow: {flexDirection: 'row', gap: 10},
   playBtn: {flex: 1, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
+  shareBtn: {
+    backgroundColor: '#1f1f1f', borderRadius: 12, paddingVertical: 14,
+    paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
+  },
+  shareTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
   dlBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -280,6 +388,8 @@ const mdStyles = StyleSheet.create({
   epsSection: {paddingHorizontal: 16, paddingBottom: 24},
   seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: '#222'},
   seasonBtn: {backgroundColor: '#2a2a2a', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
+  // עונה יחידה — נראית כתווית ולא ככפתור, כדי שלא תזמין לחיצה שלא תעשה כלום
+  seasonBtnStatic: {backgroundColor: '#1c1c1e', opacity: 0.85},
   seasonBtnTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
   seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
   seasonPickerBox: {backgroundColor: '#1c1c1e', borderRadius: 16, overflow: 'hidden', minWidth: 180},
@@ -307,14 +417,14 @@ function HomeFooter({navigation}) {
   return (
     <View style={ftStyles.wrap}>
       <View style={ftStyles.row}>
-        <TouchableOpacity onPress={link('about')}><Text style={ftStyles.link}>אודות</Text></TouchableOpacity>
-        <TouchableOpacity onPress={link('terms')}><Text style={ftStyles.link}>תנאי שימוש</Text></TouchableOpacity>
-        <TouchableOpacity onPress={link('privacy')}><Text style={ftStyles.link}>פרטיות</Text></TouchableOpacity>
-        <TouchableOpacity onPress={link('copyright')}><Text style={ftStyles.link}>זכויות יוצרים</Text></TouchableOpacity>
+        <TvFocusable onPress={link('about')}><Text style={ftStyles.link}>אודות</Text></TvFocusable>
+        <TvFocusable onPress={link('terms')}><Text style={ftStyles.link}>תנאי שימוש</Text></TvFocusable>
+        <TvFocusable onPress={link('privacy')}><Text style={ftStyles.link}>פרטיות</Text></TvFocusable>
+        <TvFocusable onPress={link('copyright')}><Text style={ftStyles.link}>זכויות יוצרים</Text></TvFocusable>
       </View>
       <View style={ftStyles.row}>
-        <TouchableOpacity onPress={open(DISCORD_URL)}><Text style={[ftStyles.link, {color: '#7c85f5'}]}>דיסקורד</Text></TouchableOpacity>
-        <TouchableOpacity onPress={open(TELEGRAM_URL)}><Text style={[ftStyles.link, {color: '#5b9bd5'}]}>טלגרם</Text></TouchableOpacity>
+        <TvFocusable onPress={open(DISCORD_URL)}><Text style={[ftStyles.link, {color: '#7c85f5'}]}>דיסקורד</Text></TvFocusable>
+        <TvFocusable onPress={open(TELEGRAM_URL)}><Text style={[ftStyles.link, {color: '#5b9bd5'}]}>טלגרם</Text></TvFocusable>
       </View>
       <Text style={ftStyles.note}>ZOVEX · שירות חינמי, ללא מטרות רווח</Text>
     </View>
@@ -328,7 +438,9 @@ const ftStyles = StyleSheet.create({
   note: {color: '#555', fontSize: 11, textAlign: 'center', marginTop: 4},
 });
 
-function HeroBanner({movies, onPlay, onInfo}) {
+// memo: הבאנר מחזיק טיימר ואנימציה משלו, ובלי memo הוא צויר מחדש בכל רינדור
+// של מסך הבית — כלומר בכל לחיצה, בכל מעבר focus ובכל שינוי חיפוש.
+const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
   const heroMovies = useMemo(() => {
     // Sort by created_date first (newest first) - movies.json isn't
     // guaranteed to be in any particular order (different tools that write
@@ -368,29 +480,46 @@ function HeroBanner({movies, onPlay, onInfo}) {
   return (
     <Animated.View style={[styles.hero, {opacity: fadeAnim}]}>
       {movie.thumbnail_url ? (
-        <ImageBackground source={{uri: movie.thumbnail_url}} style={styles.heroBg} resizeMode="contain">
+        <View style={styles.heroBg}>
+          {/* שתי שכבות של אותה תמונה, וזה מכוון.
+              המסגרת בגובה קבוע, ולכן contain לבדו מצייר תמונת פוסטר (צרה
+              וגבוהה) קטנה במרכז בעוד תמונה רוחבית ממלאת את הרוחב — כלומר
+              האריח נראה בגודל אחר לכל פריט בקרוסלה. השכבה המטושטשת ב-cover
+              ממלאת תמיד את המסגרת, וה-contain מעליה מציג את התמונה בשלמותה
+              בלי חיתוך. כך הגודל קבוע והתוכן עדיין שלם. */}
+          <Image
+            source={{uri: movie.thumbnail_url}}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            blurRadius={14}
+          />
+          <Image
+            source={{uri: movie.thumbnail_url}}
+            style={StyleSheet.absoluteFill}
+            resizeMode="contain"
+          />
           <View style={styles.heroGradient} />
           <View style={styles.heroContent}>
             <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
             {!!movie.description && <Text style={styles.heroDesc} numberOfLines={2}>{movie.description}</Text>}
             <View style={styles.heroBtns}>
-              <TouchableOpacity style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
+              <TvFocusable style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
                 <Text style={styles.heroBtnPlayText}>▶ צפה</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.heroBtnInfo} activeOpacity={0.8} onPress={() => onInfo(movie)}>
+              </TvFocusable>
+              <TvFocusable style={styles.heroBtnInfo} activeOpacity={0.8} onPress={() => onInfo(movie)}>
                 <Text style={styles.heroBtnInfoText}>מידע נוסף</Text>
-              </TouchableOpacity>
+              </TvFocusable>
             </View>
           </View>
-        </ImageBackground>
+        </View>
       ) : (
         <View style={[styles.heroBg, {backgroundColor: '#111'}]}>
           <View style={styles.heroContent}>
             <Text style={styles.heroTitle}>{movie.series_name || movie.title}</Text>
             <View style={styles.heroBtns}>
-              <TouchableOpacity style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
+              <TvFocusable style={styles.heroBtnPlay} activeOpacity={0.8} onPress={() => onPlay(movie)}>
                 <Text style={styles.heroBtnPlayText}>▶ צפה</Text>
-              </TouchableOpacity>
+              </TvFocusable>
             </View>
           </View>
         </View>
@@ -404,7 +533,7 @@ function HeroBanner({movies, onPlay, onInfo}) {
       )}
     </Animated.View>
   );
-}
+});
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -430,14 +559,28 @@ function buildSeriesMap(movies) {
 
 // ── MovieCard ─────────────────────────────────────────────────────────────────
 
-const MovieCard = memo(function MovieCard({item, onPress}) {
+const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = false}) {
+  // בטלוויזיה חובה שיהיה סימון ברור לאן ה-focus הגיע — אחרת נראה כאילו השלט
+  // "לא עובד". onFocus/onBlur קיימים רק ב-TV; בטלפון הם פשוט לא נורים.
+  //
+  // ה-useState חייב להיות כאן, לפני הבדיקות: קודם הוא ישב אחריהן, כך שכרטיס
+  // בלי כותרת יצא עם אפס hooks וכרטיס תקין עם אחד. React מזהה רכיבים לפי
+  // מיקום ברשימה, ובגלילה מהירה — שבה אותו מקום מתמלא בכרטיס אחר — זה בדיוק
+  // המצב שמפיל אותו. וזה הרכיב שמצויר יותר מכל אחר באפליקציה.
+  const [focused, setFocused] = useState(false);
   if (!item || typeof item !== 'object') return null;
   const isLive = !!item.is_live;
   const displayTitle = String(item.name || item.title || '');
   if (!displayTitle) return null;
+  const borderColor = focused ? '#fff' : (isLive ? '#e50914' : 'transparent');
+  const borderWidth = focused ? 3 : (isLive ? 2 : 0);
   return (
-    <TouchableOpacity style={[styles.card, {width: CARD_W}]} onPress={() => onPress(item)} activeOpacity={0.8}>
-      <View style={[styles.cardImg, {height: CARD_H, borderColor: isLive ? '#e50914' : 'transparent', borderWidth: isLive ? 2 : 0}]}>
+    <TvFocusable
+      style={[styles.card, {width: CARD_W}, focused && styles.cardFocused]}
+      onPress={() => onPress(item)}
+      hasFocus={hasTVPreferredFocus}
+      onFocusChange={setFocused}>
+      <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
         {item.thumbnail_url ? (
           <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} fadeDuration={200} />
         ) : (
@@ -447,19 +590,20 @@ const MovieCard = memo(function MovieCard({item, onPress}) {
         {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
       </View>
       <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
-    </TouchableOpacity>
+    </TvFocusable>
   );
 });
 
 // ── NetflixRow ────────────────────────────────────────────────────────────────
 
-const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) {
+const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, firstRow = false}) {
   if (!items || items.length === 0) return null;
   return (
     <View style={styles.rowWrap}>
       <View style={styles.rowHeader}>
         {isLiveRow && <Text style={styles.liveIcon}>●</Text>}
         <Text style={styles.rowTitle}>{title}</Text>
+        <View style={styles.rowTitleAccent} />
       </View>
       <FlatList
         data={items}
@@ -471,7 +615,10 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow}) 
         maxToRenderPerBatch={5}
         windowSize={3}
         removeClippedSubviews
-        renderItem={({item}) => <MovieCard item={item} onPress={onPress} />}
+        renderItem={({item, index}) => (
+          <MovieCard item={item} onPress={onPress}
+            hasTVPreferredFocus={IS_TV && firstRow && index === 0} />
+        )}
       />
     </View>
   );
@@ -487,11 +634,28 @@ export default function HomeScreen({navigation, route}) {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('הכל');
   const [detailItem, setDetailItem] = useState(null);
+  const [liveChannel, setLiveChannel] = useState(null);   // דף הערוץ החי הפתוח
+  // חיפוש בטלוויזיה: המרובע נעצר על העטיפה, ולחיצה מרכזית מרימה את החסימה
+  // ומעבירה focus לתיבה — כך המקלדת נפתחת דרך RN, שאמין יותר מפתיחה ידנית.
+  const searchRef = useRef(null);
+  const [searchTyping, setSearchTyping] = useState(false);
+  useEffect(() => {
+    if (searchTyping) {
+      const t = setTimeout(() => searchRef.current?.focus(), 50);
+      return () => clearTimeout(t);
+    }
+  }, [searchTyping]);
   const [user, setUser] = useState(null);
   const [showSignIn, setShowSignIn] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  // סימון focus לפקדי הסרגל העליון בטלוויזיה (בטלפון נשאר תמיד false)
+  const [userBtnFocus, setUserBtnFocus] = useState(false);
+  const [catsBtnFocus, setCatsBtnFocus] = useState(false);
+  const [clearCatFocus, setClearCatFocus] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
+  // אישור יציאה — בטלוויזיה בלבד. ראה את המטפל ב-hardwareBackPress.
+  const [showExit, setShowExit] = useState(false);
   const donationCallback = useRef(null);
   const [showTgTip, setShowTgTip] = useState(false);
   const [showSupport, setShowSupport] = useState(false);
@@ -560,14 +724,28 @@ export default function HomeScreen({navigation, route}) {
   }, []);
 
   // ── Data loading ──
+  // טעינה דו-שלבית: קודם fetchMoviesFast() מביא רק את 800 החדשים (payload קטן,
+  // ציור מיידי), המשתמש רואה תוכן מיד; ואז ברקע fetchMovies() משלים את כל
+  // הקטלוג. אם כבר יש cache חם — הולכים ישר למלא בלי הבהוב.
+  const _hydratedRef = useRef(false);
   const load = useCallback(async (refresh = false, loggedInUser = null) => {
-    if (refresh) { clearCache(); setRefreshing(true); }
+    if (refresh) { clearCache(); _hydratedRef.current = false; setRefreshing(true); }
+    const histP = loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]);
     try {
-      const [data, hist] = await Promise.all([
-        fetchMovies(),
-        loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]),
-      ]);
-      setMovies(data);
+      if (!_hydratedRef.current) {
+        // שלב 1 — ציור מהיר
+        const fast = await fetchMoviesFast();
+        if (fast && fast.length) setMovies(fast);
+        setLoading(false);
+        // שלב 2 — קטלוג מלא ברקע
+        fetchMovies().then(full => {
+          if (full && full.length) { setMovies(full); _hydratedRef.current = true; }
+        }).catch(() => {});
+      } else {
+        const full = await fetchMovies();
+        if (full && full.length) setMovies(full);
+      }
+      const hist = await histP;
       setHistory(hist);
     } catch {}
     setLoading(false);
@@ -596,9 +774,13 @@ export default function HomeScreen({navigation, route}) {
   useEffect(() => { refreshDownloads(); }, [refreshDownloads]);
   const downloadedIds = useMemo(() => new Set(downloads.map(d => d.id)), [downloads]);
 
-  // Clear detail modal when returning from Player so no flash on back-navigate
+  // חזרה מהנגן: לסרט בודד סוגרים את חלון הפרטים (אין לאן לחזור, וההשארה
+  // גורמת להבהוב). לסדרה *משאירים אותו פתוח* — הצופה סיים פרק ורוצה לבחור
+  // את הבא, וסגירה זרקה אותו למסך הבית ואילצה אותו לחפש את הסדרה מחדש.
   useEffect(() => {
-    const unsub = navigation.addListener('focus', () => setDetailItem(null));
+    const unsub = navigation.addListener('focus', () => {
+      setDetailItem(cur => (cur && cur.series_name ? cur : null));
+    });
     return unsub;
   }, [navigation]);
 
@@ -732,6 +914,38 @@ export default function HomeScreen({navigation, route}) {
     return rows;
   }, [liveChannels, history, movies, allCategories, getItemsForCategory, qTokens]);
 
+  // כפתור "חזור" בשלט. בלי זה כל לחיצה הגיעה ישר לניווט, ומכיוון שמסך הבית
+  // הוא השורש — האפליקציה נסגרה ("הוא מנתק אותי מהאפליקציה"). חלון פרטי הסרט
+  // הוא View רגיל ולא Modal, ולכן הוא גם לא נסגר מעצמו. כאן סוגרים שכבה אחת
+  // בכל לחיצה, ורק כשאין מה לסגור נותנים לאנדרואיד לצאת כרגיל.
+  // המאזין הזה רשום כל עוד מסך הבית *מותקן*, לא רק כשהוא מוצג — ומסך הבית
+  // נשאר מותקן מתחת לנגן ולמסך הסדרה. לכן לחיצה על "חזור" בתוך פרק הגיעה
+  // לכאן, לא מצאה שכבה לסגור, והציגה את שאלת היציאה מהאפליקציה במקום לחזור
+  // אחורה; הלחיצה הבאה רק סגרה את השאלה, ומכאן ההרגשה ש"לא מגיב". כשהמסך
+  // אינו במוקד מחזירים false, וההחלטה עוברת לניווט שיודע לחזור אחורה.
+  const isFocused = useIsFocused();
+  useEffect(() => {
+    const onBack = () => {
+      if (!isFocused) return false;
+      if (showExit) { setShowExit(false); return true; }
+      if (liveChannel) { setLiveChannel(null); return true; }
+      if (showDonation) { setShowDonation(false); donationCallback.current = null; return true; }
+      if (detailItem) { setDetailItem(null); return true; }
+      if (showCatModal) { setShowCatModal(false); return true; }
+      if (showUserMenu) { setShowUserMenu(false); return true; }
+      if (showSupport) { setShowSupport(false); return true; }
+      if (search) { setSearch(''); return true; }
+      if (category !== 'הכל') { setCategory('הכל'); return true; }
+      // אין יותר מה לסגור — כאן אנדרואיד סוגר את האפליקציה. בטלוויזיה זה קורה
+      // בלחיצה אחת על השלט, בלי שום אזהרה, ולכן צופים נזרקו החוצה באמצע. שואלים
+      // קודם. בטלפון משאירים את התנהגות ה"אחורה" הרגילה שמשתמשים מצפים לה.
+      if (IS_TV) { setShowExit(true); return true; }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, category, showExit]);
+
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
     setShowDonation(true);
@@ -793,22 +1007,26 @@ export default function HomeScreen({navigation, route}) {
   const handleItemPress = useCallback(item => {
     if (item.__isDownload) { playDownloadedItem(item); return; }
     showDonationModal(() => {
-      if (item.is_live) {
-        navigation.navigate('Player', {
-          movie: {
-            ...item,
-            is_live: true,
-            type: item.type || 'direct',
-            video_url: item.video_url || item.url || '',
-            title: item.title || item.name || 'שידור חי',
-          },
-          userId: user?.id || null,
-        });
-      } else {
-        setDetailItem(item);
-      }
+      // ערוץ חי נפתח לדף שלו — תמונה, מה משודר עכשיו, ולוח השידורים — ולא
+      // ישר לנגן. קפיצה ישירה לשידור לא נותנת שום דרך לדעת מה רואים.
+      if (item.is_live) setLiveChannel(item);
+      else setDetailItem(item);
     });
-  }, [navigation, user, showDonationModal, playDownloadedItem]);
+  }, [showDonationModal, playDownloadedItem]);
+
+  const playLiveChannel = useCallback(ch => {
+    setLiveChannel(null);
+    navigation.navigate('Player', {
+      movie: {
+        ...ch,
+        is_live: true,
+        type: ch.type || 'direct',
+        video_url: ch.video_url || ch.url || '',
+        title: ch.title || ch.name || 'שידור חי',
+      },
+      userId: user?.id || null,
+    });
+  }, [navigation, user]);
 
   // Deep link support: zovex://<slug> or https://davidggjg.github.io/zovex/<slug>
   // land here with the slug in route.params.deepPath (see linking config in
@@ -857,10 +1075,41 @@ export default function HomeScreen({navigation, route}) {
     showDonationModal(() => setDetailItem(d));
   }, [seriesMap, showDonationModal]);
 
+  // כניסה נסתרת לפאנל ההעלאה: מקלידים את קוד הגישה בשדה החיפוש.
+  // הקוד עצמו *אינו* כאן אלא בשרת. APK הוא קובץ ZIP, ו-`strings` מוציא ממנו
+  // כל מחרוזת בשניות — קוד ששמור באפליקציה שקול לקוד פומבי, וזה לא מספיק
+  // לפאנל שדוחף קבצים לחשבון הטלגרם הפרטי.
+  // נשלח לשרת רק מה שנראה כמו מועמד (מילה אחת, 12 תווים ומעלה) ורק אחרי
+  // שההקלדה נחה, כדי לא לשלוח בקשה על כל תו שמקלידים בחיפוש רגיל.
+  const codeTimer = useRef(null);
+  useEffect(() => () => clearTimeout(codeTimer.current), []);
+
+  const tryPanelCode = useCallback(v => {
+    clearTimeout(codeTimer.current);
+    const c = (v || '').trim();
+    if (c.length < 12 || /\s/.test(c)) return;
+    codeTimer.current = setTimeout(async () => {
+      try {
+        const d = await verifyPanelCode(c);
+        if (!d || !d.ok) return;
+        setSearch('');
+        // maxSize מגיע מהשרת לפי סוג חשבון הטלגרם (2GB רגיל, 4GB Premium),
+        // כדי שהפאנל יוכל לומר מראש שקובץ גדול מדי במקום להעלות אותו לחינם.
+        navigation.navigate('SavedUpload', {
+          code: c, account: d.account,
+          maxSize: d.max_size || 0, freeDisk: d.free_disk || 0,
+        });
+      } catch (_) {
+        // קוד שגוי — בשקט ובכוונה. הודעת שגיאה הייתה מסגירה שיש כאן פאנל.
+      }
+    }, 700);
+  }, [navigation]);
+
   const handleSearchChange = useCallback(v => {
     setSearch(v);
     if (!v) setCategory('הכל');
-  }, [navigation]);
+    tryPanelCode(v);
+  }, [tryPanelCode]);
 
   const onSearchFocus = useCallback(() => {
     Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
@@ -875,6 +1124,28 @@ export default function HomeScreen({navigation, route}) {
     outputRange: ['rgba(255,255,255,0.08)', '#e50914'],
   });
 
+  // אלמנטים יציבים ל-FlatList. כשהם נכתבים inline הם נוצרים מחדש בכל רינדור,
+  // והרשימה מחשיבה אותם כשונים ומציירת מחדש את הכותרת, התחתית והשורות
+  // הגלויות — בכל לחיצה ובכל תזוזת focus בשלט.
+  const heroHeader = useMemo(
+    () => <HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />,
+    [movies, handleHeroPlay, handleHeroInfo],
+  );
+  const homeFooter = useMemo(() => <HomeFooter navigation={navigation} />, [navigation]);
+  const renderNetflixRow = useCallback(
+    ({item: row, index}) => (
+      <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow}
+                  onPress={handleItemPress} firstRow={index === 0} />
+    ),
+    [handleItemPress],
+  );
+  const renderGridItem = useCallback(
+    ({item, index}) => (
+      <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />
+    ),
+    [handleItemPress],
+  );
+
   // ── First-launch sign-in screen ──
   if (!loading && showSignIn) {
     return (
@@ -882,17 +1153,21 @@ export default function HomeScreen({navigation, route}) {
         <Text style={styles.signInLogo}>ZOVEX</Text>
         <Text style={styles.signInTitle}>ברוכים הבאים</Text>
         <Text style={styles.signInSub}>כניסה לחשבון לחוויה מלאה</Text>
-        <TouchableOpacity style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}>
+        {/* focus התחלתי: בלעדיו הלחיצה הראשונה בשלט לא פוגעת בכלום, והמשתמש
+            נאלץ ללחוץ קודם חץ למטה כדי ש"יתפוס" — בדיוק מה שדווח ("לוחץ
+            בפעם הראשונה, הוא לא מגיב"). */}
+        <TvFocusable style={styles.googleBtn} onPress={startSignIn} activeOpacity={0.8}
+          hasFocus={IS_TV}>
           <Text style={styles.googleBtnText}>🔑 כניסה עם Google</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+        </TvFocusable>
+        <TvFocusable
           style={styles.skipBtn}
           onPress={async () => {
             await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
             setShowSignIn(false);
           }}>
           <Text style={styles.skipBtnText}>המשך ללא כניסה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
         {/* מדיניות Google Play מחייבת קישור נגיש לתנאים ולפרטיות במסך הכניסה,
             והמסך הזה מוצג עוד לפני שיש תפריט משתמש — אחרת אורח לא מגיע לתנאים כלל. */}
         <Text style={styles.signInLegal}>
@@ -923,21 +1198,33 @@ export default function HomeScreen({navigation, route}) {
     <View style={styles.topBar}>
       <Text style={styles.appTitle}>ZOVEX</Text>
 
-      <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="חיפוש..."
-          placeholderTextColor="rgba(255,255,255,0.3)"
-          value={search}
-          onChangeText={handleSearchChange}
-          onFocus={onSearchFocus}
-          onBlur={onSearchBlur}
-          textAlign="right"
-        />
-      </Animated.View>
+      {/* בטלוויזיה תיבת הטקסט עצמה לא מקבלת focus מה-D-pad (אחרת השלט נתקע
+          בתוכה); במקום זה המרובע נעצר על העטיפה, ולחיצה מרכזית מעבירה את
+          ה-focus פנימה ופותחת את המקלדת. בטלפון אין עטיפה ושום דבר לא משתנה. */}
+      <TvFocusable
+        style={styles.searchTvWrap}
+        allowChildFocus={searchTyping}
+        onPress={() => setSearchTyping(true)}>
+        <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
+          <TextInput
+            ref={searchRef}
+            style={styles.searchInput}
+            placeholder="חיפוש..."
+            placeholderTextColor="rgba(255,255,255,0.3)"
+            value={search}
+            onChangeText={handleSearchChange}
+            onFocus={onSearchFocus}
+            onBlur={() => { setSearchTyping(false); onSearchBlur && onSearchBlur(); }}
+            textAlign="right"
+          />
+        </Animated.View>
+      </TvFocusable>
 
       {user ? (
-        <TouchableOpacity onPress={() => setShowUserMenu(true)} style={styles.userBtn}>
+        <TvFocusable
+          onPress={() => setShowUserMenu(true)}
+          onFocusChange={setUserBtnFocus}
+          style={[styles.userBtn, userBtnFocus && styles.tvFocusRing]}>
           {user.picture ? (
             <Image source={{uri: user.picture}} style={styles.userAvatar} />
           ) : (
@@ -947,11 +1234,14 @@ export default function HomeScreen({navigation, route}) {
               </Text>
             </View>
           )}
-        </TouchableOpacity>
+        </TvFocusable>
       ) : (
-        <TouchableOpacity onPress={startSignIn} style={styles.signInBtn}>
+        <TvFocusable
+          onPress={startSignIn}
+          onFocusChange={setUserBtnFocus}
+          style={[styles.signInBtn, userBtnFocus && styles.tvFocusRing]}>
           <Text style={styles.signInTxt}>כניסה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       )}
     </View>
   );
@@ -959,17 +1249,19 @@ export default function HomeScreen({navigation, route}) {
   const CatsButton = (
     <View style={styles.catsRow}>
       {category !== 'הכל' && (
-        <TouchableOpacity
+        <TvFocusable
           onPress={() => { setCategory('הכל'); setSearch(''); }}
-          style={styles.activeCatChip}>
+          onFocusChange={setClearCatFocus}
+          style={[styles.activeCatChip, clearCatFocus && styles.tvFocusRing]}>
           <Text style={styles.activeCatChipTxt}>✕  {category}</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       )}
-      <TouchableOpacity
+      <TvFocusable
         onPress={() => setShowCatModal(true)}
-        style={styles.catsModalBtn}>
+        onFocusChange={setCatsBtnFocus}
+        style={[styles.catsModalBtn, catsBtnFocus && styles.tvFocusRing]}>
         <Text style={styles.catsModalBtnTxt}>≡  קטגוריות</Text>
-      </TouchableOpacity>
+      </TvFocusable>
     </View>
   );
 
@@ -985,7 +1277,7 @@ export default function HomeScreen({navigation, route}) {
           showsVerticalScrollIndicator={false}
           contentContainerStyle={styles.catScrollContent}>
           {allCategories.map(c => (
-            <TouchableOpacity
+            <TvFocusable
               key={c}
               onPress={() => { setCategory(c); setSearch(''); setShowCatModal(false); }}
               style={styles.catOverlayItem}
@@ -993,12 +1285,12 @@ export default function HomeScreen({navigation, route}) {
               <Text style={[styles.catOverlayText, category === c && styles.catOverlayTextActive]}>
                 {c}
               </Text>
-            </TouchableOpacity>
+            </TvFocusable>
           ))}
         </ScrollView>
-        <TouchableOpacity style={styles.catCloseBtn} onPress={() => setShowCatModal(false)} activeOpacity={0.85}>
+        <TvFocusable style={styles.catCloseBtn} onPress={() => setShowCatModal(false)} activeOpacity={0.85}>
           <Text style={styles.catCloseTxt}>✕</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       </View>
     </Modal>
   );
@@ -1027,26 +1319,26 @@ export default function HomeScreen({navigation, route}) {
           <Text style={styles.menuName}>{user?.name || user?.given_name || ''}</Text>
           <Text style={styles.menuEmail}>{user?.email || ''}</Text>
           <View style={styles.menuDivider} />
-          <TouchableOpacity
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); setSearch(''); }}>
             <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); navigation.navigate('Legal'); }}>
             <Text style={styles.menuItemText}>📄  מידע ותנאים</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); Linking.openURL(DISCORD_URL).catch(() => {}); }}>
             <Text style={styles.menuItemText}>💬  שרת הדיסקורד</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
+          </TvFocusable>
+          <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); signOut(); }}>
             <Text style={[styles.menuItemText, {color: '#e50914'}]}>🚪  יציאה מהחשבון</Text>
-          </TouchableOpacity>
+          </TvFocusable>
         </View>
       </TouchableOpacity>
     </Modal>
@@ -1066,11 +1358,9 @@ export default function HomeScreen({navigation, route}) {
           key="netflix-rows"
           data={netflixRows}
           keyExtractor={row => row.title}
-          renderItem={({item: row}) => (
-            <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow} onPress={handleItemPress} />
-          )}
-          ListHeaderComponent={<HeroBanner movies={movies} onPlay={handleHeroPlay} onInfo={handleHeroInfo} />}
-          ListFooterComponent={<HomeFooter navigation={navigation} />}
+          renderItem={renderNetflixRow}
+          ListHeaderComponent={heroHeader}
+          ListFooterComponent={homeFooter}
           ListEmptyComponent={<Text style={styles.empty}>אין תוכן זמין</Text>}
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
@@ -1083,10 +1373,10 @@ export default function HomeScreen({navigation, route}) {
         />
       ) : (
         <FlatList
-            key="search-grid"
+            key={`search-grid-${NUM_COLS}`}
             data={Array.isArray(gridItems) ? gridItems.filter(item => item && item.id) : []}
             keyExtractor={item => String(item?.id || '')}
-            numColumns={3}
+            numColumns={NUM_COLS}
             contentContainerStyle={styles.grid}
             initialNumToRender={9}
             maxToRenderPerBatch={9}
@@ -1095,7 +1385,7 @@ export default function HomeScreen({navigation, route}) {
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
             }
-            renderItem={({item}) => <MovieCard item={item} onPress={handleItemPress} />}
+            renderItem={renderGridItem}
             ListEmptyComponent={
               category === 'היסטוריה' ? (
                 <View style={styles.historyEmpty}>
@@ -1112,6 +1402,14 @@ export default function HomeScreen({navigation, route}) {
               )
             }
           />
+      )}
+
+      {liveChannel && (
+        <LiveChannelModal
+          channel={liveChannel}
+          onPlay={playLiveChannel}
+          onClose={() => setLiveChannel(null)}
+        />
       )}
 
       {detailItem && (
@@ -1142,9 +1440,12 @@ export default function HomeScreen({navigation, route}) {
 
       {/* Telegram floating bubble */}
       <View style={styles.tgBubbleWrap} pointerEvents="box-none">
-        {showTgTip && (
+        {/* הטיפ הצף הוא רכיב מגע: הוא יושב מעל התוכן ויש לו X קטן שאי אפשר
+            להגיע אליו בשלט ("אי אפשר ללחוץ עליו כי זה לא טאצ'"). בטלוויזיה
+            פשוט לא מציגים אותו — כפתור התמיכה עצמו נשאר נגיש בניווט. */}
+        {showTgTip && !IS_TV && (
           <View style={styles.tgTip}>
-            <TouchableOpacity
+            <TvFocusable
               style={styles.tgTipClose}
               onPress={() => {
                 setShowTgTip(false);
@@ -1152,12 +1453,12 @@ export default function HomeScreen({navigation, route}) {
               }}
               hitSlop={{top: 8, bottom: 8, left: 8, right: 8}}>
               <Text style={styles.tgTipCloseTxt}>✕</Text>
-            </TouchableOpacity>
+            </TvFocusable>
             <Text style={styles.tgTipTitle}>לחצו כאן לתמיכה 💬</Text>
             <Text style={styles.tgTipSub}>או להוספת סרט חדש</Text>
           </View>
         )}
-        <TouchableOpacity
+        <TvFocusable
           style={styles.tgBtn}
           activeOpacity={0.85}
           onPress={() => {
@@ -1167,7 +1468,7 @@ export default function HomeScreen({navigation, route}) {
           }}>
           <Text style={styles.tgBtnIcon}>➤</Text>
           <Text style={styles.tgBtnLabel}>תמיכה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       </View>
 
       <SupportModal
@@ -1185,23 +1486,61 @@ export default function HomeScreen({navigation, route}) {
         onRequestClose={() => { setShowDonation(false); donationCallback.current = null; }}>
         <View style={styles.donOverlay}>
           <View style={styles.donCard}>
+            {/* X לסגירה — נגיש גם בשלט וגם באצבע, כדי שתמיד תהיה יציאה ברורה */}
+            <TvFocusable style={styles.donClose} onPress={handleDonationContinue}>
+              <Text style={styles.donCloseTxt}>✕</Text>
+            </TvFocusable>
             <Text style={styles.donEmoji}>🎬</Text>
             <Text style={styles.donTitle}>עזרו לנו לשפר את האפליקציה</Text>
             <Text style={styles.donBody}>
               {'ZOVEX פועל ללא מטרות רווח ובהתנדבות מלאה.\nתרומה קטנה תעזור לנו לשפר את איכות האפליקציה,\nלשדרג את הנגנים ולהוסיף עוד תכנים כיפיים לצפייה 💙'}
             </Text>
-            <TouchableOpacity
+            <TvFocusable
               style={styles.donBitBtn}
               activeOpacity={0.85}
               onPress={() => Linking.openURL('https://www.bitpay.co.il/app/me/F062649F-7124-4CDF-88DD-A1FEA14185EB').catch(() => {})}>
               <Text style={styles.donBitTxt}>💳 תרום בביט</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </TvFocusable>
+            <TvFocusable
               style={styles.donContinueBtn}
               activeOpacity={0.85}
+              /* בטלוויזיה ה-focus מתחיל דווקא כאן ולא על כפתור התרומה: בשלט
+                 אין "לחיצה מחוץ לחלון", ולכן אם ה-focus נוחת על התרומה המשתמש
+                 נתקע ולא מצליח לצאת מהחלון בכלל. */
+              hasFocus={IS_TV}
               onPress={handleDonationContinue}>
               <Text style={styles.donContinueTxt}>המשך לצפייה</Text>
-            </TouchableOpacity>
+            </TvFocusable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* אישור יציאה. בשלט אין "לחיצה מחוץ לחלון", ולכן ה-focus חייב להתחיל
+          על "לא" — הכפתור הבטוח — ושתי האפשרויות חייבות להיות נגישות. */}
+      <Modal
+        visible={showExit}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowExit(false)}>
+        <View style={styles.donOverlay}>
+          <View style={styles.exitCard}>
+            <Text style={styles.donEmoji}>👋</Text>
+            <Text style={styles.donTitle}>לצאת מ-ZOVEX?</Text>
+            <View style={styles.exitRow}>
+              <TvFocusable
+                style={styles.exitNoBtn}
+                activeOpacity={0.85}
+                hasFocus={IS_TV}
+                onPress={() => setShowExit(false)}>
+                <Text style={styles.exitNoTxt}>לא, להישאר</Text>
+              </TvFocusable>
+              <TvFocusable
+                style={styles.exitYesBtn}
+                activeOpacity={0.85}
+                onPress={() => { setShowExit(false); BackHandler.exitApp(); }}>
+                <Text style={styles.exitYesTxt}>כן, לצאת</Text>
+              </TvFocusable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1211,6 +1550,21 @@ export default function HomeScreen({navigation, route}) {
 
 const styles = StyleSheet.create({
   container: {flex: 1, backgroundColor: '#0a0a0a'},
+  exitCard: {
+    backgroundColor: '#161616', borderRadius: 18, paddingVertical: 28,
+    paddingHorizontal: 26, width: '86%', maxWidth: 460, alignItems: 'center',
+  },
+  exitRow: {flexDirection: 'row-reverse', gap: 12, marginTop: 22},
+  exitNoBtn: {
+    backgroundColor: '#e50914', borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 26,
+  },
+  exitNoTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
+  exitYesBtn: {
+    backgroundColor: '#2a2a2a', borderRadius: 12,
+    paddingVertical: 14, paddingHorizontal: 26,
+  },
+  exitYesTxt: {color: '#ddd', fontSize: 16, fontWeight: '700'},
   center: {flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#0a0a0a'},
   loadingText: {color: '#aaa', marginTop: 12, fontSize: 14},
 
@@ -1278,6 +1632,9 @@ const styles = StyleSheet.create({
   heroDotActive: {backgroundColor: '#fff', width: 18},
 
   // ── Top bar search ──
+  // העטיפה יורשת את ה-flex של תיבת החיפוש כדי שהסרגל העליון יישאר בדיוק
+  // כפי שהיה; היא רק מוסיפה שכבה שאפשר לנווט אליה בשלט.
+  searchTvWrap: {flex: 1, borderRadius: 20},
   searchWrapper: {
     flex: 1, marginHorizontal: 10, borderRadius: 20, borderWidth: 1,
     backgroundColor: 'rgba(255,255,255,0.06)', overflow: 'hidden',
@@ -1352,13 +1709,31 @@ const styles = StyleSheet.create({
   // ── Netflix rows ──
   rowWrap: {marginBottom: 24},
   rowHeader: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10, justifyContent: 'flex-end'},
+  // מבטא אדום קטן ליד כותרת השורה — אותה שפה כמו הפס האדום שמסמן שידור חי,
+  // רק כאן קבוע. באתר זה מגיע מ-gradient על הטקסט; כאן, בלי ליצור תלות
+  // חדשה, פס צר ומעוגל נותן אפקט דומה בעלות אפסית.
+  rowTitleAccent: {width: 3, height: 15, borderRadius: 2, backgroundColor: '#e50914', marginLeft: 8},
   liveIcon: {color: '#e50914', fontSize: 10, marginLeft: 6},
   rowTitle: {color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'right'},
   rowList: {paddingHorizontal: 10},
 
   // ── Card ──
-  card: {marginHorizontal: 5, borderRadius: 10, overflow: 'hidden'},
-  cardImg: {width: '100%', borderRadius: 10, overflow: 'hidden', backgroundColor: '#1c1c1e'},
+  // 14 ולא 10: אותו רדיוס עיגול שכבר כויל באתר (.zv-card__art), כדי
+  // שהאפליקציה תרגיש כמו המשך של אותו עיצוב ולא כמו גרסה ישנה יותר.
+  card: {marginHorizontal: 5, borderRadius: 14, overflow: 'hidden'},
+  // הדגשת ה-focus בטלוויזיה: הכרטיס ה"נבחר" עולה מעל השכנים ומקבל רקע בהיר
+  // קל, בנוסף למסגרת הלבנה על התמונה. בלי scale כדי לא לחתוך/לחפוף שכנים —
+  // זו בדיוק הסיבה שבאתר אפשר להגדיל כרטיס בפוקוס (רשת CSS רגילה, בלי
+  // חיתוך שכנים) ובאפליקציה לא (FlatList אופקי עם removeClippedSubviews).
+  // הצללית מפצה על ההיעדר: elevation גבוה יותר מרים את הכרטיס בעין בלי
+  // לגעת בגודל שלו.
+  cardFocused: {
+    backgroundColor: '#2a2a2c', zIndex: 3, elevation: 9,
+    shadowColor: '#fff', shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: {width: 0, height: 4},
+  },
+  // טבעת ה-focus לפקדים בסרגל העליון — אותו שפה ויזואלית כמו הכרטיסים
+  tvFocusRing: {borderWidth: 2, borderColor: '#fff', borderRadius: 8},
+  cardImg: {width: '100%', borderRadius: 14, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},
   noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1c1c1e'},
@@ -1416,6 +1791,13 @@ const styles = StyleSheet.create({
 
   // ── Donation modal ──
   donOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.88)', justifyContent: 'center', alignItems: 'center', padding: 20},
+  donClose: {
+    position: 'absolute', top: 8, right: 8, zIndex: 10,
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  donCloseTxt: {color: '#fff', fontSize: 16, fontWeight: '700', lineHeight: 18},
   donCard: {backgroundColor: '#111', borderRadius: 24, padding: 28, width: '100%', alignItems: 'center', borderWidth: 1, borderColor: '#222'},
   donEmoji: {fontSize: 32, marginBottom: 10},
   donTitle: {fontSize: 20, fontWeight: '900', color: '#fff', textAlign: 'center', marginBottom: 10},

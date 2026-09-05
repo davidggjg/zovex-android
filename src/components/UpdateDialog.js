@@ -9,6 +9,7 @@
 // נופלים חזרה לפתיחת הקישור בדפדפן כדי שתמיד תהיה דרך לעדכן.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {useEffect, useState} from 'react';
+import TvFocusable from '../components/TvFocusable';
 import {
   View,
   Text,
@@ -142,17 +143,17 @@ export default function UpdateDialog() {
               </Text>
             </View>
           ) : (
-            <TouchableOpacity style={styles.updateBtn} onPress={startUpdate} activeOpacity={0.85}>
+            <TvFocusable style={styles.updateBtn} onPress={startUpdate} activeOpacity={0.85}>
               <Text style={styles.updateTxt}>⬇️ עדכן עכשיו</Text>
-            </TouchableOpacity>
+            </TvFocusable>
           )}
 
           {err ? <Text style={styles.err}>{err}</Text> : null}
 
           {!state.forced && !downloading && (
-            <TouchableOpacity style={styles.laterBtn} onPress={() => setDismissed(true)}>
+            <TvFocusable style={styles.laterBtn} onPress={() => setDismissed(true)}>
               <Text style={styles.laterTxt}>אחר כך</Text>
-            </TouchableOpacity>
+            </TvFocusable>
           )}
         </View>
       </View>

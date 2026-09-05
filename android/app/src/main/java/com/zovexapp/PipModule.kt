@@ -2,6 +2,9 @@ package com.zovexapp
 
 import android.app.Activity
 import android.app.PictureInPictureParams
+import android.app.UiModeManager
+import android.content.Context
+import android.content.res.Configuration
 import android.os.Build
 import android.util.Rational
 import android.view.View
@@ -25,8 +28,22 @@ class PipModule(private val reactContext: ReactApplicationContext) :
         // (Qin F21/F22 Pro וכו') לרוב לא מכריזים על FEATURE_PICTURE_IN_PICTURE,
         // וקריאה ל-enterPictureInPictureMode/setPictureInPictureParams עליהם זורקת
         // IllegalStateException ומקריסה את האפליקציה (למשל כשסוגרים בזמן שסרט רץ).
+        // בטלוויזיות: חלק מהמכשירים כן מכריזים על FEATURE_PICTURE_IN_PICTURE,
+        // אבל חלון צף על מסך טלוויזיה הוא חסר משמעות — אין שם "לצאת לבית תוך
+        // כדי צפייה", ובפועל זה רק מקטין את הסרט לפינה בלי שהצופה ביקש. לכן
+        // מוציאים טלוויזיות מפורשות, ומשאירים את PiP לטלפונים בלבד.
+        private fun isTv(activity: Activity): Boolean = try {
+            val ui = activity.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+            ui.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+                activity.packageManager.hasSystemFeature(
+                    android.content.pm.PackageManager.FEATURE_LEANBACK)
+        } catch (_: Throwable) {
+            false
+        }
+
         fun supportsPip(activity: Activity): Boolean =
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !isTv(activity) &&
             activity.packageManager.hasSystemFeature(
                 android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)
 
