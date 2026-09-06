@@ -94,5 +94,14 @@ class MainActivity : ReactActivity() {
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        // כל שאר מעברי הלייאאוט למעלה (onResume/onWindowFocusChanged/
+        // onConfigurationChanged) מחילים מחדש את מצב המסך-המלא הסוחף אם
+        // isFullscreen. זה היה היחיד שלא - וזה בדיוק הקריאה שמגיעה כשחוזרים
+        // מ-PiP (חלון צף) למסך מלא. בלעדיו הסרגלים של המערכת יכולים להישאר
+        // גלויים ולשנות את גודל האזור הזמין, מה שיכול לטלטל את הפריסה בדיוק
+        // ברגע שהצופה מצפה לחזור ישר לנגן.
+        if (!isInPictureInPictureMode && PipModule.isFullscreen) {
+            PipModule.applyImmersiveMode(this, true)
+        }
     }
 }
