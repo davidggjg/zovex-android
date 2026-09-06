@@ -1477,6 +1477,7 @@ export default function HomeScreen({navigation, route}) {
         visible={showSupport}
         onClose={() => setShowSupport(false)}
         user={user}
+        onLoginWithGoogle={startSignIn}
       />
 
       <UpdateDialog />

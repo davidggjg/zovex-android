@@ -10,28 +10,23 @@ import {
   StyleSheet, Linking, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import {TELEGRAM_URL, DISCORD_URL} from '../config/links';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import {sendFeedback, fetchMyFeedback} from '../api/movies';
 
-const DEVICE_ID_KEY = 'zovex_device_id';
 const KINDS = [
   {k: 'support', label: 'תמיכה 💬'},
   {k: 'review', label: 'חוות דעת ⭐'},
   {k: 'tip', label: 'טיפ 💡'},
 ];
 
-// מזהה יציב למשתמש: אם מחובר לגוגל → email; אחרת מזהה מכשיר אקראי ששמור מקומית.
-async function resolveUserId(user) {
-  if (user && user.email) return 'g:' + user.email;
-  let id = await AsyncStorage.getItem(DEVICE_ID_KEY).catch(() => null);
-  if (!id) {
-    id = 'd:' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-    await AsyncStorage.setItem(DEVICE_ID_KEY, id).catch(() => {});
-  }
-  return id;
+// זהה לאתר (src/components/home/SupportModal.jsx): בלי אימייל אין מה לחסום
+// אם מישהו כותב דברים פוגעניים, וזו כל הנקודה. מזהה מכשיר אקראי לא נותן
+// שום דרך לחסום את אותו אדם בפעם הבאה (התקנה מחדש = מזהה חדש), ולכן מי
+// שלא מחובר עם גוגל לא כותב בכלל - לא בתמיכה, לא בחוות דעת, לא בטיפ.
+function resolveUserId(user) {
+  return user && user.email ? 'g:' + user.email : null;
 }
 
-export default function SupportModal({visible, onClose, user}) {
+export default function SupportModal({visible, onClose, user, onLoginWithGoogle}) {
   const [userId, setUserId] = useState(null);
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
@@ -49,24 +44,26 @@ export default function SupportModal({visible, onClose, user}) {
     setLoading(false);
   }, [userId]);
 
-  // בכל פתיחה: בונה/טוען את המזהה, מושך הודעות, ומתחיל poll כל 15 שניות
+  // בכל פתיחה: אם מחוברים, טוען הודעות ומתחיל poll כל 15 שניות. אם לא -
+  // אין מה לטעון, מסך ההתחברות מוצג במקום הצ'אט.
   useEffect(() => {
     if (!visible) {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
+    const id = resolveUserId(user);
+    setUserId(id);
+    if (!id) { setLoading(false); return; }
     let alive = true;
     setLoading(true);
     (async () => {
-      const id = await resolveUserId(user);
-      if (!alive) return;
-      setUserId(id);
       await refresh(id);
+      if (!alive) return;
       pollRef.current = setInterval(() => refresh(id), 15000);
     })();
     return () => { alive = false; if (pollRef.current) clearInterval(pollRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visible]);
+  }, [visible, user]);
 
   useEffect(() => {
     if (scrollRef.current) setTimeout(() => scrollRef.current.scrollToEnd({animated: true}), 100);
@@ -102,64 +99,81 @@ export default function SupportModal({visible, onClose, user}) {
             <View style={{width: 22}} />
           </View>
 
-          {/* בחירת סוג ההודעה */}
-          <View style={styles.kinds}>
-            {KINDS.map(x => (
-              <TvFocusable
-                key={x.k}
-                style={[styles.kindBtn, kind === x.k && styles.kindBtnOn]}
-                onPress={() => setKind(x.k)}>
-                <Text style={[styles.kindTxt, kind === x.k && styles.kindTxtOn]}>{x.label}</Text>
-              </TvFocusable>
-            ))}
-          </View>
-
-          {/* היסטוריית ההודעות */}
-          {loading ? (
-            <View style={styles.loadingBox}><ActivityIndicator color="#e50914" /></View>
-          ) : (
-            <ScrollView ref={scrollRef} style={styles.chat} contentContainerStyle={{paddingVertical: 8}}>
-              {messages.length === 0 ? (
-                <Text style={styles.empty}>
-                  {'כתבו לנו כל דבר — בעיה, חוות דעת או רעיון לשיפור.\nנקרא ונחזור אליכם כאן 💙'}
-                </Text>
-              ) : (
-                messages.map((m, i) => {
-                  const mine = m.from === 'user';
-                  return (
-                    <View key={i} style={[styles.bubbleRow, mine ? styles.rowRight : styles.rowLeft]}>
-                      <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleAdmin]}>
-                        {mine && m.kind ? (
-                          <Text style={styles.bubbleKind}>{kindLabel(m.kind)}</Text>
-                        ) : null}
-                        {!mine ? <Text style={styles.adminName}>ZOVEX · צוות</Text> : null}
-                        <Text style={[styles.bubbleTxt, mine && styles.bubbleTxtMine]}>{m.text}</Text>
-                      </View>
-                    </View>
-                  );
-                })
+          {!userId ? (
+            <View style={styles.gateBox}>
+              <Text style={styles.gateIcon}>🔒</Text>
+              <Text style={styles.gateTitle}>אנא התחברו עם Google כדי לכתוב</Text>
+              <Text style={styles.gateSub}>
+                {'תמיכה, חוות דעת וטיפ פתוחים רק למחוברים - כדי שנוכל לענות לכם אישית.'}
+              </Text>
+              {onLoginWithGoogle && (
+                <TvFocusable style={styles.googleBtn} onPress={onLoginWithGoogle}>
+                  <Text style={styles.googleTxt}>התחבר עם Google</Text>
+                </TvFocusable>
               )}
-            </ScrollView>
-          )}
+            </View>
+          ) : (
+            <>
+              {/* בחירת סוג ההודעה */}
+              <View style={styles.kinds}>
+                {KINDS.map(x => (
+                  <TvFocusable
+                    key={x.k}
+                    style={[styles.kindBtn, kind === x.k && styles.kindBtnOn]}
+                    onPress={() => setKind(x.k)}>
+                    <Text style={[styles.kindTxt, kind === x.k && styles.kindTxtOn]}>{x.label}</Text>
+                  </TvFocusable>
+                ))}
+              </View>
 
-          {/* תיבת כתיבה */}
-          <View style={styles.inputRow}>
-            <TextInput
-              style={styles.input}
-              value={text}
-              onChangeText={setText}
-              placeholder="כתבו הודעה..."
-              placeholderTextColor="#777"
-              multiline
-              textAlign="right"
-            />
-            <TvFocusable
-              style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnOff]}
-              onPress={send}
-              disabled={!text.trim() || sending}>
-              <Text style={styles.sendTxt}>{sending ? '...' : 'שלח'}</Text>
-            </TvFocusable>
-          </View>
+              {/* היסטוריית ההודעות */}
+              {loading ? (
+                <View style={styles.loadingBox}><ActivityIndicator color="#e50914" /></View>
+              ) : (
+                <ScrollView ref={scrollRef} style={styles.chat} contentContainerStyle={{paddingVertical: 8}}>
+                  {messages.length === 0 ? (
+                    <Text style={styles.empty}>
+                      {'כתבו לנו כל דבר — בעיה, חוות דעת או רעיון לשיפור.\nנקרא ונחזור אליכם כאן 💙'}
+                    </Text>
+                  ) : (
+                    messages.map((m, i) => {
+                      const mine = m.from === 'user';
+                      return (
+                        <View key={i} style={[styles.bubbleRow, mine ? styles.rowRight : styles.rowLeft]}>
+                          <View style={[styles.bubble, mine ? styles.bubbleMine : styles.bubbleAdmin]}>
+                            {mine && m.kind ? (
+                              <Text style={styles.bubbleKind}>{kindLabel(m.kind)}</Text>
+                            ) : null}
+                            {!mine ? <Text style={styles.adminName}>ZOVEX · צוות</Text> : null}
+                            <Text style={[styles.bubbleTxt, mine && styles.bubbleTxtMine]}>{m.text}</Text>
+                          </View>
+                        </View>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              )}
+
+              {/* תיבת כתיבה */}
+              <View style={styles.inputRow}>
+                <TextInput
+                  style={styles.input}
+                  value={text}
+                  onChangeText={setText}
+                  placeholder="כתבו הודעה..."
+                  placeholderTextColor="#777"
+                  multiline
+                  textAlign="right"
+                />
+                <TvFocusable
+                  style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnOff]}
+                  onPress={send}
+                  disabled={!text.trim() || sending}>
+                  <Text style={styles.sendTxt}>{sending ? '...' : 'שלח'}</Text>
+                </TvFocusable>
+              </View>
+            </>
+          )}
 
           {/* ערוצים חיצוניים */}
           <TvFocusable
@@ -195,6 +209,15 @@ const styles = StyleSheet.create({
   kindBtnOn: {backgroundColor: '#e50914', borderColor: '#e50914'},
   kindTxt: {color: '#bbb', fontSize: 13, fontWeight: '600'},
   kindTxtOn: {color: '#fff'},
+  gateBox: {alignItems: 'center', paddingVertical: 34, paddingHorizontal: 20, gap: 12},
+  gateIcon: {fontSize: 38},
+  gateTitle: {color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'center'},
+  gateSub: {color: '#9a9aa5', fontSize: 13, lineHeight: 20, textAlign: 'center', maxWidth: 300},
+  googleBtn: {
+    marginTop: 4, backgroundColor: '#fff', borderRadius: 12,
+    paddingHorizontal: 22, paddingVertical: 12,
+  },
+  googleTxt: {color: '#3c3c3c', fontSize: 14, fontWeight: '700'},
   loadingBox: {height: 160, justifyContent: 'center', alignItems: 'center'},
   chat: {maxHeight: 340, minHeight: 140},
   empty: {color: '#888', fontSize: 14, textAlign: 'center', paddingVertical: 30, lineHeight: 22},
