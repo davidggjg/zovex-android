@@ -52,6 +52,23 @@ function cleanVideoRef(raw) {
   return v.replace(/&amp;/g, '&');
 }
 
+// ── מסלול תיקון-קול ─────────────────────────────────────────────────────────
+// ממיר קישור /stream לקישור /vh — HLS עם הווידאו כמו שהוא (-c:v copy, אפס
+// עומס) והאודיו מומר ל-AAC בשרת. אותה גישה של Jellyfin ו-Plex, ואותה שהופעלה
+// באתר. החתימה זהה (_stream_sig על אותם chat/msg/exp), ולכן ה-?exp=&sig=
+// שכבר בקישור עובר כמו שהוא.
+//
+// נבחר על פני תוסף FFmpeg ל-Media3: זה עובד על כל מכשיר, כולל הטלוויזיה
+// החלשה, לא מגדיל את ה-APK, לא דורש בניית NDK, ומשתמש בנתיב שכבר הוכח
+// בייצור. אם בעתיד נרצה לפענח על המכשיר כדי להוריד עומס מהשרת — הדרך
+// ההיא עדיין פתוחה.
+function audioFixSrc(src) {
+  if (!src) return null;
+  const m = String(src).match(/^(.*)\/stream\/(-?\d+)\/(\d+)(\?.*)?$/);
+  if (!m) return null;
+  return `${m[1]}/vh/${m[2]}/${m[3]}/index.m3u8${m[4] || ''}`;
+}
+
 function buildSrc(movie, startTime = 0) {
   const vid = cleanVideoRef(movie.video_id || movie.video_url || '');
   const type = movie.type || 'direct';
@@ -523,7 +540,24 @@ function initVideo(el){
   vid.addEventListener('pause',function(){updateUI();postMsg({type:'video_playing',value:false});});
   vid.addEventListener('ended',function(){onProgress();postMsg({type:'video_playing',value:false});clearMediaSession();});
   vid.addEventListener('waiting',function(){loader.style.display='flex';});
-  vid.addEventListener('playing',function(){loader.style.display='none';showCtrls();setupMediaSession(vid);});
+  vid.addEventListener('playing',function(){loader.style.display='none';showCtrls();setupMediaSession(vid);probeAudio();});
+  // ── קול שנזרק בשקט ─────────────────────────────────────────────────────
+  // תוכן מקודד ב-Dolby Digital Plus (ec-3) לא מתפענח כאן, וה-WebView משמיט
+  // את הרצועה **בלי שום אירוע error**: הווידאו מנגן ואין קול. נמדד: 16
+  // מתוך 16 פרקי ונסדיי. בדיקה ב-VLC לא מגלה את זה — יש לו מפענח Dolby
+  // משלו והוא ניגן אותם כל הזמן.
+  // webkitAudioDecodedByteCount הוא הסימן היחיד: הוא נשאר 0 בזמן שהווידאו
+  // מתקדם. בודקים פעם אחת, ורק אחרי שהניגון באמת התקדם, כדי לא לבלבל
+  // "עוד לא התחיל" עם "אין קול".
+  var audioProbed=false;
+  function probeAudio(){
+    if(audioProbed)return;audioProbed=true;
+    setTimeout(function(){
+      var b=vid.webkitAudioDecodedByteCount;
+      if(b===0&&vid.currentTime>1&&!vid.paused)
+        postMsg({type:'no_audio',position:vid.currentTime});
+    },3500);
+  }
   vid.addEventListener('canplay',function(){loader.style.display='none';});
 }
 
@@ -627,16 +661,21 @@ export default function PlayerScreen({route, navigation}) {
   const nextEpIdx = seriesEpisodes ? seriesEpisodes.findIndex(e => e.id === movie.id) : -1;
   const hasNext = nextEpIdx >= 0 && nextEpIdx < (seriesEpisodes?.length ?? 0) - 1;
 
+  // כשהתגלה שהקול נזרק, מנגנים את אותו פריט דרך /vh — מהמקום שבו הצופה
+  // היה, לא מההתחלה.
+  const [audioFix, setAudioFix] = useState(null); // {src, at} או null
+
   const {src, html, isIframe} = useMemo(() => {
-    const s = buildSrc(movie, isLive ? 0 : startTime);
+    const at = audioFix ? audioFix.at : (isLive ? 0 : startTime);
+    const s = audioFix ? audioFix.src : buildSrc(movie, isLive ? 0 : startTime);
     if (!s) return {src: null, html: null, isIframe: false};
     const iframe = isIframeUrl(s, movie.type || 'direct');
     return {
       src: s,
-      html: buildPlayerHtml(movie, s, isLive ? 0 : startTime, isLive, hasNext, isTv),
+      html: buildPlayerHtml(movie, s, at, isLive, hasNext, isTv),
       isIframe: iframe,
     };
-  }, [movie, startTime, isLive, hasNext, isTv]);
+  }, [movie, startTime, isLive, hasNext, isTv, audioFix]);
 
   // ── Chromecast: כפתור שידור לטלוויזיה ──
   // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה).
@@ -778,6 +817,18 @@ export default function PlayerScreen({route, navigation}) {
         if (!isTv) {
           PipModule?.setFullscreen(!!m.enter);
           PipModule?.setLandscape(!!m.enter);
+        }
+      } else if (m.type === 'no_audio') {
+        // ה-WebView זרק את רצועת הקול. עוברים למסלול המתוקן פעם אחת בלבד —
+        // אם גם שם אין קול, אין טעם להחליף שוב.
+        if (!audioFix) {
+          const fixed = audioFixSrc(buildSrc(movie, 0));
+          if (fixed) {
+            setAudioFix({src: fixed, at: Math.max(0, m.position || 0)});
+            // WebView לא תמיד טוען מחדש כששדה ה-html משתנה בלבד. bump ל-key
+            // מבטיח מופע נקי — וגם משחרר את הנגן הקודם במקום להשאיר שניים.
+            setWvKey(k => k + 1);
+          }
         }
       } else if (m.type === 'video_playing') {
         PipModule?.setVideoPlaying(!!m.value);
