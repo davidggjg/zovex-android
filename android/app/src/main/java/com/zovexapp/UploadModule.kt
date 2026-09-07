@@ -63,6 +63,15 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         private const val PART_RETRIES = 4
         private const val PROGRESS_MS = 250L
         private const val NOTIF_MS = 1000L
+
+        // ── התאמה לרשת שמשתנה ────────────────────────────────────────────
+        // מספר החיבורים נקבע פעם אחת בהתחלה ולא זז. מי שהתחיל להעלות
+        // בקליטה גרועה ואחר כך עבר למקום עם קליטה טובה נשאר תקוע על מה
+        // שהתאים לרשת הישנה. עכשיו מוסיפים חיבור כל כמה שניות כל עוד זה
+        // באמת עוזר, ועוצרים ברגע שזה מפסיק לעזור או שמתחילות תקלות.
+        private const val MAX_PARALLEL = 16
+        private const val PROBE_MS = 12_000L    // כל כמה זמן בודקים אם לעלות
+        private const val RATE_WINDOW_MS = 10_000L
     }
 
     @Volatile private var running = false
@@ -75,6 +84,12 @@ class UploadModule(private val ctx: ReactApplicationContext) :
     @Volatile private var activeWorkers = 0
     private val sentBytes = AtomicLong(0)
     @Volatile private var startedAt = 0L
+    // דגימות (זמן, בייטים) לחישוב הקצב הנוכחי. הממוצע מתחילת ההעלאה לא
+    // מתאים כאן: אחרי חצי שעה בקליטה גרועה הוא ננעל נמוך ולא מזיז גם
+    // כשהרשת השתפרה — וזה גם מה שהוצג למשתמש וגם מה שהיינו מחליטים לפיו.
+    private val rateSamples = ArrayDeque<Pair<Long, Long>>()
+    // תקלות רשת מאז הבדיקה האחרונה. תקלות הן הסימן שהרשת נחנקה.
+    private val recentErrors = AtomicInteger(0)
 
     override fun getName() = "ZovexUploader"
 
@@ -228,17 +243,32 @@ class UploadModule(private val ctx: ReactApplicationContext) :
 
     // ── שלב 2: החלקים, במקביל ────────────────────────────────────────────────
 
+    /** הקצב בחלון האחרון, בייטים לשנייה. אפס עד שיש מספיק דגימות. */
+    @Synchronized private fun currentRate(): Double {
+        val now = System.currentTimeMillis()
+        rateSamples.addLast(Pair(now, sentBytes.get()))
+        while (rateSamples.size > 2 &&
+               now - rateSamples.first().first > RATE_WINDOW_MS) {
+            rateSamples.removeFirst()
+        }
+        if (rateSamples.size < 2) return 0.0
+        val dt = now - rateSamples.first().first
+        val db = rateSamples.last().second - rateSamples.first().second
+        return if (dt > 500) db * 1000.0 / dt else 0.0
+    }
+
     private fun uploadParts(
         uri: Uri, base: String, code: String, partSize: Long, nParts: Int,
         wanted: Int
     ) {
         val next = AtomicInteger(0)
         val failure = AtomicReference<Exception?>(null)
-        val workers = minOf(wanted, nParts)
-        activeWorkers = workers
+        val start = minOf(wanted, nParts)
+        activeWorkers = start
+        val threads = java.util.Collections.synchronizedList(ArrayList<Thread>())
 
-        val threads = (0 until workers).map { w ->
-            Thread(Runnable {
+        fun spawn(w: Int) {
+            val t = Thread(Runnable {
                 while (failure.get() == null && !cancelRequested) {
                     val i = next.getAndIncrement()
                     if (i >= nParts) break
@@ -253,9 +283,65 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                     }
                 }
             }, "zovex-part-$w")
+            threads.add(t)
+            t.start()
         }
-        threads.forEach { it.start() }
-        threads.forEach { it.join() }
+
+        for (w in 0 until start) spawn(w)
+
+        // ── מגשש ─────────────────────────────────────────────────────────
+        // מוסיף חיבור אחד כל PROBE_MS, אבל רק אם התוספת הקודמת באמת שיפרה
+        // ולא היו תקלות. כשההוספה מזיקה — הפוגה ואז ניסיון נוסף, ולא ויתור
+        // סופי: הרשת משתנה תוך כדי (מעבר בין מקומות, עומס שמתפנה), ומי
+        // שוויתר פעם אחת היה נשאר תקוע על מה שהתאים לרשת הישנה. וזה בדיוק
+        // מה שקרה — התחלה בקליטה גרועה, מעבר למקום טוב, והקצב לא זז.
+        //
+        // עלייה בלבד: הורדת חיבור באמצע דורשת לקטוע חלק שכבר רץ, וזה עולה
+        // יותר ממה שהוא חוסך. במקום זה פשוט לא מוסיפים.
+        //
+        // ה-best דועך לאט, אחרת שיא שנקבע ברשת טובה היה חוסם כל ניסיון
+        // אחרי מעבר לרשת אחרת.
+        val prober = Thread(Runnable {
+            var best = 0.0
+            var cooldownUntil = 0L
+            while (failure.get() == null && !cancelRequested) {
+                try { Thread.sleep(PROBE_MS) } catch (_: InterruptedException) { break }
+                if (next.get() >= nParts) break          // נגמרו החלקים
+                val rate = currentRate()
+                if (rate <= 0.0) continue
+                val errs = recentErrors.getAndSet(0)
+                val now = System.currentTimeMillis()
+                best *= 0.98
+                if (errs > 0) {
+                    // הרשת מתלוננת. נותנים לה דקה לנשום ואז בודקים שוב.
+                    cooldownUntil = now + 60_000L
+                    best = rate
+                } else if (now < cooldownUntil) {
+                    best = maxOf(best, rate)
+                } else if (rate >= best * 0.97) {
+                    best = maxOf(best, rate)
+                    if (activeWorkers < MAX_PARALLEL &&
+                        nParts - next.get() > activeWorkers) {
+                        spawn(activeWorkers)
+                        activeWorkers += 1
+                    }
+                } else {
+                    // ההוספה האחרונה הרעה את המצב. הפוגה, ואז ננסה שוב.
+                    cooldownUntil = now + 60_000L
+                    best = rate
+                }
+            }
+        }, "zovex-probe")
+        prober.isDaemon = true
+        prober.start()
+
+        // רשימת החוטים גדלה תוך כדי, ולכן ממתינים בלולאה ולא במעבר אחד.
+        while (true) {
+            val alive = synchronized(threads) { threads.filter { it.isAlive } }
+            if (alive.isEmpty()) break
+            alive.forEach { it.join() }
+        }
+        prober.interrupt()
         failure.get()?.let { throw it }
         if (cancelRequested) throw IOException("ההעלאה בוטלה")
     }
@@ -277,6 +363,8 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                 // מה שנשלח בניסיון שנכשל אינו נספר, אחרת ההתקדמות הייתה
                 // מטפסת מעל 100% אחרי כל ניסיון חוזר.
                 sentBytes.set(before)
+                // סימן לרשת חנוקה. המגשש קורא את זה ומפסיק להוסיף חיבורים.
+                recentErrors.incrementAndGet()
                 attempt++
                 if (attempt < PART_RETRIES) {
                     try {
@@ -461,8 +549,12 @@ class UploadModule(private val ctx: ReactApplicationContext) :
             val sent = sentBytes.get()
             val pct = if (total > 0) ((100.0 * sent) / total).toInt() else -1
             val mb = { v: Long -> String.format(Locale.US, "%.1f", v / 1048576.0) }
+            // אותו חלון שהמגשש משתמש בו, ולא ממוצע מתחילת ההעלאה: אחרת
+            // ההתראה מציגה את הרשת הישנה עוד הרבה אחרי שהיא השתנתה.
             val el = System.currentTimeMillis() - startedAt
-            val speed = if (el > 500) sent * 1000.0 / el else 0.0
+            val speed = currentRate().let {
+                if (it > 0) it else if (el > 500) sent * 1000.0 / el else 0.0
+            }
             val text = if (total > 0) {
                 "$pct% · ${mb(sent)} מתוך ${mb(total)} MB" +
                     (if (speed > 0) " · ${String.format(Locale.US, "%.1f", speed / 1048576.0)} MB/שנ׳" else "")

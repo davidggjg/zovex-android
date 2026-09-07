@@ -57,6 +57,26 @@ export default function SavedUploadScreen({route, navigation}) {
   const pollRef = useRef(null);
   const startedRef = useRef(0);
 
+  // ── מהירות נוכחית, לא ממוצע מתחילת ההעלאה ────────────────────────────
+  // קודם חושב sent/elapsed מרגע ההתחלה. אחרי חצי שעה בקליטה גרועה הממוצע
+  // ננעל נמוך, ומעבר למקום עם קליטה טובה כמעט לא הזיז אותו — נראה בדיוק
+  // כאילו המספר "לא מתעדכן". עכשיו מודדים על חלון של 12 השניות האחרונות,
+  // כך שהמסך מראה מה קורה עכשיו וגם הזמן שנותר מתקן את עצמו מיד.
+  const samplesRef = useRef([]);
+  const sample = useCallback(n => {
+    const now = Date.now();
+    const a = samplesRef.current;
+    a.push({t: now, n});
+    while (a.length > 2 && now - a[0].t > 12000) a.shift();
+  }, []);
+  const windowSpeed = () => {
+    const a = samplesRef.current;
+    if (a.length < 2) return 0;
+    const dt = (a[a.length - 1].t - a[0].t) / 1000;
+    const db = a[a.length - 1].n - a[0].n;
+    return dt > 0.5 && db > 0 ? db / dt : 0;
+  };
+
   useEffect(() => () => clearInterval(pollRef.current), []);
 
   const pick = useCallback(async () => {
@@ -95,7 +115,7 @@ export default function SavedUploadScreen({route, navigation}) {
   // כשחוזרים לאפליקציה אחרי שיצאנו ממנה — מתחברים אליה במקום להתחיל מאפס.
   useEffect(() => {
     const sub = onUpload(e => {
-      if (typeof e.sent === 'number') setSent(e.sent);
+      if (typeof e.sent === 'number') { setSent(e.sent); sample(e.sent); }
       if (e.total > 0) setTotal(e.total);
       if (e.mode) setLink({mode: e.mode, workers: e.workers || 0});
       if (e.type === 'done') {
@@ -149,8 +169,11 @@ export default function SavedUploadScreen({route, navigation}) {
   const noRoom = !!(file && freeDisk && file.size + 536870912 > freeDisk);
   const blocked = tooBig || noRoom;
   const upPct = total ? (100 * sent) / total : 0;
+  // חלון של 12 שניות. נופלים לממוצע מתחילת ההעלאה רק בשניות הראשונות,
+  // כשעוד אין מספיק דגימות לחלון.
   const upElapsed = (Date.now() - startedRef.current) / 1000;
-  const upSpeed = phase === 'sending' && upElapsed > 0.5 ? sent / upElapsed : 0;
+  const upSpeed = phase !== 'sending' ? 0
+    : (windowSpeed() || (upElapsed > 0.5 ? sent / upElapsed : 0));
 
   return (
     <View style={styles.container}>
