@@ -29,6 +29,7 @@ import {
   fetchItemDetail,
   fetchHistory,
   clearCache,
+  isCatalogStale,
 } from '../api/movies';
 import {getUserId} from '../api/userStore';
 import {
@@ -78,6 +79,10 @@ const HERO_H = IS_TV
 const USER_KEY = 'zovex_google_user';
 const SEEN_LOGIN_KEY = 'zovex_seen_login';
 const TG_TIP_KEY = 'zovex_hide_telegram_tip';
+// כל כמה זמן לשאול את השרת אם התוכן השתנה, בזמן שהמסך פתוח. השאלה עצמה היא
+// ~25 בתים (/content/version), והקטלוג נמשך רק כשהמספר זז — כלומר בפועל
+// אחרי עריכה בפאנל ולא כל דקה.
+const CATALOG_POLL_MS = 60 * 1000;
 
 GoogleSignin.configure({
   scopes: ['profile', 'email'],
@@ -763,12 +768,41 @@ export default function HomeScreen({navigation, route}) {
   // fetchMovies() already has its own 5-minute in-memory cache, so calling
   // load() here on every foreground return is cheap when data isn't stale
   // and just refreshes it in the background when it is.
+  //
+  // אבל שתי הדרכים האלה מגיבות רק לחזרה מהרקע. מחיקה בפאנל בזמן שהאפליקציה
+  // *פתוחה על המסך* לא הגיעה לצופה בכלל — לא "בדיליי", אלא בלי גבול, כי אין
+  // שום דבר שמושך מחדש. וגם בחזרה מהרקע, מטמון של חמש דקות עוד יכול להחזיר
+  // את הרשימה הישנה.
+  //
+  // לכן: שואלים את מונה גרסת התוכן (~25 בתים) — בחזרה מהרקע וגם כל דקה בזמן
+  // שהמסך פתוח — ומושכים קטלוג מחדש רק כשהמספר זז. אם הנקודה עוד לא קיימת
+  // בשרת, isCatalogStale מחזירה false וההתנהגות זהה לקודם.
+  // בכוונה לא load(true): הוא מאפס את _hydratedRef ולכן חוזר למסלול הדו-שלבי,
+  // שמציב קודם 800 פריטים בלבד — כלומר הרשימה מתכווצת מול העיניים של מי
+  // שגולל כרגע — וגם מדליק את חיווי הריענון בלי שביקשו. כאן מחליפים את
+  // הקטלוג במקום, בלי הבהוב.
+  const syncIfChanged = useCallback(async () => {
+    try {
+      if (!(await isCatalogStale())) return;
+      clearCache();
+      const full = await fetchMovies();
+      if (full && full.length) setMovies(full);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', state => {
-      if (state === 'active') load(false, user);
+      if (state === 'active') { load(false, user); syncIfChanged(); }
     });
     return () => sub.remove();
-  }, [load, user]);
+  }, [load, user, syncIfChanged]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (AppState.currentState === 'active') syncIfChanged();
+    }, CATALOG_POLL_MS);
+    return () => clearInterval(id);
+  }, [syncIfChanged]);
 
   const refreshDownloads = useCallback(() => {
     getDownloads().then(setDownloads).catch(() => {});
@@ -782,9 +816,10 @@ export default function HomeScreen({navigation, route}) {
   useEffect(() => {
     const unsub = navigation.addListener('focus', () => {
       setDetailItem(cur => (cur && cur.series_name ? cur : null));
+      syncIfChanged();
     });
     return unsub;
-  }, [navigation]);
+  }, [navigation, syncIfChanged]);
 
   const seriesMap = useMemo(() => buildSeriesMap(movies), [movies]);
 

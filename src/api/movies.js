@@ -5,10 +5,15 @@ const MAIN_SITE_ORIGIN = 'https://zovex.duckdns.org';
 // (fetchItemDetail) כשפותחים סרט. זהה בדיוק לזרימה של האתר.
 const LITE_URL = 'https://zovex.duckdns.org/content/lite';
 const ITEM_URL = 'https://zovex.duckdns.org/content/item/';
+// מונה גרסת התוכן בלבד (~25 בתים). עולה בכל שמירה בפאנל. משמש לבדוק אם כדאי
+// למשוך קטלוג מחדש, בלי למשוך קטלוג. ראה add_content_version_endpoint.py.
+const VERSION_URL = 'https://zovex.duckdns.org/content/version';
 const BACKEND_URL = 'https://zovex.duckdns.org';
 
 let _moviesCache = null;
 let _moviesCacheTime = 0;
+// הגרסה שממנה נבנה מה ששמור אצלנו כרגע, מתוך הכותרת X-Content-Version.
+let _moviesCacheVersion = null;
 const CACHE_MS = 5 * 60 * 1000;
 
 // Some thumbnail_url values (mainly live-channel logos) are root-relative
@@ -40,6 +45,7 @@ export async function fetchMovies() {
     const data = _mapImages(raw);
     _moviesCache = data;
     _moviesCacheTime = now;
+    _moviesCacheVersion = _headerVersion(res);
     return data;
   } catch {
     return _moviesCache || [];
@@ -78,6 +84,44 @@ export async function fetchItemDetail(id) {
 export function clearCache() {
   _moviesCache = null;
   _moviesCacheTime = 0;
+  _moviesCacheVersion = null;
+}
+
+// ── זיהוי שינוי בקטלוג ───────────────────────────────────────────────────────
+// מחיקה בפאנל מעלה את מונה הגרסה בשרת מיד, והשרת מגיש את הקטלוג החדש כבר
+// בבקשה הבאה. מה שהשהה את זה היה הצד הזה: הקטלוג נמשך מחדש רק בחזרה מהרקע,
+// ורק אם עברו CACHE_MS. אפליקציה שנשארה פתוחה על המסך לא משכה שוב אף פעם,
+// ולכן פריט מחוק נשאר מוצג בלי גבול. הפתרון הוא לשאול את המספר הזה — לא את
+// הקטלוג — ולמשוך מחדש רק כשהוא זז.
+
+function _headerVersion(res) {
+  const v = parseInt(res?.headers?.get?.('x-content-version'), 10);
+  return Number.isFinite(v) ? v : null;
+}
+
+export function getCachedVersion() {
+  return _moviesCacheVersion;
+}
+
+// גרסת התוכן בשרת, או null אם אין חיבור / הנקודה עוד לא הותקנה בשרת.
+// null גורר "אל תעשה כלום": ההתנהגות נשארת כמו קודם ולא נגרמת משיכה מיותרת.
+export async function fetchContentVersion() {
+  try {
+    const res = await fetch(VERSION_URL);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const v = parseInt(j && j.version, 10);
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// true רק כשידוע בוודאות שהשרת מחזיק תוכן חדש יותר ממה ששמור אצלנו.
+export async function isCatalogStale() {
+  if (_moviesCacheVersion == null) return false;
+  const server = await fetchContentVersion();
+  return server != null && server !== _moviesCacheVersion;
 }
 
 // ── Backend API ──────────────────────────────────────────────────────────────
@@ -131,7 +175,7 @@ export async function fetchHistory(userId) {
 // חייבת להתאים ל-versionName ב-build.gradle. היא עמדה על 1.0.22 בעוד
 // ה-gradle כבר על 1.0.24 — שתי גרסאות פער, כלומר האפליקציה דיווחה על
 // עצמה מספר שאינו נכון והשוואת הגרסאות מול השרת התבססה עליו.
-export const APP_VERSION = '1.0.40';
+export const APP_VERSION = '1.0.41';
 
 export async function sendFeedback({userId, name, email, text, kind}) {
   if (!userId || !text) return false;
