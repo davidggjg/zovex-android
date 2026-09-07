@@ -727,6 +727,9 @@ export default function PlayerScreen({route, navigation}) {
   // נדלק כשמסלול התיקון עצמו נכשל, וחוסם חזרה אליו. בלעדיו: חוזרים למקור,
   // הבדיקה מזהה שוב שאין קול, מחליפים שוב — ולולאה.
   const audioFixFailedRef = useRef(false);
+  // המדרגה הראשונה כשמתגלה שאין קול: לנגן את אותו קובץ בנגן הנייטיב, שבו
+  // מפענחי ה-FFmpeg שהאפליקציה מביאה איתה מטפלים ב-ec-3. {at} או null.
+  const [nativeAudio, setNativeAudio] = useState(null);
 
   const {src, html, isIframe} = useMemo(() => {
     const at = audioFix ? audioFix.at : (isLive ? 0 : startTime);
@@ -851,7 +854,12 @@ export default function PlayerScreen({route, navigation}) {
   };
 
   // ── נגן נייטיב לטלוויזיה: רק לתוכן ישיר (mp4/HLS), לא ל-iframe embeds ──
-  const useNative = isTv && !isIframe && !!src;
+  //
+  // ומעכשיו גם בטלפון, כשמתגלה שאין קול. ה-WebView לא מפענח ec-3 בשום
+  // מקרה, אבל הנגן הנייטיב כן — האפליקציה מביאה איתה את מפענחי ה-FFmpeg
+  // של Media3 (ראה android/app/build.gradle). זו בדיוק אותה משפחת מפענחים
+  // ש-VLC משתמש בה, וזו הסיבה ש-VLC ניגן את ונסדיי כל הזמן.
+  const useNative = (isTv || !!nativeAudio) && !isIframe && !!src;
   // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
   const [nativeStart, setNativeStart] = useState(startTime || 0);
   const [nativeError, setNativeError] = useState(null);
@@ -893,16 +901,12 @@ export default function PlayerScreen({route, navigation}) {
           setWvKey(k => k + 1);
         }
       } else if (m.type === 'no_audio') {
-        // ה-WebView זרק את רצועת הקול. עוברים למסלול המתוקן פעם אחת בלבד —
-        // אם גם שם אין קול, אין טעם להחליף שוב.
-        if (!audioFix && !audioFixFailedRef.current) {
-          const fixed = audioFixSrc(buildSrc(movie, 0));
-          if (fixed) {
-            setAudioFix({src: fixed, at: Math.max(0, m.position || 0)});
-            // WebView לא תמיד טוען מחדש כששדה ה-html משתנה בלבד. bump ל-key
-            // מבטיח מופע נקי — וגם משחרר את הנגן הקודם במקום להשאיר שניים.
-            setWvKey(k => k + 1);
-          }
+        // ה-WebView זרק את רצועת הקול. מדרגה ראשונה: אותו קובץ בדיוק, בנגן
+        // הנייטיב — שם יש מפענח FFmpeg ל-ec-3, ולכן אין צורך להמיר כלום
+        // בשרת ואין איבוד איכות. אם גם הוא ייכשל, onError יוריד אותנו
+        // למסלול /vh.
+        if (!nativeAudio && !audioFix && !audioFixFailedRef.current) {
+          setNativeAudio({at: Math.max(0, m.position || 0)});
         }
       } else if (m.type === 'video_playing') {
         PipModule?.setVideoPlaying(!!m.value);
@@ -937,9 +941,12 @@ export default function PlayerScreen({route, navigation}) {
     <View style={styles.container}>
       {useNative ? (
         <TvNativePlayer
+          // key: כשעוברים לכאן באמצע צפייה (תיקון קול) צריך מופע נקי, אחרת
+          // ExoPlayer ממשיך עם המקור הישן.
+          key={nativeAudio ? 'native-audiofix' : 'native'}
           src={src}
           isLive={isLive}
-          startTime={nativeStart}
+          startTime={nativeAudio ? nativeAudio.at : nativeStart}
           onProgress={(pos, dur) => {
             progressRef.current = {position: pos, duration: dur};
             if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
@@ -947,8 +954,22 @@ export default function PlayerScreen({route, navigation}) {
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
           // קודם כשל ניגון החזיר את המשתמש אחורה בשקט, וזה נראה בדיוק כמו
           // "לוחץ הפעל וזה מחזיר אותי". עכשיו נשארים במסך ומראים מה נכשל.
-          onError={e => setNativeError(
-            e?.error?.errorString || e?.error?.errorException || 'שגיאת ניגון')}
+          onError={e => {
+            // הגענו לנגן הנייטיב רק בגלל תיקון קול? אז יש עוד מדרגה אחת
+            // מתחת: /vh, שממיר את הקול בשרת. יורדים אליה במקום להיתקע.
+            if (nativeAudio && !audioFix) {
+              const fixed = audioFixSrc(buildSrc(movie, 0));
+              if (fixed) {
+                const at = nativeAudio.at;
+                setNativeAudio(null);
+                setAudioFix({src: fixed, at});
+                setWvKey(k => k + 1);
+                return;
+              }
+            }
+            setNativeError(
+              e?.error?.errorString || e?.error?.errorException || 'שגיאת ניגון');
+          }}
         />
       ) : (
       <WebView

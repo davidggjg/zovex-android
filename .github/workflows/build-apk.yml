@@ -31,6 +31,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
+      # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
+      - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)
+        run: bash scripts/enable-ffmpeg-decoder.sh
+
       - name: Ensure gradle-plugin at top-level node_modules
         run: |
           PLUGIN_DIR="node_modules/@react-native/gradle-plugin"

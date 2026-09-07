@@ -13,8 +13,8 @@ android {
         applicationId "com.zovexapp"
         minSdk rootProject.ext.minSdkVersion
         targetSdk rootProject.ext.targetSdkVersion
-        versionCode 37
-        versionName "1.0.35"
+        versionCode 38
+        versionName "1.0.36"
     }
 
     signingConfigs {
@@ -57,6 +57,20 @@ dependencies {
     implementation("com.google.firebase:firebase-messaging")
     // נדרש כדי ש-CastOptionsProvider (במודול האפליקציה) יראה את מחלקות ה-Cast
     implementation("com.google.android.gms:play-services-cast-framework:21.3.0")
+
+    // מפענחי FFmpeg ל-Media3 — אותה משפחת מפענחים ש-VLC משתמש בה, ולכן
+    // ec-3 (Dolby Digital Plus) מתנגן גם במכשירים שאין בהם מפענח Dolby.
+    // גוגל לא מפרסמת את ההרחבה הזאת בנויה; Jellyfin כן, ל-Maven Central.
+    //
+    // 1.3.1 בכוונה — זו גרסת media3 של react-native-video 6.4.5
+    // (RNVideo_media3Version). התאמה בין השתיים היא חובה.
+    //
+    // אומת בתוך ה-AAR: ff_eac3_decoder, ff_ac3_decoder, ff_dca_decoder,
+    // ff_truehd_decoder, ff_mlp_decoder, ff_aac_decoder. ~1.4MB ל-ABI.
+    //
+    // חייב לבוא יחד עם scripts/enable-ffmpeg-decoder.sh — בלעדיו
+    // react-native-video מקבע EXTENSION_RENDERER_MODE_OFF ולא ייגע בזה.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.3.1+2")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
