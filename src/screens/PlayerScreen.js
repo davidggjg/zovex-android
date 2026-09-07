@@ -207,6 +207,13 @@ html,body{width:100%;height:100%;background:#000;overflow:hidden}
 #wrap{position:relative;width:100vw;height:100vh;background:#000;overflow:hidden}
 video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
 #loader{position:absolute;inset:0;z-index:5;background:#000;display:flex;align-items:center;justify-content:center}
+/* הודעת כשל ניגון. עד עכשיו כשל של Shaka ושל HLS.js הסתיים בספינר שמסתובב
+   לנצח, בלי שום דרך לדעת מה קרה — לא לצופה ולא לנו. */
+#playerr{position:absolute;inset:0;z-index:7;background:#000;display:none;
+  flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;
+  color:#fff;font-family:Arial;text-align:center;direction:rtl}
+#playerr .t{font-size:16px;font-weight:700}
+#playerr .d{font-size:12px;color:#888;direction:ltr;word-break:break-all;max-width:90%}
 .spin{width:44px;height:44px;border:4px solid rgba(255,255,255,.2);border-top:4px solid #e91e8c;border-radius:50%;animation:spin 1s linear infinite}
 #overlay{position:absolute;inset:0;z-index:10}
 #topbar{position:absolute;top:0;left:0;right:0;z-index:30;padding:14px 16px 40px;
@@ -256,6 +263,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 </head><body>
 <div id="wrap">
   <div id="loader"><div class="spin"></div></div>
+  <div id="playerr"><div class="t">לא הצלחתי לנגן את הפריט הזה</div><div class="d" id="playerrd"></div></div>
   <div id="overlay">
     <div id="topbar">
       <button class="xbtn" id="closebtn">✕</button>
@@ -561,6 +569,43 @@ function initVideo(el){
   vid.addEventListener('canplay',function(){loader.style.display='none';});
 }
 
+// ── כשל ניגון: להגיד מה קרה, לא להסתובב לנצח ─────────────────────────────
+// היה: Shaka נכשל, HLS.js נכשל אחריו, והמסך נשאר עם ספינר. הצופה רואה
+// "טוען בלי סוף", ואין שום מידע — לא על המסך ולא אצלנו. עכשיו מציגים את
+// הקוד ומדווחים ל-RN, שמחליט אם לחזור למסלול המקורי.
+var _errShown=false, _shakaErr='';
+function playFailed(detail){
+  if(_errShown)return;_errShown=true;
+  try{
+    loader.style.display='none';
+    document.getElementById('playerrd').textContent=String(detail||'').slice(0,240);
+    document.getElementById('playerr').style.display='flex';
+  }catch{}
+  postMsg({type:'play_error',detail:String(detail||'').slice(0,240)});
+}
+
+// שומר-סף: התקלה שדווחה היא *תקיעה*, לא שגיאה — שום אירוע error לא נורה,
+// והספינר פשוט נשאר. אחרי 30 שניות בלי שהניגון התקדם, מציגים את מצב הנגן
+// כדי שיהיה מה לקרוא. מסומן soft: זה לא מחזיר את הנגן למסלול המקורי, כי
+// טעינה איטית באמת קורית כאן (משיכה מטלגרם) וחבל להרוס אותה בטעות.
+setTimeout(function(){
+  if(_errShown)return;
+  if(vid&&vid.currentTime>0.5)return;
+  var b='ריק';
+  try{if(vid&&vid.buffered.length)b=vid.buffered.start(0).toFixed(1)+'→'+
+    vid.buffered.end(vid.buffered.length-1).toFixed(1);}catch{}
+  var d='נתקע: t='+(vid?vid.currentTime.toFixed(2):'אין וידאו')+
+    ' ready='+(vid?vid.readyState:'-')+' net='+(vid?vid.networkState:'-')+
+    ' buf='+b+' aud='+(vid?vid.webkitAudioDecodedByteCount:'-')+
+    (_shakaErr?' | '+_shakaErr:'');
+  _errShown=true;
+  try{
+    document.getElementById('playerrd').textContent=d;
+    document.getElementById('playerr').style.display='flex';
+  }catch{}
+  postMsg({type:'play_error',detail:d,soft:true});
+},30000);
+
 if(IS_HLS){
   // ── Shaka Player (primary) ────────────────────────────────
   function startWithShaka(){
@@ -592,8 +637,11 @@ if(IS_HLS){
       v.play().catch(function(){});
       loader.style.display='none';
       _startRefresh(player);
-    }).catch(function(){
-      // Shaka failed — fall through to HLS.js
+    }).catch(function(e){
+      // Shaka failed — fall through to HLS.js. שומרים את הקוד: אם גם HLS.js
+      // ייפול, זה מה שיוצג, ובלעדיו אין שום רמז למה שנכשל.
+      _shakaErr='shaka '+(e&&e.code!=null?e.code:'?')+
+        (e&&e.data?' '+JSON.stringify(e.data).slice(0,90):'');
       player.destroy().catch(function(){});
       v.parentNode&&v.parentNode.removeChild(v);
       vid=null;
@@ -616,15 +664,24 @@ if(IS_HLS){
         v.play().catch(function(){});loader.style.display='none';
         _startRefresh(null);
       });
-      hls.on(Hls.Events.ERROR,function(ev,d){if(d.fatal)loader.style.display='none';});
+      hls.on(Hls.Events.ERROR,function(ev,d){
+        if(!d.fatal)return;
+        loader.style.display='none';
+        playFailed(_shakaErr+' | hls '+d.type+'/'+d.details+
+                   (d.reason?' '+d.reason:''));
+      });
     } else if(v.canPlayType('application/vnd.apple.mpegurl')){
       v.src=SRC;
       v.addEventListener('loadedmetadata',function(){
         if(START>1){try{v.currentTime=START;}catch{}}
         v.play().catch(function(){});loader.style.display='none';
       });
+      v.addEventListener('error',function(){
+        playFailed(_shakaErr+' | native '+(v.error?v.error.code+' '+
+          (v.error.message||''):'?'));
+      });
     } else {
-      loader.style.display='none';
+      playFailed(_shakaErr+' | אין תמיכה ב-HLS ב-WebView הזה');
     }
   }
 
@@ -643,7 +700,10 @@ if(IS_HLS){
     if(START>1){try{v.currentTime=START;}catch{}}
     v.play().catch(function(){});loader.style.display='none';
   });
-  v.addEventListener('error',function(){loader.style.display='none';});
+  v.addEventListener('error',function(){
+    loader.style.display='none';
+    playFailed('direct '+(v.error?v.error.code+' '+(v.error.message||''):'?'));
+  });
 }
 window.addEventListener('beforeunload',function(){clearMediaSession();if(_refreshTimer)clearInterval(_refreshTimer);});
 })();
@@ -664,6 +724,9 @@ export default function PlayerScreen({route, navigation}) {
   // כשהתגלה שהקול נזרק, מנגנים את אותו פריט דרך /vh — מהמקום שבו הצופה
   // היה, לא מההתחלה.
   const [audioFix, setAudioFix] = useState(null); // {src, at} או null
+  // נדלק כשמסלול התיקון עצמו נכשל, וחוסם חזרה אליו. בלעדיו: חוזרים למקור,
+  // הבדיקה מזהה שוב שאין קול, מחליפים שוב — ולולאה.
+  const audioFixFailedRef = useRef(false);
 
   const {src, html, isIframe} = useMemo(() => {
     const at = audioFix ? audioFix.at : (isLive ? 0 : startTime);
@@ -818,10 +881,21 @@ export default function PlayerScreen({route, navigation}) {
           PipModule?.setFullscreen(!!m.enter);
           PipModule?.setLandscape(!!m.enter);
         }
+      } else if (m.type === 'play_error') {
+        // הנגן דיווח שהוא לא הצליח. אם זה קרה במסלול תיקון-הקול — חוזרים
+        // למקור: סרט בלי קול עדיף על סרט שלא מתחיל. הדגל מונע פינג-פונג,
+        // כי אחרי החזרה הבדיקה תזהה שוב שאין קול ותרצה להחליף בחזרה.
+        // soft = שומר-הסף, לא שגיאה אמיתית. מציגים ולא מחזירים, כי טעינה
+        // איטית מטלגרם היא מצב לגיטימי כאן.
+        if (audioFix && !m.soft) {
+          audioFixFailedRef.current = true;
+          setAudioFix(null);
+          setWvKey(k => k + 1);
+        }
       } else if (m.type === 'no_audio') {
         // ה-WebView זרק את רצועת הקול. עוברים למסלול המתוקן פעם אחת בלבד —
         // אם גם שם אין קול, אין טעם להחליף שוב.
-        if (!audioFix) {
+        if (!audioFix && !audioFixFailedRef.current) {
           const fixed = audioFixSrc(buildSrc(movie, 0));
           if (fixed) {
             setAudioFix({src: fixed, at: Math.max(0, m.position || 0)});
