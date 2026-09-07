@@ -1,4 +1,4 @@
-import React, {useRef, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {View, StyleSheet, ActivityIndicator, Text} from 'react-native';
 import Video from 'react-native-video';
 
@@ -20,9 +20,22 @@ export default function TvNativePlayer({
   const ref = useRef(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [diag, setDiag] = useState('');
+  // מתחיל עם טקסט ולא ריק בכוונה: אם הנגן נתקע *לפני* onLoad, שום דבר לא
+  // היה מוצג — וזה בדיוק המקרה שאנחנו מנסים לתפוס. עכשיו תמיד יש מה לראות.
+  const [diag, setDiag] = useState(debug ? 'פותח את הקובץ…' : '');
   // שידור חי/HLS מול קובץ שלם — שני מקרים עם צרכי באפר הפוכים לגמרי.
   const isHls = isLive || /\.m3u8|Manifest\.ism/i.test(src || '');
+
+  // אם אחרי 15 שניות עוד לא נפתח כלום — אומרים את זה, במקום להשאיר
+  // "פותח את הקובץ…" שנראה כמו טעינה תמימה.
+  useEffect(() => {
+    if (!debug) return;
+    const t = setTimeout(() => {
+      setDiag(d => (d.startsWith('פותח') ? 'לא נפתח תוך 15 שניות — הנגן לא ' +
+        'הגיע ל-onLoad בכלל.\n' + String(src || '').slice(0, 120) : d));
+    }, 15000);
+    return () => clearTimeout(t);
+  }, [debug, src]);
 
   return (
     <View style={styles.wrap}>
