@@ -48,6 +48,7 @@ import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
 import AmbientGlow from '../components/AmbientGlow';
 import {DISCORD_URL, TELEGRAM_URL} from '../config/links';
+import {groupLiveByGenre} from '../utils/liveGenres';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
@@ -915,6 +916,19 @@ export default function HomeScreen({navigation, route}) {
     return rows;
   }, [liveChannels, history, movies, allCategories, getItemsForCategory, qTokens]);
 
+  // ── שידורים חיים: שורה לכל ז'אנר, כמו באתר ────────────────────────────
+  // עד עכשיו כל 103 הערוצים נשפכו לרשת אחת ארוכה, ולמצוא בה ערוץ מסוים היה
+  // גלילה עיוורת. אין שדה ז'אנר בנתונים, אז הוא נגזר מהשם (ראה
+  // utils/liveGenres.js — אותם כללים בדיוק שבאתר).
+  //
+  // getItemsForCategory ולא liveChannels הגולמי: הוא כבר מסנן לפי החיפוש,
+  // ולכן הקלדה בתיבה מצמצמת גם כאן, שורה-שורה, במקום להראות הכל.
+  const liveGenreRows = useMemo(() => {
+    if (category !== 'שידורים חיים') return [];
+    return groupLiveByGenre(getItemsForCategory('שידורים חיים'))
+      .map(g => ({title: g.title, items: g.items, isLiveRow: true}));
+  }, [category, getItemsForCategory]);
+
   // כפתור "חזור" בשלט. בלי זה כל לחיצה הגיעה ישר לניווט, ומכיוון שמסך הבית
   // הוא השורש — האפליקציה נסגרה ("הוא מנתק אותי מהאפליקציה"). חלון פרטי הסרט
   // הוא View רגיל ולא Modal, ולכן הוא גם לא נסגר מעצמו. כאן סוגרים שכבה אחת
@@ -1193,7 +1207,10 @@ export default function HomeScreen({navigation, route}) {
   }
 
   const isNetflixMode = category === 'הכל' && !query;
-  const gridItems = isNetflixMode ? [] : getItemsForCategory(category);
+  // השידורים החיים מוצגים בשורות ז'אנר ולא ברשת — ולכן גם הם לא צריכים
+  // gridItems. בלי התנאי הזה הרשימה הייתה מחושבת ונזרקת בכל רינדור.
+  const isLiveMode = category === 'שידורים חיים';
+  const gridItems = isNetflixMode || isLiveMode ? [] : getItemsForCategory(category);
 
   const TopBar = (
     <View style={styles.topBar}>
@@ -1357,20 +1374,29 @@ export default function HomeScreen({navigation, route}) {
       {!IS_TV && <AmbientGlow />}
       {TopBar}
       {CatsButton}
-      {isNetflixMode ? (
+      {isNetflixMode || isLiveMode ? (
         // A plain ScrollView mounted every category row (and its images) at
         // once, even ones far below the fold - with dozens of categories
         // that's a lot of images fetched on every app open. A vertical
         // FlatList only mounts rows near the viewport, same idea as the
         // existing per-row virtualization below.
+        //
+        // מפתח נפרד לכל מצב: שתי הרשימות מחזיקות שורות שונות לגמרי, ובלי
+        // זה ה-FlatList היה משמר מיחזור תאים ומיקום גלילה מהמצב הקודם.
         <FlatList
-          key="netflix-rows"
-          data={netflixRows}
+          key={isLiveMode ? 'live-genre-rows' : 'netflix-rows'}
+          data={isLiveMode ? liveGenreRows : netflixRows}
           keyExtractor={row => row.title}
           renderItem={renderNetflixRow}
-          ListHeaderComponent={heroHeader}
-          ListFooterComponent={homeFooter}
-          ListEmptyComponent={<Text style={styles.empty}>אין תוכן זמין</Text>}
+          // בדף השידורים החיים אין באנר גיבור ואין תחתית — נכנסים אליו כדי
+          // למצוא ערוץ, וכל פיקסל שלמעלה דוחף את השורות מתחת לקיפול.
+          ListHeaderComponent={isLiveMode ? null : heroHeader}
+          ListFooterComponent={isLiveMode ? null : homeFooter}
+          ListEmptyComponent={
+            <Text style={styles.empty}>
+              {isLiveMode ? 'לא נמצאו ערוצים' : 'אין תוכן זמין'}
+            </Text>
+          }
           showsVerticalScrollIndicator={false}
           removeClippedSubviews
           initialNumToRender={3}
