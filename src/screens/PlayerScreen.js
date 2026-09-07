@@ -69,6 +69,19 @@ function audioFixSrc(src) {
   return `${m[1]}/vh/${m[2]}/${m[3]}/index.m3u8${m[4] || ''}`;
 }
 
+// אותו קובץ, אבל עם ה-moov בהתחלה.
+//
+// למה זה חשוב לנגן הנייטיב: השרת מדווח על הפרקים האלה moov_at_end=true על
+// קובץ של 1.65GB. כלומר טבלת האינדקס יושבת בסוף, ונגן שמתחיל לנגן חייב
+// קודם למשוך את הזנב. ‎/fs מגיש את הכותרת הבנויה מראש (השרת כבר מחזיק
+// אותה — faststart_ready=true), וזה מוריד את כל הסיבוב הזה.
+function fsSrc(src) {
+  if (!src) return null;
+  const m = String(src).match(/^(.*)\/stream\/(-?\d+)\/(\d+)(\?.*)?$/);
+  if (!m) return null;
+  return `${m[1]}/fs/${m[2]}/${m[3]}${m[4] || ''}`;
+}
+
 function buildSrc(movie, startTime = 0) {
   const vid = cleanVideoRef(movie.video_id || movie.video_url || '');
   const type = movie.type || 'direct';
@@ -944,9 +957,12 @@ export default function PlayerScreen({route, navigation}) {
           // key: כשעוברים לכאן באמצע צפייה (תיקון קול) צריך מופע נקי, אחרת
           // ExoPlayer ממשיך עם המקור הישן.
           key={nativeAudio ? 'native-audiofix' : 'native'}
-          src={src}
+          // במסלול תיקון-הקול מגישים דרך /fs — הכותרת בהתחלה במקום בסוף
+          // הקובץ. ‎/stream נשאר כשאין המרה כזאת.
+          src={(nativeAudio && fsSrc(src)) || src}
           isLive={isLive}
           startTime={nativeAudio ? nativeAudio.at : nativeStart}
+          debug={!!nativeAudio}
           onProgress={(pos, dur) => {
             progressRef.current = {position: pos, duration: dur};
             if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
@@ -961,9 +977,14 @@ export default function PlayerScreen({route, navigation}) {
               const fixed = audioFixSrc(buildSrc(movie, 0));
               if (fixed) {
                 const at = nativeAudio.at;
-                setNativeAudio(null);
-                setAudioFix({src: fixed, at});
-                setWvKey(k => k + 1);
+                // שמונה שניות לפני שיורדים למדרגה הבאה, כדי שהשגיאה שמוצגת
+                // על המסך תישאר מספיק זמן כדי לקרוא אותה. בלי זה המסך מתחלף
+                // מיד וההודעה נעלמת — וזה בדיוק המידע שחסר לנו.
+                setTimeout(() => {
+                  setNativeAudio(null);
+                  setAudioFix({src: fixed, at});
+                  setWvKey(k => k + 1);
+                }, 8000);
                 return;
               }
             }

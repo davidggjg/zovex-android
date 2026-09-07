@@ -12,10 +12,15 @@ export default function TvNativePlayer({
   onProgress,
   onEnd,
   onError,
+  // מציג על המסך מה ExoPlayer באמת ראה: אילו רצועות, מה נבחר, ומה נכשל.
+  // נדלק רק במסלול תיקון-הקול — שם אנחנו עדיין לא יודעים למה זה לא עובד,
+  // ובלי המידע הזה כל תיקון הוא ניחוש.
+  debug = false,
 }) {
   const ref = useRef(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [diag, setDiag] = useState('');
   // שידור חי/HLS מול קובץ שלם — שני מקרים עם צרכי באפר הפוכים לגמרי.
   const isHls = isLive || /\.m3u8|Manifest\.ism/i.test(src || '');
 
@@ -51,8 +56,16 @@ export default function TvNativePlayer({
         resizeMode="contain"
         // עדכון התקדמות כל 3 שניות — מספיק לשמירת "המשך צפייה" בלי עומס.
         progressUpdateInterval={3000}
-        onLoad={() => {
+        onLoad={d => {
           setReady(true);
+          if (debug) {
+            const a = (d?.audioTracks || []).map(
+              t => `${t.index}:${t.type || '?'}${t.selected ? '*' : ''}`).join(' ');
+            const v = (d?.videoTracks || []).map(
+              t => `${t.index}:${t.codecs || '?'}${t.width ? ` ${t.width}x${t.height}` : ''}${t.selected ? '*' : ''}`).join(' ');
+            setDiag(`אודיו[${a || 'אין'}]  וידאו[${v || 'אין'}]  ` +
+                    `משך ${Math.round(d?.duration || 0)}ש`);
+          }
           if (!isLive && startTime > 1 && ref.current) {
             try { ref.current.seek(startTime); } catch (_) {}
           }
@@ -66,6 +79,11 @@ export default function TvNativePlayer({
         onEnd={() => { if (onEnd) onEnd(); }}
         onError={e => {
           setFailed(true);
+          if (debug) {
+            const x = e?.error || {};
+            setDiag(d => `${d}\nשגיאה: ${x.errorCode || ''} ` +
+              `${x.errorString || x.errorException || JSON.stringify(x).slice(0, 160)}`);
+          }
           if (onError) onError(e);
         }}
       />
@@ -77,6 +95,11 @@ export default function TvNativePlayer({
           <Text style={styles.err}>לא ניתן לנגן את הווידאו</Text>
         </View>
       )}
+      {debug && !!diag && (
+        <View style={styles.diag} pointerEvents="none">
+          <Text style={styles.diagTxt}>{diag}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -85,4 +108,7 @@ const styles = StyleSheet.create({
   wrap: {flex: 1, backgroundColor: '#000'},
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'center', alignItems: 'center'},
   err: {color: '#ddd', fontSize: 16},
+  diag: {position: 'absolute', top: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.75)', paddingHorizontal: 8, paddingVertical: 6},
+  diagTxt: {color: '#9ad', fontSize: 11, textAlign: 'left'},
 });
