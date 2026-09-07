@@ -2,6 +2,8 @@ import React, {useEffect, useRef, useMemo, useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
+import NativePlayer from '../components/NativePlayer';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 // שים לב: CastLayer (ואיתו react-native-google-cast) *לא* מיובא כאן ברמת המודול
@@ -67,6 +69,37 @@ function audioFixSrc(src) {
   const m = String(src).match(/^(.*)\/stream\/(-?\d+)\/(\d+)(\?.*)?$/);
   if (!m) return null;
   return `${m[1]}/vh/${m[2]}/${m[3]}/index.m3u8${m[4] || ''}`;
+}
+
+// ── זיכרון של פריטים אילמים ──────────────────────────────────────────────
+// בלי זה כל צפייה מתחילה באותו טקס: מנגן בלי קול, אחרי 3.5 שניות מזוהה,
+// ורק אז עובר. פעם אחת זה סביר; בכל פרק מחדש זה פשוט מעצבן.
+//
+// נשמר גם לפי שם הסדרה ולא רק לפי מזהה הפריט: כל 16 פרקי ונסדיי מקודדים
+// ב-ec-3, ואין סיבה לגלות את זה מחדש בכל פרק. פרק אחד מלמד על כולם.
+const SILENT_KEY = 'zovex_silent_items';
+
+async function loadSilentSet() {
+  try {
+    return new Set(JSON.parse(await AsyncStorage.getItem(SILENT_KEY) || '[]'));
+  } catch (_) { return new Set(); }
+}
+
+async function rememberSilent(movie) {
+  try {
+    const s = await loadSilentSet();
+    if (movie.id) s.add(String(movie.id));
+    if (movie.series_name) s.add('s:' + movie.series_name);
+    await AsyncStorage.setItem(SILENT_KEY,
+      JSON.stringify([...s].slice(-500)));
+  } catch (_) {}
+}
+
+function silentKeys(movie) {
+  const k = [];
+  if (movie.id) k.push(String(movie.id));
+  if (movie.series_name) k.push('s:' + movie.series_name);
+  return k;
 }
 
 // אותו קובץ, אבל עם ה-moov בהתחלה.
@@ -743,6 +776,27 @@ export default function PlayerScreen({route, navigation}) {
   // המדרגה הראשונה כשמתגלה שאין קול: לנגן את אותו קובץ בנגן הנייטיב, שבו
   // מפענחי ה-FFmpeg שהאפליקציה מביאה איתה מטפלים ב-ec-3. {at} או null.
   const [nativeAudio, setNativeAudio] = useState(null);
+  // אם כבר ידוע שהפריט (או הסדרה שלו) אילם — נכנסים ישר לנגן הנייטיב, עם
+  // קול מהשנייה הראשונה, בלי ההמתנה של הבדיקה.
+  useEffect(() => {
+    if (isLive || isTv) return;
+    let alive = true;
+    loadSilentSet().then(async set => {
+      if (!alive || !silentKeys(movie).some(k => set.has(k))) return;
+      // "המשך צפייה" נטען כאן במפורש: המסלול הרגיל מזריק אותו ל-WebView,
+      // ובכניסה ישירה לנגן הנייטיב אין WebView שיקבל את ההזרקה.
+      let at = startTime || 0;
+      if (!at && userId) {
+        try {
+          const pos = await loadProgress(movie.id, userId);
+          if (pos > 5) at = pos;
+        } catch (_) {}
+      }
+      if (alive) setNativeAudio({at});
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const {src, html, isIframe} = useMemo(() => {
     const at = audioFix ? audioFix.at : (isLive ? 0 : startTime);
@@ -919,6 +973,7 @@ export default function PlayerScreen({route, navigation}) {
         // בשרת ואין איבוד איכות. אם גם הוא ייכשל, onError יוריד אותנו
         // למסלול /vh.
         if (!nativeAudio && !audioFix && !audioFixFailedRef.current) {
+          rememberSilent(movie);       // בפעם הבאה ניכנס ישר, בלי ההמתנה
           setNativeAudio({at: Math.max(0, m.position || 0)});
         }
       } else if (m.type === 'video_playing') {
@@ -950,9 +1005,47 @@ export default function PlayerScreen({route, navigation}) {
     );
   }
 
+  const episodeLabel = movie.episode_title
+    ? `פרק ${movie.episode_number} - ${movie.episode_title}`
+    : movie.episode_number ? `פרק ${movie.episode_number}` : '';
+  const nextEp = hasNext ? seriesEpisodes[nextEpIdx + 1] : null;
+
   return (
     <View style={styles.container}>
-      {useNative ? (
+      {/* מסלול תיקון-הקול בטלפון: ExoPlayer (עם מפענחי ה-FFmpeg) אבל עם
+          הפקדים שלנו, כדי שזה לא ירגיש כמו אפליקציה אחרת באמצע הסרט.
+          בטלוויזיה ממשיכים עם הפקדים המובנים — הם אלה שעובדים עם השלט. */}
+      {useNative && nativeAudio && !isTv ? (
+        <NativePlayer
+          key="native-ours"
+          src={fsSrc(src) || src}
+          title={movie.title}
+          subtitle={episodeLabel}
+          startTime={nativeAudio.at}
+          hasNext={hasNext}
+          nextLabel={nextEp?.episode_title || ''}
+          debug={false}
+          onClose={() => navigation.goBack()}
+          onNext={goNextEpisode}
+          onPlayingChange={v => PipModule?.setVideoPlaying(!!v)}
+          onProgress={(pos, dur) => {
+            progressRef.current = {position: pos, duration: dur};
+            if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
+          }}
+          onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
+          onError={() => {
+            const fixed = audioFixSrc(buildSrc(movie, 0));
+            if (fixed && !audioFix) {
+              const at = nativeAudio.at;
+              setNativeAudio(null);
+              setAudioFix({src: fixed, at});
+              setWvKey(k => k + 1);
+            } else {
+              setNativeError('שגיאת ניגון');
+            }
+          }}
+        />
+      ) : useNative ? (
         <TvNativePlayer
           // key: כשעוברים לכאן באמצע צפייה (תיקון קול) צריך מופע נקי, אחרת
           // ExoPlayer ממשיך עם המקור הישן.
