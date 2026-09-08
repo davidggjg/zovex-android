@@ -91,6 +91,17 @@ GoogleSignin.configure({
 
 // ── Movie Detail Modal ────────────────────────────────────────────────────────
 
+// זמן שנותר בפורמט קריא: "45 שנ׳" / "3:20" / "1:05:00".
+function fmtEta(sec) {
+  if (sec == null || !isFinite(sec) || sec < 0) return null;
+  if (sec < 60) return `${Math.round(sec)} שנ׳`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.round(sec % 60);
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}
+
 function DownloadControl({item, compact, downloadedIds, downloadingId, downloadProgress, onDownload, onDeleteDownload}) {
   if (!item || !isItemDownloadable(item)) return null;
   const id = String(item.id);
@@ -99,18 +110,22 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
 
   if (isThisDownloading) {
     const pct = Math.round((downloadProgress?.pct || 0) * 100);
-    const label = downloadProgress?.phase === 'encrypting' ? 'מצפין' : 'מוריד';
-    // Files here are often 1GB+ over a slow connection, so the percentage
-    // alone can sit unchanged for a long time and look frozen. Showing the
-    // live MB count too gives visible movement within a second or two.
+    // אין יותר שלב "מצפין" — הקובץ נשמר כמו שהוא והניגון מיידי. נשאר רק
+    // "מוריד", עם כמה סטטיסטיקות חיות: כמה מתוך כמה, מהירות, וזמן שנותר.
+    // הקבצים גדולים (לרוב 1GB+) על קו איטי, ולכן האחוז לבדו יכול להיראות
+    // תקוע — ספירת ה-MB והמהירות זזות תוך שנייה.
     const mb = downloadProgress?.contentLength
       ? `${Math.round((downloadProgress.bytesWritten || 0) / 1048576)}/${Math.round(downloadProgress.contentLength / 1048576)}MB`
       : null;
+    const spd = downloadProgress?.speed > 0
+      ? `${(downloadProgress.speed / 1048576).toFixed(1)}MB/s` : null;
+    const eta = fmtEta(downloadProgress?.eta);
+    const parts = [`מוריד ${pct}%`, mb, spd, eta ? `נותרו ${eta}` : null].filter(Boolean);
     return (
       <View style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}>
         <ActivityIndicator size="small" color="#e50914" />
         {!compact && (
-          <Text style={mdStyles.dlBtnTxt}>{label} {pct}%{mb ? ` · ${mb}` : ''}</Text>
+          <Text style={mdStyles.dlBtnTxt}>{parts.join(' · ')}</Text>
         )}
       </View>
     );
