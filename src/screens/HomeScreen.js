@@ -810,6 +810,7 @@ export default function HomeScreen({navigation, route}) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   // סימון focus לפקדי הסרגל העליון בטלוויזיה (בטלפון נשאר תמיד false)
   const [userBtnFocus, setUserBtnFocus] = useState(false);
+  const [supportBtnFocus, setSupportBtnFocus] = useState(false);
   const [catsBtnFocus, setCatsBtnFocus] = useState(false);
   const [clearCatFocus, setClearCatFocus] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
@@ -1444,6 +1445,22 @@ export default function HomeScreen({navigation, route}) {
         </Animated.View>
       </TvFocusable>
 
+      {/* בטלוויזיה כפתור התמיכה יושב כאן ולא כבועה צפה.
+          הבועה היא View ממוקם מוחלט מעל הרשת, ומנוע ה-focus של אנדרואיד
+          בוחר את היעד הבא גאומטרית — הרשת בולעת כל לחיצה על ה-D-pad
+          והכפתור לא נבחר לעולם. דוד: "לא הצלחתי להגיע אליו בשום צורה".
+          כתבתי שם בהערה שהוא "נשאר נגיש בניווט", וזו הייתה הנחה שלי שלא
+          נבדקה. בסרגל העליון הוא חלק מהזרימה: חץ למעלה מהשורה הראשונה
+          מגיע לכאן, וימינה/שמאלה עובר בין חיפוש, תמיכה ומשתמש. */}
+      {IS_TV && (
+        <TvFocusable
+          onPress={() => setShowSupport(true)}
+          onFocusChange={setSupportBtnFocus}
+          style={[styles.tvSupportBtn, supportBtnFocus && styles.tvFocusRing]}>
+          <Text style={styles.tvSupportTxt}>➤ {t('home.support')}</Text>
+        </TvFocusable>
+      )}
+
       {user ? (
         <TvFocusable
           onPress={() => setShowUserMenu(true)}
@@ -1694,7 +1711,9 @@ export default function HomeScreen({navigation, route}) {
 
       <AdBanner />
 
-      {/* Telegram floating bubble */}
+      {/* הבועה הצפה נשארת לטלפון בלבד. בטלוויזיה הכפתור עבר לסרגל העליון
+          (ראה TopBar) — שם אפשר להגיע אליו עם השלט, וכאן אי אפשר היה. */}
+      {!IS_TV && (
       <View
         style={[styles.tgBubbleWrap, isRTL() ? pinRight(14) : pinLeft(14)]}
         pointerEvents="box-none">
@@ -1725,9 +1744,10 @@ export default function HomeScreen({navigation, route}) {
             setShowSupport(true);
           }}>
           <Text style={styles.tgBtnIcon}>➤</Text>
-          <Text style={styles.tgBtnLabel}>תמיכה</Text>
+          <Text style={styles.tgBtnLabel}>{t('home.support')}</Text>
         </TvFocusable>
       </View>
+      )}
 
       <SupportModal
         visible={showSupport}
@@ -1851,6 +1871,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8,
   },
   appTitle: {color: '#e50914', fontSize: 22, fontWeight: '900', letterSpacing: 6},
+  // כפתור התמיכה בטלוויזיה — יושב בסרגל העליון, שם ה-D-pad מגיע אליו.
+  tvSupportBtn: {
+    backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
+    borderRadius: 18, paddingHorizontal: 14, paddingVertical: 7,
+    marginHorizontal: 8,
+  },
+  tvSupportTxt: {color: '#5b9bd5', fontSize: 13, fontWeight: '700'},
   signInBtn: {
     backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
     borderRadius: 18, paddingHorizontal: 14, paddingVertical: 7,

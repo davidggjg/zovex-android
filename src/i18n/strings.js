@@ -22,6 +22,7 @@ const he = {
 
   // מסך הבית
   'home.continueWatching': '▶ המשך צפייה',
+  'home.support': 'תמיכה',
   'home.myFavorites': '❤ המועדפים שלי',
   'home.watch': '▶ צפה',
   'home.historyEmpty': 'ההיסטוריה שלך תופיע כאן',
@@ -114,6 +115,7 @@ const en = {
   'common.noResults': 'No results found',
 
   'home.continueWatching': '▶ Continue watching',
+  'home.support': 'Support',
   'home.myFavorites': '❤ My favorites',
   'home.watch': '▶ Watch',
   'home.historyEmpty': 'Your watch history will appear here',
