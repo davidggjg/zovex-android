@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'לפרסם לקישור ההורדה הציבורי (latest)? בנייה מענף בדיקות לא אמורה'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -191,7 +198,12 @@ jobs:
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 30
 
+      # דריסת ה-release בשם latest מחליפה את ה-APK שכל המשתמשים מורידים.
+      # בנייה מענף פיתוח אמורה לייצר artifact לבדיקה, לא להחליף לכולם את
+      # האפליקציה בקוד שטרם נבדק. לכן הפרסום מותנה: אוטומטי רק מ-main,
+      # ומענף אחר רק בבחירה מפורשת.
       - name: Publish APK to GitHub Release (stable public download link)
+        if: github.ref == 'refs/heads/main' || inputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
