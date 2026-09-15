@@ -15,7 +15,7 @@ import {
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import SettingsScreen from './screens/SettingsScreen';
-import {initLanguage} from './i18n';
+import {initLanguage, onLanguageChange} from './i18n';
 import messaging from '@react-native-firebase/messaging';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import HomeScreen from './screens/HomeScreen';
@@ -162,6 +162,14 @@ function generateCodeVerifier() {
 
 export default function App() {
   const [appReady, setAppReady] = useState(false);
+  // ── החלפת שפה מחייבת ציור מחדש של כל העץ ────────────────────────────────
+  // t() היא פונקציה רגילה שנקראת בזמן הציור, לא hook. כשהשפה משתנה, React
+  // לא יודע שמשהו השתנה ואף מסך לא מצויר מחדש — הטקסט נשאר בשפה הקודמת עד
+  // שהמסך נטען מחדש מסיבה אחרת. זה היה הבאג: המנגנון onLanguageChange נכתב
+  // ואף אחד לא נרשם אליו, ולכן רק מסך ההגדרות עצמו התחלף.
+  // החלפת key על ה-NavigationContainer מרכיבה את כל העץ מחדש בשפה החדשה.
+  const [langEpoch, setLangEpoch] = useState(0);
+  useEffect(() => onLanguageChange(() => setLangEpoch(n => n + 1)), []);
   // פתיח קולנועי — משחק פעם אחת בפתיחה. מדלגים עליו בטלוויזיה (WebView חלש).
   const [introDone, setIntroDone] = useState(Platform.isTV);
   const [dialogConfig, setDialogConfig] = useState(null);
@@ -334,7 +342,7 @@ export default function App() {
   }
 
   return (
-    <NavigationContainer linking={linking}>
+    <NavigationContainer linking={linking} key={`lang-${langEpoch}`}>
       <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
       <Stack.Navigator screenOptions={{headerShown: false}}>
         <Stack.Screen name="Home" component={HomeScreen} />

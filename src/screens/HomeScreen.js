@@ -15,7 +15,6 @@ import {
   RefreshControl,
   Dimensions,
   Animated,
-  I18nManager,
   AppState,
   Platform,
   BackHandler,
@@ -36,7 +35,7 @@ import {
   isCatalogStale,
 } from '../api/movies';
 import {WebView} from 'react-native-webview';
-import {catName, genreName, t} from '../i18n';
+import {catName, genreName, isRTL, t} from '../i18n';
 import {getUserId} from '../api/userStore';
 import {
   getDownloads,
@@ -1696,7 +1695,9 @@ export default function HomeScreen({navigation, route}) {
       <AdBanner />
 
       {/* Telegram floating bubble */}
-      <View style={styles.tgBubbleWrap} pointerEvents="box-none">
+      <View
+        style={[styles.tgBubbleWrap, isRTL() ? {right: 14} : {left: 14}]}
+        pointerEvents="box-none">
         {/* הטיפ הצף הוא רכיב מגע: הוא יושב מעל התוכן ויש לו X קטן שאי אפשר
             להגיע אליו בשלט ("אי אפשר ללחוץ עליו כי זה לא טאצ'"). בטלוויזיה
             פשוט לא מציגים אותו — כפתור התמיכה עצמו נשאר נגיש בניווט. */}
@@ -2024,7 +2025,7 @@ const styles = StyleSheet.create({
     // bottom מוגבה כדי לא להיחסם ע"י באנר הפרסומת הקבוע בתחתית (AdBanner)
     position: 'absolute', bottom: 78, zIndex: 1000,
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
-    ...(I18nManager.isRTL ? {right: 14} : {left: 14}),
+    // הצד נקבע בזמן הציור — ראה tgBubbleWrap ב-render.
   },
   tgTip: {
     position: 'relative', backgroundColor: 'rgba(26,26,26,0.92)',

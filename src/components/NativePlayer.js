@@ -1,6 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {t} from '../i18n';
-import {I18nManager} from 'react-native';
+import {isRTL} from '../i18n';
 import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
   PanResponder, Pressable,
@@ -195,7 +195,13 @@ export default function NativePlayer({
 
       {shown && (
         <>
-          <View style={styles.topbar} pointerEvents="box-none">
+          <View
+          // הכיוון חייב להיקבע בזמן הציור. StyleSheet.create מחושב פעם אחת
+          // בטעינת המודול, ו-I18nManager.isRTL מתעדכן רק אחרי הפעלה מחדש
+          // של האפליקציה — כלומר הערך היה מוקפא פעמיים. isRTL() שלנו משקף
+          // את הבחירה מיד.
+          style={[styles.topbar, {flexDirection: isRTL() ? 'row-reverse' : 'row'}]}
+          pointerEvents="box-none">
             <TouchableOpacity style={styles.xbtn} onPress={onClose} hitSlop={12}>
               <Text style={styles.xtxt}>✕</Text>
             </TouchableOpacity>
@@ -298,11 +304,7 @@ const styles = StyleSheet.create({
   topbar: {
     position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16,
     paddingTop: 14, paddingBottom: 34,
-    // row-reverse מתהפך אוטומטית תחת ימין-לשמאל: בעברית הוא נתן ✕ משמאל,
-    // ובאנגלית העיף אותו ימינה — בדיוק לאן שסמל השידור יושב, וזו הסיבה
-    // שהבאג הופיע רק באנגלית. הביטוי הזה מבטל את ההיפוך ומשאיר את ✕
-    // משמאל בשתי השפות.
-    flexDirection: I18nManager.isRTL ? 'row-reverse' : 'row',
+    // הכיוון נקבע בזמן הציור ולא כאן — ראה topbarDir ב-render.
     alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.55)'},
   xbtn: {width: 34, alignItems: 'center', justifyContent: 'center'},
   xtxt: {color: '#fff', fontSize: 24, lineHeight: 26},
