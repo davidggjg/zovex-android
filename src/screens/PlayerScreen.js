@@ -1059,16 +1059,27 @@ export default function PlayerScreen({route, navigation}) {
     return false;
   };
 
-  // ── נגן נייטיב לטלוויזיה: רק לתוכן ישיר (mp4/HLS), לא ל-iframe embeds ──
+  // ── שני נגנים, ועכשיו בסדר הנכון ────────────────────────────────────────
   //
-  // ומעכשיו גם בטלפון, כשמתגלה שאין קול. ה-WebView לא מפענח ec-3 בשום
-  // מקרה, אבל הנגן הנייטיב כן — האפליקציה מביאה איתה את מפענחי ה-FFmpeg
-  // של Media3 (ראה android/app/build.gradle). זו בדיוק אותה משפחת מפענחים
-  // ש-VLC משתמש בה, וזו הסיבה ש-VLC ניגן את ונסדיי כל הזמן.
-  const useNative = (isTv || !!nativeAudio) && !isIframe && !!src;
+  // הנגן הנייטיב (ExoPlayer) מפענח דרך מפענחי ה-FFmpeg של Media3 שהאפליקציה
+  // מביאה איתה — אותה משפחת מפענחים של VLC. ה-WebView מוגבל למה שהדפדפן
+  // המוטמע יודע, וזה פחות.
+  //
+  // עד כאן הנייטיב שימש רק בטלוויזיה או כנפילה כשזוהה שאין קול, וכל השאר
+  // עבר ב-WebView. בפועל התמונה הפוכה: הנייטיב מנגן, וה-WebView נותן מסך
+  // שחור עם מטא-דאטה תקינה (duration מוצג, המיקום נשאר 0:00). דוד זיהה
+  // את זה בעצמו — "יש שני נגנים, אחד עובד והשני לא".
+  //
+  // לכן הסדר התהפך: תוכן ישיר (mp4/HLS) הולך לנייטיב, וה-WebView נשאר
+  // למה שהנייטיב לא יכול — iframe embeds (יוטיוב, Kaltura, דרייב) — וגם
+  // כנפילה-אחורה אם הנייטיב נכשל, מה שלא היה קיים קודם.
+  const [nativeFailed, setNativeFailed] = useState(false);
+  const useNative = !isIframe && !!src && !nativeFailed;
   // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
   const [nativeStart, setNativeStart] = useState(startTime || 0);
-  const [nativeError, setNativeError] = useState(null);
+  // אין כאן עוד מסך שגיאה משלנו: כשהנייטיב נכשל הוא נופל ל-WebView,
+  // ואם גם הוא נכשל הוא מציג הודעה משלו מתוך ה-HTML — עם האבחנה
+  // (shaka/hls וקוד השגיאה), שמועילה יותר מ"הניגון נכשל" גנרי.
   useEffect(() => {
     if (!useNative || !resumeAt) return;
     progressRef.current.position = resumeAt;
@@ -1161,16 +1172,18 @@ export default function PlayerScreen({route, navigation}) {
           </View>
         </View>
       ) : null}
-      {/* מסלול תיקון-הקול בטלפון: ExoPlayer (עם מפענחי ה-FFmpeg) אבל עם
-          הפקדים שלנו, כדי שזה לא ירגיש כמו אפליקציה אחרת באמצע הסרט.
-          בטלוויזיה ממשיכים עם הפקדים המובנים — הם אלה שעובדים עם השלט. */}
-      {useNative && nativeAudio && !isTv ? (
+      {/* בטלפון: ExoPlayer עם מפענחי ה-FFmpeg, אבל עם הפקדים שלנו — דילוג
+          ±10, גלגל המהירות וסרגל הגרירה. זה היה עד כה רק מסלול תיקון-הקול,
+          ומעכשיו זה המסלול הרגיל: אחרת תוכן רגיל היה נופל לענף הטלוויזיה
+          ומקבל את הפקדים המובנים של ExoPlayer, שנראים כמו אפליקציה אחרת.
+          בטלוויזיה כן ממשיכים עם המובנים — הם אלה שעובדים עם השלט. */}
+      {useNative && !isTv ? (
         <NativePlayer
-          key="native-ours"
+          key={nativeAudio ? 'native-ours-audiofix' : 'native-ours'}
           src={fsSrc(src) || src}
           title={movie.title}
           subtitle={episodeLabel}
-          startTime={nativeAudio.at}
+          startTime={nativeAudio ? nativeAudio.at : nativeStart}
           hasNext={hasNext}
           nextLabel={nextEp?.episode_title || ''}
           debug={false}
@@ -1183,14 +1196,23 @@ export default function PlayerScreen({route, navigation}) {
           }}
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
           onError={() => {
+            // nativeAudio נבדק במפורש: הענף הזה משמש עכשיו גם לתוכן רגיל,
+            // שבו הוא null. בלי הבדיקה הקריאה ל-nativeAudio.at מקריסה את
+            // המסך במקום להציג שגיאה — וזה היה תחת onError, כלומר דווקא
+            // ברגע שכבר משהו לא בסדר.
             const fixed = audioFixSrc(buildSrc(movie, 0));
-            if (fixed && !audioFix) {
+            if (nativeAudio && fixed && !audioFix) {
               const at = nativeAudio.at;
               setNativeAudio(null);
               setAudioFix({src: fixed, at});
               setWvKey(k => k + 1);
             } else {
-              setNativeError('שגיאת ניגון');
+              // נפילה-אחורה ל-WebView במקום מסך שגיאה ללא מוצא. לא
+              // מציבים nativeError: הוא היה מצייר מסך שגיאה מעל ה-WebView
+              // שרק התחיל לנסות. ל-WebView יש הודעת שגיאה משלו בתוך
+              // ה-HTML (playFailed), וזו שתוצג אם גם הוא ייכשל.
+              setNativeFailed(true);
+              setWvKey(k => k + 1);
             }
           }}
         />
@@ -1230,8 +1252,11 @@ export default function PlayerScreen({route, navigation}) {
                 return;
               }
             }
-            setNativeError(
-              e?.error?.errorString || e?.error?.errorException || 'שגיאת ניגון');
+            // מה שהנייטיב לא הצליח — ה-WebView יקבל הזדמנות, ורק אם גם
+            // הוא ייכשל תוצג הודעה (שלו, מתוך ה-HTML). לא מציבים
+            // nativeError כדי שלא יכסה את הנגן שרק התחיל לנסות.
+            setNativeFailed(true);
+            setWvKey(k => k + 1);
           }}
         />
       ) : (
@@ -1268,20 +1293,7 @@ export default function PlayerScreen({route, navigation}) {
         originWhitelist={['*']}
       />
       )}
-      {nativeError ? (
-        <View style={styles.errOverlay}>
-          <Text style={styles.errorTitle}>הניגון נכשל</Text>
-          <Text style={styles.errorBody}>{String(nativeError).slice(0, 220)}</Text>
-          <TouchableOpacity
-            style={styles.errorBtn}
-            onPress={() => { setNativeError(null); setWvKey(k => k + 1); }}>
-            <Text style={styles.errorBtnTxt}>נסה שוב</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.errorBtn} onPress={() => navigation.goBack()}>
-            <Text style={styles.errorBtnTxt}>חזרה</Text>
-          </TouchableOpacity>
-        </View>
-      ) : null}
+
       {castOk && castable && CastLayer ? (
         <CastLayer
           castUrl={castUrl}
