@@ -169,6 +169,41 @@ export async function fetchHistory(userId) {
   return Array.isArray(res) ? res : [];
 }
 
+// ── מועדפים ──────────────────────────────────────────────────────────────────
+// נשמרים בשרת ולא במכשיר: מועדפים מקומיים נעלמים בהתקנה מחדש ולא עוברים
+// בין טלפון לטלוויזיה. אותו מנגנון בדיוק כמו ההיסטוריה (x-user-id).
+// הקריאות מחזירות false בכישלון ולא זורקות, כדי שלחיצה על לב ברשת גרועה
+// לא תפיל מסך.
+
+export async function fetchFavorites(userId) {
+  if (!userId) return [];
+  const res = await apiCall('/api/favorites', 'GET', null, userId);
+  return Array.isArray(res) ? res : [];
+}
+
+export async function addFavorite(item, userId) {
+  if (!userId || !item?.id) return false;
+  const res = await apiCall('/api/favorites', 'POST', {
+    media_id: String(item.id),
+    title: item.title || item.name || '',
+    thumbnail_url: item.thumbnail_url || '',
+  }, userId);
+  return !!res;
+}
+
+export async function removeFavorite(mediaId, userId) {
+  if (!userId || !mediaId) return false;
+  const res = await apiCall(
+    `/api/favorites/${encodeURIComponent(String(mediaId))}`, 'DELETE', null, userId);
+  return !!res;
+}
+
+// קבוצת המזהים המועדפים, לציור מהיר של הלב על כל כרטיס בלי קריאה לכל אחד.
+export async function fetchFavoriteIds(userId) {
+  const list = await fetchFavorites(userId);
+  return new Set(list.map(f => String(f.media_id)));
+}
+
 // ── Support / feedback ───────────────────────────────────────────────────────
 // גרסת האפליקציה. חייבת להתאים ל-versionName ב-build.gradle. השרת משווה אליה
 // כדי להחליט אם צריך לכפות עדכון.

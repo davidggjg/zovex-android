@@ -28,6 +28,9 @@ import {
   fetchMoviesFast,
   fetchItemDetail,
   fetchHistory,
+  fetchFavoriteIds,
+  addFavorite,
+  removeFavorite,
   clearCache,
   isCatalogStale,
 } from '../api/movies';
@@ -153,6 +156,7 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
 function MovieDetailModal({
   item, allMovies, onClose, onPlayDirect,
   downloadedIds, downloadingId, downloadProgress, onDownload, onDeleteDownload,
+  isFavorite, onToggleFavorite,
 }) {
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
@@ -263,6 +267,16 @@ function MovieDetailModal({
                 onPress={() => onPlayDirect(firstEp || item)}>
                 <Text style={mdStyles.playTxt}>▶ הפעל</Text>
               </TvFocusable>
+              {onToggleFavorite && (
+                <TvFocusable
+                  style={[mdStyles.favBtn, isFavorite && mdStyles.favBtnOn]}
+                  activeOpacity={0.8}
+                  onPress={() => onToggleFavorite(item)}>
+                  <Text style={[mdStyles.favTxt, isFavorite && mdStyles.favTxtOn]}>
+                    {isFavorite ? '❤' : '♡'}
+                  </Text>
+                </TvFocusable>
+              )}
               <DownloadControl
                 item={firstEp || item}
                 downloadedIds={downloadedIds}
@@ -391,6 +405,13 @@ const mdStyles = StyleSheet.create({
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
   actionsRow: {flexDirection: 'row', gap: 10},
   playBtn: {flex: 1, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
+  // לב ריק/מלא. רוחב קבוע כדי שהמעבר בין ♡ ל-❤ לא יזיז את שאר הכפתורים.
+  favBtn: {width: 52, marginRight: 8, borderRadius: 12, paddingVertical: 14,
+           alignItems: 'center', justifyContent: 'center',
+           backgroundColor: 'rgba(255,255,255,0.10)'},
+  favBtnOn: {backgroundColor: 'rgba(229,9,20,0.18)'},
+  favTxt: {fontSize: 20, color: '#e8eaed'},
+  favTxtOn: {color: '#ff4d5e'},
   shareBtn: {
     backgroundColor: '#1f1f1f', borderRadius: 12, paddingVertical: 14,
     paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
@@ -651,6 +672,10 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, f
 export default function HomeScreen({navigation, route}) {
   const [movies, setMovies] = useState([]);
   const [history, setHistory] = useState([]);
+  // קבוצת מזהים ולא מערך: הלב על כל כרטיס נבדק בכל ציור, ו-Set נותן בדיקה
+  // בזמן קבוע במקום סריקה של כל הרשימה לכל פריט.
+  const [favIds, setFavIds] = useState(() => new Set());
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
@@ -668,6 +693,25 @@ export default function HomeScreen({navigation, route}) {
     }
   }, [searchTyping]);
   const [user, setUser] = useState(null);
+
+  // החלפת מועדף. מוגדר כאן ולא למעלה כי הוא תלוי ב-user, ובקובץ הזה user
+  // מוגדר רק בשורה הזו — שימוש בו קודם היה נופל על TDZ.
+  // עדכון אופטימי: הלב מתמלא מיד ומתבטל רק אם השרת נכשל. בלי זה הלב "נתקע"
+  // עד שהרשת עונה, וזה מרגיש שבור בחיבור איטי.
+  const toggleFavorite = useCallback(async item => {
+    const uid = user?.id;
+    if (!uid || !item?.id) return;
+    const id = String(item.id);
+    const had = favIds.has(id);
+    const flip = add => setFavIds(prev => {
+      const next = new Set(prev);
+      if (add) next.add(id); else next.delete(id);
+      return next;
+    });
+    flip(!had);
+    const ok = had ? await removeFavorite(id, uid) : await addFavorite(item, uid);
+    if (!ok) flip(had);            // החזרה למצב הקודם
+  }, [favIds, user]);
   const [showSignIn, setShowSignIn] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -753,6 +797,8 @@ export default function HomeScreen({navigation, route}) {
   const load = useCallback(async (refresh = false, loggedInUser = null) => {
     if (refresh) { clearCache(); _hydratedRef.current = false; setRefreshing(true); }
     const histP = loggedInUser ? fetchHistory(loggedInUser.id) : Promise.resolve([]);
+    const favP = loggedInUser ? fetchFavoriteIds(loggedInUser.id)
+                              : Promise.resolve(new Set());
     try {
       if (!_hydratedRef.current) {
         // שלב 1 — ציור מהיר
@@ -769,6 +815,7 @@ export default function HomeScreen({navigation, route}) {
       }
       const hist = await histP;
       setHistory(hist);
+      setFavIds(await favP);
     } catch {}
     setLoading(false);
     setRefreshing(false);
@@ -846,6 +893,7 @@ export default function HomeScreen({navigation, route}) {
     if (liveChannels.length > 0) tabs.push('שידורים חיים');
     tabs.push(...cats);
     tabs.push(DOWNLOADS_CATEGORY);
+    tabs.push('מועדפים');
     tabs.push('היסטוריה');
     return tabs;
   }, [movies, liveChannels]);
@@ -898,6 +946,10 @@ export default function HomeScreen({navigation, route}) {
           if (!ch) return false;
           return matchItem(ch);
         });
+    }
+    if (cat === 'מועדפים') {
+      if (!Array.isArray(movies)) return [];
+      return movies.filter(m => m && favIds.has(String(m.id)));
     }
     if (cat === 'היסטוריה') {
       if (!Array.isArray(history) || !Array.isArray(movies)) return [];
@@ -957,8 +1009,11 @@ export default function HomeScreen({navigation, route}) {
       rows.push({title: 'שידורים חיים', isLiveRow: true, items: liveChannels});
     const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
     if (histItems.length > 0) rows.push({title: '▶ המשך צפייה', items: histItems});
+    const favItems = movies.filter(m => m && favIds.has(String(m.id)));
+    if (favItems.length > 0) rows.push({title: '❤ המועדפים שלי', items: favItems});
     allCategories
-      .filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה' && c !== DOWNLOADS_CATEGORY)
+      .filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה'
+                && c !== 'מועדפים' && c !== DOWNLOADS_CATEGORY)
       .forEach(cat => {
         const items = getItemsForCategory(cat);
         if (items.length > 0) rows.push({title: cat, items});
@@ -1516,6 +1571,8 @@ export default function HomeScreen({navigation, route}) {
           downloadProgress={downloadProgress}
           onDownload={handleDownloadItem}
           onDeleteDownload={handleDeleteDownload}
+          isFavorite={favIds.has(String(detailItem.id))}
+          onToggleFavorite={user?.id ? toggleFavorite : null}
         />
       )}
 
