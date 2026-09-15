@@ -1,11 +1,11 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
-import {t} from '../i18n';
-import {isRTL} from '../i18n';
+import {ltrRow, pinLeft, pinRight, t} from '../i18n';
 import {
-  View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
+  View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image,
   PanResponder, Pressable,
 } from 'react-native';
 import Video from 'react-native-video';
+import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
 
 // נגן נייטיב עם הפקדים **שלנו**.
 //
@@ -47,6 +47,7 @@ export default function NativePlayer({
   onError,
   onNext,
   onPlayingChange,
+  onFullscreen,
   debug = false,
 }) {
   const ref = useRef(null);
@@ -129,6 +130,18 @@ export default function NativePlayer({
   const [rateSheet, setRateSheet] = useState(false);
   const effRate = held ? 2 : rate;
 
+  // מסך מלא. היה קיים רק בנגן ה-WebView (#fsbtn), ומשעבר הנייטיב להיות
+  // הנגן הראשי הכפתור נעלם למשתמש. אותו מסלול בדיוק: StatusBar + כיוון
+  // מסך, דרך PipModule שב-PlayerScreen. בטלוויזיה אין כפתור — המסך שם
+  // מלא ולרוחב ממילא, וכפיית כיוון משנה את גודל החלון ומקלקלת פריסה.
+  const [fs, setFs] = useState(false);
+  const toggleFs = () => {
+    const next = !fs;
+    setFs(next);
+    poke();
+    onFullscreen && onFullscreen(next);
+  };
+
   const frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
 
   return (
@@ -196,11 +209,11 @@ export default function NativePlayer({
       {shown && (
         <>
           <View
-          // הכיוון חייב להיקבע בזמן הציור. StyleSheet.create מחושב פעם אחת
-          // בטעינת המודול, ו-I18nManager.isRTL מתעדכן רק אחרי הפעלה מחדש
-          // של האפליקציה — כלומר הערך היה מוקפא פעמיים. isRTL() שלנו משקף
-          // את הבחירה מיד.
-          style={[styles.topbar, {flexDirection: isRTL() ? 'row-reverse' : 'row'}]}
+          // הסרגל נקרא שמאל-לימין בשתי השפות, ולא לפי כיוון הכתיבה. ה-✕
+          // נעול משמאל וסמל השידור לטלוויזיה בימין (CastLayer) — הצדדים
+          // הנגדיים, תמיד. קודם הכיוון נגזר מהשפה, ואז החלפת שפה הפילה את
+          // שניהם לאותה פינה. אין כאן טקסט שצריך יישור: הכותרת ממורכזת.
+          style={[styles.topbar, ltrRow()]}
           pointerEvents="box-none">
             <TouchableOpacity style={styles.xbtn} onPress={onClose} hitSlop={12}>
               <Text style={styles.xtxt}>✕</Text>
@@ -212,16 +225,18 @@ export default function NativePlayer({
             <View style={styles.xbtn} />
           </View>
 
-          <View style={styles.mid} pointerEvents="box-none">
-            <TouchableOpacity style={styles.cbtn} onPress={() => skip(-10)}>
-              <Text style={styles.cglyph}>↺</Text><Text style={styles.cnum}>10</Text>
+          {/* אחורה תמיד משמאל וקדימה תמיד מימין. תחת היפוך הפריסה השניים
+              התחלפו ביניהם, וזה היה מבלבל יותר מכל: הכפתור השמאלי קידם. */}
+          <View style={[styles.mid, ltrRow()]} pointerEvents="box-none">
+            <TouchableOpacity style={styles.cbtn} onPress={() => skip(-10)} hitSlop={8}>
+              <Image source={BACK10} style={styles.skipIcon} resizeMode="contain" />
             </TouchableOpacity>
             <TouchableOpacity style={styles.cbtn}
               onPress={() => { setPaused(p => !p); poke(); }}>
               <Text style={styles.play}>{paused ? '▶' : '❚❚'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.cbtn} onPress={() => skip(10)}>
-              <Text style={styles.cglyph}>↻</Text><Text style={styles.cnum}>10</Text>
+            <TouchableOpacity style={styles.cbtn} onPress={() => skip(10)} hitSlop={8}>
+              <Image source={FWD10} style={styles.skipIcon} resizeMode="contain" />
             </TouchableOpacity>
           </View>
 
@@ -229,33 +244,45 @@ export default function NativePlayer({
             <View style={styles.progwrap} {...pan.panHandlers}
               onLayout={e => { barWRef.current = e.nativeEvent.layout.width || 1;
                                setBarW(barWRef.current); }}>
+              {/* pinLeft: הפס והנקודה נמדדים מהקצה השמאלי הפיזי. תחת היפוך
+                  הפריסה left הפך ל-right, והפס התמלא מהצד ההפוך לכיוון
+                  שבו הסרט מתקדם. */}
               <View style={styles.track}>
-                <View style={[styles.fill, {width: `${frac * 100}%`}]} />
-                <View style={[styles.dot, {left: Math.max(0, frac * barW - 6.5)}]} />
+                <View style={[styles.fill, pinLeft(0), {width: `${frac * 100}%`}]} />
+                <View style={[styles.dot, pinLeft(Math.max(0, frac * barW - 6.5))]} />
               </View>
             </View>
-            <View style={styles.brow}>
+            <View style={[styles.brow, ltrRow()]}>
               <Text style={styles.time}>{fmt(pos)} / {fmt(dur)}</Text>
-              <TouchableOpacity style={styles.gearBtn}
-                onPress={() => { setRateSheet(v => !v); poke(); }}>
-                <Text style={styles.gearTxt}>⚙</Text>
-                {rate !== 1 && <Text style={styles.gearRate}>{rate}x</Text>}
-              </TouchableOpacity>
-              {hasNext && (
-                <TouchableOpacity style={styles.nextBtn} onPress={onNext}>
-                  <Text style={styles.nextTxt}>
-                    {nextLabel ? `${t('player.nextLabel')}: ${nextLabel}` : t('player.nextEpisode')}
-                  </Text>
+              <View style={[styles.bright, ltrRow()]}>
+                {hasNext && (
+                  <TouchableOpacity style={styles.nextBtn} onPress={onNext}>
+                    <Text style={styles.nextTxt}>
+                      {nextLabel ? `${t('player.nextLabel')}: ${nextLabel}` : t('player.nextEpisode')}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity style={[styles.gearBtn, ltrRow()]} hitSlop={8}
+                  onPress={() => { setRateSheet(v => !v); poke(); }}>
+                  <Text style={styles.gearTxt}>⚙</Text>
+                  {rate !== 1 && <Text style={styles.gearRate}>{rate}x</Text>}
                 </TouchableOpacity>
-              )}
+                {!!onFullscreen && (
+                  <TouchableOpacity style={styles.fsBtn} onPress={toggleFs} hitSlop={8}>
+                    <Image source={fs ? FS_EXIT : FS_ENTER} style={styles.fsIcon}
+                      resizeMode="contain" />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           </View>
 
           {rateSheet && (
-            <View style={styles.sheet}>
-              <Text style={styles.sheetHead}>מהירות הפעלה</Text>
+            <View style={[styles.sheet, pinRight(16)]}>
+              <Text style={styles.sheetHead}>{t('player.speed')}</Text>
               {RATES.map(r => (
-                <TouchableOpacity key={r} style={[styles.sheetOpt, r === rate && styles.sheetOptSel]}
+                <TouchableOpacity key={r}
+                  style={[styles.sheetOpt, ltrRow(), r === rate && styles.sheetOptSel]}
                   onPress={() => { setRate(r); setRateSheet(false); poke(); }}>
                   <Text style={[styles.sheetTxt, r === rate && styles.sheetTxtSel]}>
                     {r === 1 ? t('player.speedNormal') : `${r}x`}
@@ -278,16 +305,19 @@ export default function NativePlayer({
 }
 
 const styles = StyleSheet.create({
+  // הכיוון נקבע ב-render דרך ltrRow, אחרת "1.5x" והגלגל התחלפו ביניהם.
   gearBtn: {paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center',
-            justifyContent: 'center', flexDirection: 'row'},
+            justifyContent: 'center'},
   gearTxt: {color: '#fff', fontSize: 18},
-  gearRate: {color: '#8db4ff', fontSize: 11, fontWeight: '700', marginRight: 3},
-  sheet: {position: 'absolute', right: 16, bottom: 92, zIndex: 60, minWidth: 170,
+  gearRate: {color: '#8db4ff', fontSize: 11, fontWeight: '700', marginLeft: 3},
+  // הצד נקבע ב-render דרך pinRight — ראה ההערה שם.
+  sheet: {position: 'absolute', bottom: 92, zIndex: 60, minWidth: 170,
           backgroundColor: 'rgba(22,24,30,0.97)', borderRadius: 14, paddingVertical: 10,
           paddingHorizontal: 8},
   sheetHead: {color: '#9aa0a6', fontSize: 12, paddingHorizontal: 10, paddingBottom: 6,
-              textAlign: 'right'},
-  sheetOpt: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+              textAlign: 'center'},
+  // הכיוון נקבע ב-render דרך ltrRow: התווית משמאל וה-✓ מימין, בשתי השפות.
+  sheetOpt: {alignItems: 'center', justifyContent: 'space-between',
              paddingVertical: 10, paddingHorizontal: 12, borderRadius: 9},
   sheetOptSel: {backgroundColor: 'rgba(47,109,246,0.22)'},
   sheetTxt: {color: '#e8eaed', fontSize: 15},
@@ -304,7 +334,7 @@ const styles = StyleSheet.create({
   topbar: {
     position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16,
     paddingTop: 14, paddingBottom: 34,
-    // הכיוון נקבע בזמן הציור ולא כאן — ראה topbarDir ב-render.
+    // הכיוון נקבע בזמן הציור דרך ltrRow ולא כאן.
     alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.55)'},
   xbtn: {width: 34, alignItems: 'center', justifyContent: 'center'},
   xtxt: {color: '#fff', fontSize: 24, lineHeight: 26},
@@ -312,13 +342,12 @@ const styles = StyleSheet.create({
   ttlMain: {color: '#fff', fontSize: 15, fontWeight: '700'},
   ttlSub: {color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2},
 
+  // הכיוון נקבע ב-render דרך ltrRow.
   mid: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 32},
+    alignItems: 'center', justifyContent: 'center', gap: 34},
   cbtn: {width: 58, height: 58, borderRadius: 29, alignItems: 'center',
     justifyContent: 'center'},
-  cglyph: {color: '#fff', fontSize: 34, lineHeight: 38},
-  cnum: {position: 'absolute', color: '#fff', fontSize: 10, fontWeight: '900',
-    top: 26},
+  skipIcon: {width: 42, height: 42},
   play: {color: '#fff', fontSize: 30, lineHeight: 34},
 
   bottombar: {position: 'absolute', left: 0, right: 0, bottom: 0,
@@ -327,12 +356,15 @@ const styles = StyleSheet.create({
   progwrap: {paddingVertical: 10, marginBottom: 6},
   track: {height: 3, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.25)',
     justifyContent: 'center'},
-  fill: {position: 'absolute', left: 0, top: 0, height: 3, borderRadius: 3,
+  // left נקבע ב-render דרך pinLeft — ראה ההערה שם.
+  fill: {position: 'absolute', top: 0, height: 3, borderRadius: 3,
     backgroundColor: ACCENT},
   dot: {position: 'absolute', width: 13, height: 13, borderRadius: 7,
     backgroundColor: ACCENT, top: -5},
-  brow: {flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between'},
+  brow: {alignItems: 'center', justifyContent: 'space-between'},
+  bright: {alignItems: 'center', gap: 6},
+  fsBtn: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center'},
+  fsIcon: {width: 21, height: 21},
   time: {color: 'rgba(255,255,255,0.75)', fontSize: 12},
   nextBtn: {backgroundColor: ACCENT, paddingHorizontal: 14, paddingVertical: 7,
     borderRadius: 8},

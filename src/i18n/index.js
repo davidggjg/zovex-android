@@ -37,24 +37,58 @@ export async function initLanguage() {
 
 export async function setLanguage(lang) {
   if (!LANGS[lang] || lang === current) return {changed: false, needsRestart: false};
-  const wasRTL = isRTL();
   current = lang;
   try {
     await AsyncStorage.setItem(KEY, lang);
   } catch {}
   listeners.forEach(fn => { try { fn(current); } catch {} });
 
-  // כיוון הפריסה (RTL/LTR) הוא הגדרה ברמת המערכת ב-React Native, והיא
-  // נכנסת לתוקף רק בהפעלה מחדש של האפליקציה. הטקסט יתחלף מיד; היישור
-  // והמראה יתיישרו אחרי הפעלה מחדש. לכן מחזירים דגל ולא מעמידים פנים.
-  const needsRestart = wasRTL !== isRTL();
-  if (needsRestart) {
-    try {
-      I18nManager.allowRTL(isRTL());
-      I18nManager.forceRTL(isRTL());
-    } catch {}
-  }
-  return {changed: true, needsRestart};
+  // כאן היה allowRTL/forceRTL, וזה היה הבאג. ראה lockLayoutDirection למטה:
+  // מנוע הפריסה נשאר שמאל-לימין תמיד, והמראה נקבע אצלנו ברמת הרכיב. החלפת
+  // שפה לא נוגעת יותר בכיוון הפריסה בכלל, ולכן גם אין צורך בהפעלה מחדש.
+  return {changed: true, needsRestart: false};
+}
+
+// ── כיוון הפריסה ─────────────────────────────────────────────────────────────
+// I18nManager.forceRTL(true) לא "מיישר טקסט לימין" — הוא הופך את כל מנוע
+// הפריסה: flexDirection:'row' נקרא מימין לשמאל, ו-left/right מתחלפים זה
+// בזה. התוצאה הייתה היפוך כפול: קוד שכבר ביקש במפורש row-reverse בעברית
+// קיבל עוד היפוך מהמנוע וחזר ל-row, וכפתור שהוצב ב-right:12 נחת בשמאל.
+// בפועל: ה-✕ וסמל השידור לטלוויזיה נחתו באותה פינה, סרגל ההתקדמות התמלא
+// מהצד הלא נכון, וכפתורי ה-±10 התחלפו ביניהם — כל זה רק מהחלפת שפה.
+//
+// לכן המנוע נעול על LTR, וכל מראה שתלוי בשפה נקבע אצלנו: isRTL() בזמן
+// הציור. זו גם ההתנהגות שהייתה לאפליקציה מאז ומתמיד, לפני שנגעתי בזה.
+//
+// הדגלים האלה נשמרים בצד הנייטיב ונקראים בעליית הגשר, ולכן איפוס שלהם
+// נכנס לתוקף רק בהפעלה הבאה. עד אז ltrRow/pinLeft/pinRight מבטלים את
+// ההיפוך בזמן הציור, כך שגם ההפעלה הראשונה אחרי העדכון נראית נכון.
+export function lockLayoutDirection() {
+  try {
+    I18nManager.allowRTL(false);
+    I18nManager.forceRTL(false);
+    if (typeof I18nManager.swapLeftAndRightInRTL === 'function') {
+      I18nManager.swapLeftAndRightInRTL(false);
+    }
+  } catch {}
+}
+
+const engineRTL = () => !!I18nManager.isRTL;
+const engineSwaps = () =>
+  engineRTL() && I18nManager.doLeftAndRightSwapInRTL !== false;
+
+// שורה שנקראת תמיד שמאל-לימין, גם אם המנוע במצב ימין-לשמאל.
+export function ltrRow() {
+  return {flexDirection: engineRTL() ? 'row-reverse' : 'row'};
+}
+
+// מיקום מוחלט בצד פיזי קבוע, ללא תלות בכיוון המנוע.
+export function pinLeft(v) {
+  return engineSwaps() ? {right: v} : {left: v};
+}
+
+export function pinRight(v) {
+  return engineSwaps() ? {left: v} : {right: v};
 }
 
 export function onLanguageChange(fn) {

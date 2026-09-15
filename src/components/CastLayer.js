@@ -1,6 +1,7 @@
 import React, {useEffect} from 'react';
 import {StyleSheet, View} from 'react-native';
 import {CastButton, useRemoteMediaClient} from 'react-native-google-cast';
+import {pinRight} from '../i18n';
 
 // ── שכבת Google Cast מבודדת ────────────────────────────────────────────────────
 // כל השימוש ב-Cast (ה-hook והכפתור) מרוכז כאן, כדי שהרכיב הזה יעלה *רק* אחרי
@@ -38,7 +39,7 @@ export default function CastLayer({
   // הסרה שלו מה-DOM הייתה מנתקת שידור פעיל בכל פעם שהסרגל נעלם.
   return (
     <View
-      style={[styles.wrap, {opacity: visible ? 1 : 0}]}
+      style={[styles.wrap, pinRight(12), {opacity: visible ? 1 : 0}]}
       pointerEvents={visible ? 'auto' : 'none'}>
       <CastButton style={styles.btn} />
     </View>
@@ -46,9 +47,10 @@ export default function CastLayer({
 }
 
 const styles = StyleSheet.create({
-  // ימין קבוע — הצד הנגדי לכפתור הסגירה, שנעול עכשיו משמאל בשתי השפות
-  // (ראה NativePlayer.topbar). מיקום מפורש ולא לפי כיוון הכתיבה, אחרת
-  // שניהם נוחתים באותו צד ברגע שמחליפים שפה.
-  wrap: {position: 'absolute', top: 10, right: 12, zIndex: 20},
+  // ימין *פיזי* קבוע — הצד הנגדי לכפתור הסגירה, שנעול משמאל בשתי השפות
+  // (ראה NativePlayer.topbar). הצד נקבע ב-render דרך pinRight ולא כאן:
+  // right בלבד התהפך ל-left ברגע שמנוע הפריסה עבר לימין-לשמאל, ואז ה-✕
+  // וסמל השידור נחתו זה על זה — פעם אחת בימין ופעם אחת בשמאל.
+  wrap: {position: 'absolute', top: 10, zIndex: 20},
   btn: {width: 40, height: 40, tintColor: '#fff'},
 });

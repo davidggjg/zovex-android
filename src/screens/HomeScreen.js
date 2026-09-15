@@ -35,7 +35,7 @@ import {
   isCatalogStale,
 } from '../api/movies';
 import {WebView} from 'react-native-webview';
-import {catName, genreName, isRTL, t} from '../i18n';
+import {catName, genreName, isRTL, pinLeft, pinRight, t} from '../i18n';
 import {getUserId} from '../api/userStore';
 import {
   getDownloads,
@@ -1696,7 +1696,7 @@ export default function HomeScreen({navigation, route}) {
 
       {/* Telegram floating bubble */}
       <View
-        style={[styles.tgBubbleWrap, isRTL() ? {right: 14} : {left: 14}]}
+        style={[styles.tgBubbleWrap, isRTL() ? pinRight(14) : pinLeft(14)]}
         pointerEvents="box-none">
         {/* הטיפ הצף הוא רכיב מגע: הוא יושב מעל התוכן ויש לו X קטן שאי אפשר
             להגיע אליו בשלט ("אי אפשר ללחוץ עליו כי זה לא טאצ'"). בטלוויזיה

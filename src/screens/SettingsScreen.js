@@ -7,15 +7,13 @@ import {APP_VERSION} from '../api/movies';
 // להגדרות נוספות בלי לשנות מבנה.
 export default function SettingsScreen({navigation}) {
   const [lang, setLang] = useState(getLanguage());
-  const [restartMsg, setRestartMsg] = useState(false);
 
+  // אין יותר הודעת "צריך להפעיל מחדש": החלפת שפה לא נוגעת בכיוון הפריסה,
+  // ולכן היא נכנסת לתוקף מיד ובמלואה. ראה lockLayoutDirection ב-i18n.
   const pick = async code => {
-    const {changed, needsRestart} = await setLanguage(code);
+    const {changed} = await setLanguage(code);
     if (!changed) return;
     setLang(code);
-    // כיוון הכתיבה הוא הגדרה ברמת המערכת ונכנס לתוקף רק בהפעלה מחדש.
-    // אומרים את זה במפורש במקום להעמיד פנים שהמעבר הושלם.
-    if (needsRestart) setRestartMsg(true);
   };
 
   return (
@@ -40,11 +38,6 @@ export default function SettingsScreen({navigation}) {
           ))}
         </View>
         <Text style={s.hint}>{t('settings.languageHint')}</Text>
-        {restartMsg && (
-          <View style={s.warn}>
-            <Text style={s.warnTxt}>{t('settings.restartNeeded')}</Text>
-          </View>
-        )}
 
         <Text style={s.section}>{t('settings.about')}</Text>
         <View style={s.card}>
@@ -77,6 +70,4 @@ const s = StyleSheet.create({
   check: {color: '#8db4ff', fontSize: 16, fontWeight: '700'},
   dim: {color: '#7c8288', fontSize: 14},
   hint: {color: '#7c8288', fontSize: 12.5, lineHeight: 18, marginTop: 10, marginHorizontal: 4},
-  warn: {backgroundColor: 'rgba(47,109,246,0.15)', borderRadius: 12, padding: 14, marginTop: 12},
-  warnTxt: {color: '#8db4ff', fontSize: 14, lineHeight: 20},
 });

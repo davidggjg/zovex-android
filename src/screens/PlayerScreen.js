@@ -292,9 +292,14 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #playerr .d{font-size:12px;color:#888;direction:ltr;word-break:break-all;max-width:90%}
 .spin{width:44px;height:44px;border:4px solid rgba(255,255,255,.2);border-top:4px solid #e91e8c;border-radius:50%;animation:spin 1s linear infinite}
 #overlay{position:absolute;inset:0;z-index:10}
-#topbar{position:absolute;top:0;left:0;right:0;z-index:30;padding:14px 16px 40px;
+/* direction:ltr במכוון, ולא לפי כיוון הכתיבה: ה-✕ הוא הילד הראשון ולכן
+   נשאר תמיד בשמאל — אותו מקום כמו בנגן הנייטיב. סמל השידור לטלוויזיה
+   (CastLayer) יושב בימין הפיזי מעל ה-WebView, ולכן הפער מימין: בלעדיו
+   כפתור השיתוף נוחת בדיוק מתחתיו. הכותרת יוצאת ~20px מהמרכז בגלל הפער,
+   וזה מחיר סביר על סרגל מדורג בנגן-גיבוי. */
+#topbar{position:absolute;top:0;left:0;right:0;z-index:30;padding:14px 58px 40px 16px;
   background:linear-gradient(to bottom,rgba(0,0,0,.82) 0%,transparent 100%);
-  display:flex;align-items:flex-start;justify-content:space-between;direction:rtl;
+  display:flex;align-items:flex-start;justify-content:space-between;direction:ltr;
   opacity:1;transition:opacity .3s}
 .xbtn{background:none;border:none;color:#fff;cursor:pointer;padding:4px;line-height:1;
   display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent;outline:none;font-size:26px}
@@ -1212,6 +1217,15 @@ export default function PlayerScreen({route, navigation}) {
           onClose={() => navigation.goBack()}
           onNext={goNextEpisode}
           onPlayingChange={v => PipModule?.setVideoPlaying(!!v)}
+          // אותו מסלול בדיוק של כפתור המסך המלא ב-WebView (הודעת
+          // 'fullscreen' ב-onMessage). בטלוויזיה לא מעבירים את הקריאה
+          // בכלל — המסך שם מלא ולרוחב, וכפיית כיוון משנה את גודל החלון
+          // ומקלקלת את הפריסה. בלי onFullscreen הכפתור לא מוצג.
+          onFullscreen={isTv ? undefined : enter => {
+            StatusBar.setHidden(enter, 'fade');
+            PipModule?.setFullscreen(enter);
+            PipModule?.setLandscape(enter);
+          }}
           onProgress={(pos, dur) => {
             progressRef.current = {position: pos, duration: dur};
             if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
