@@ -1492,6 +1492,11 @@ export default function HomeScreen({navigation, route}) {
           </TvFocusable>
           <TvFocusable
             style={styles.menuItem}
+            onPress={() => { setShowUserMenu(false); navigation.navigate('Settings'); }}>
+            <Text style={styles.menuItemText}>⚙️  הגדרות</Text>
+          </TvFocusable>
+          <TvFocusable
+            style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); navigation.navigate('Legal'); }}>
             <Text style={styles.menuItemText}>📄  מידע ותנאים</Text>
           </TvFocusable>

@@ -14,6 +14,8 @@ import {
 } from 'react-native';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
+import SettingsScreen from './screens/SettingsScreen';
+import {initLanguage} from './i18n';
 import messaging from '@react-native-firebase/messaging';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import HomeScreen from './screens/HomeScreen';
@@ -168,6 +170,8 @@ export default function App() {
   useEffect(() => {
     let timer;
     const boot = async () => {
+      // נטען לפני הציור הראשון, אחרת המסך מצויר בעברית ואז מתחלף לאנגלית.
+      await initLanguage();
       await initUserId();
       try {
         const controller = new AbortController();
@@ -338,6 +342,7 @@ export default function App() {
         <Stack.Screen name="Series" component={SeriesScreen} />
         <Stack.Screen name="SavedUpload" component={SavedUploadScreen} />
         <Stack.Screen name="Legal" component={LegalScreen} />
+        <Stack.Screen name="Settings" component={SettingsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
