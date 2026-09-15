@@ -1040,7 +1040,7 @@ export default function HomeScreen({navigation, route}) {
       }
     });
     return result;
-  }, [movies, liveChannels, history, seriesMap, matchItem, qTokens, downloads]);
+  }, [movies, liveChannels, history, favIds, seriesMap, matchItem, qTokens, downloads]);
 
   const netflixRows = useMemo(() => {
     // בזמן חיפוש המסך מציג רשת תוצאות, לא את השורות האלה. בלי היציאה
@@ -1062,7 +1062,7 @@ export default function HomeScreen({navigation, route}) {
         if (items.length > 0) rows.push({title: cat, items});
       });
     return rows;
-  }, [liveChannels, history, movies, allCategories, getItemsForCategory, qTokens]);
+  }, [liveChannels, history, movies, favIds, allCategories, getItemsForCategory, qTokens]);
 
   // ── שידורים חיים: שורה לכל ז'אנר, כמו באתר ────────────────────────────
   // עד עכשיו כל 103 הערוצים נשפכו לרשת אחת ארוכה, ולמצוא בה ערוץ מסוים היה
