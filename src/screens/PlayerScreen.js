@@ -103,6 +103,28 @@ function fmtClock(sec) {
   return h > 0 ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`;
 }
 
+// ── יציאה מרשימת האילמים ─────────────────────────────────────────────────
+// הסימון נשמר לדיסק, שורד הפעלות מחדש, ואין לו תוקף. פרק אחד שזוהה
+// בטעות מסמן את כל הסדרה ('s:' + series_name), וכל פרקיה מנותבים מאז
+// למסלול תיקון-הקול. אם המסלול הזה נכשל על התוכן הזה — הסדרה מתה
+// לתמיד, וזה מה שקרה לסמולוויל: 215 פרקים, וכל השאר בקטלוג עובד.
+//
+// לכן כשל במסלול תיקון-הקול מוחק את הסימון. הניסיון הבא ייצא מהמסלול
+// הרגיל; אם באמת אין שם קול, הזיהוי יסמן שוב. עלות טעות: בדיקה אחת
+// של 3.5 שניות. עלות היעדר היציאה: סדרה שבורה בלי דרך לתקן.
+async function forgetSilent(movie) {
+  try {
+    const s = await loadSilentSet();
+    let changed = false;
+    for (const k of silentKeys(movie)) {
+      if (s.delete(k)) changed = true;
+    }
+    if (changed) {
+      await AsyncStorage.setItem(SILENT_KEY, JSON.stringify([...s]));
+    }
+  } catch (_) {}
+}
+
 function silentKeys(movie) {
   const k = [];
   if (movie.id) k.push(String(movie.id));
@@ -1211,6 +1233,9 @@ export default function PlayerScreen({route, navigation}) {
               // מציבים nativeError: הוא היה מצייר מסך שגיאה מעל ה-WebView
               // שרק התחיל לנסות. ל-WebView יש הודעת שגיאה משלו בתוך
               // ה-HTML (playFailed), וזו שתוצג אם גם הוא ייכשל.
+              // מוחקים את סימון האילמות: אם הגענו לכאן, המסלול שהסימון
+              // מנתב אליו לא עבד. בלי זה הסדרה נשארת נעולה עליו לנצח.
+              forgetSilent(movie);
               setNativeFailed(true);
               setWvKey(k => k + 1);
             }
@@ -1255,6 +1280,9 @@ export default function PlayerScreen({route, navigation}) {
             // מה שהנייטיב לא הצליח — ה-WebView יקבל הזדמנות, ורק אם גם
             // הוא ייכשל תוצג הודעה (שלו, מתוך ה-HTML). לא מציבים
             // nativeError כדי שלא יכסה את הנגן שרק התחיל לנסות.
+            // מוחקים את סימון האילמות: אם הגענו לכאן, המסלול שהסימון
+            // מנתב אליו לא עבד. בלי זה הסדרה נשארת נעולה עליו לנצח.
+            forgetSilent(movie);
             setNativeFailed(true);
             setWvKey(k => k + 1);
           }}
