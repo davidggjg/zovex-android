@@ -36,6 +36,7 @@ import {
   isCatalogStale,
 } from '../api/movies';
 import {WebView} from 'react-native-webview';
+import {catName} from '../i18n';
 import {getUserId} from '../api/userStore';
 import {
   getDownloads,
@@ -265,27 +266,7 @@ function MovieDetailModal({
           <Text style={mdStyles.closeTxt}>✕</Text>
         </TvFocusable>
         <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-          {trailerKey && !trailerOff ? (
-            <View style={mdStyles.thumb}>
-              <WebView
-                style={mdStyles.trailerWeb}
-                source={{uri: `https://www.youtube.com/embed/${trailerKey}` +
-                  '?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1'}}
-                allowsInlineMediaPlayback
-                mediaPlaybackRequiresUserAction={false}
-                javaScriptEnabled
-                domStorageEnabled
-                // כישלון טעינה (אין רשת, יוטיוב חסום) מחזיר לפוסטר במקום
-                // להשאיר מלבן שחור.
-                onError={() => setTrailerOff(true)}
-                onHttpError={() => setTrailerOff(true)}
-              />
-              <TouchableOpacity style={mdStyles.trailerX}
-                onPress={() => setTrailerOff(true)}>
-                <Text style={mdStyles.trailerXTxt}>✕</Text>
-              </TouchableOpacity>
-            </View>
-          ) : item.thumbnail_url ? (
+          {item.thumbnail_url ? (
             <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
           ) : (
             <View style={mdStyles.noThumb}>
@@ -297,6 +278,38 @@ function MovieDetailModal({
             {!!description && (
               <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
+            {trailerKey && !trailerOff && (
+              <View style={mdStyles.trailerBox}>
+                <View style={mdStyles.trailerHead}>
+                  <Text style={mdStyles.trailerTtl}>🎬 טריילר</Text>
+                  <TouchableOpacity onPress={() => setTrailerOff(true)} hitSlop={10}>
+                    <Text style={mdStyles.trailerClose}>סגור</Text>
+                  </TouchableOpacity>
+                </View>
+                {/* נגן יוטיוב מלא ולא תצוגה מקדימה: בלי autoplay ובלי השתקה
+                    כפויה, עם הפקדים המקוריים ועם מסך מלא. קודם זה היה סרטון
+                    מושתק שכיסה את הפוסטר ולא הגיב לשום לחיצה. */}
+                <View style={mdStyles.trailerFrame}>
+                  <WebView
+                    style={mdStyles.trailerWeb}
+                    source={{uri: `https://www.youtube.com/embed/${trailerKey}` +
+                      '?playsinline=1&rel=0&modestbranding=1&fs=1'}}
+                    allowsInlineMediaPlayback
+                    allowsFullscreenVideo
+                    mediaPlaybackRequiresUserAction={false}
+                    javaScriptEnabled
+                    domStorageEnabled
+                    // נטרול גלילת ההורה: בלי זה ה-ScrollView בולע את הלחיצות
+                    // וכלום בתוך הנגן לא מגיב — בדיוק מה שדוד תיאר.
+                    nestedScrollEnabled
+                    scrollEnabled={false}
+                    onError={() => setTrailerOff(true)}
+                    onHttpError={() => setTrailerOff(true)}
+                  />
+                </View>
+              </View>
+            )}
+
             <View style={mdStyles.actionsRow}>
               <TvFocusable style={mdStyles.playBtn} activeOpacity={0.8}
                 hasFocus={IS_TV}
@@ -423,12 +436,14 @@ function MovieDetailModal({
 
 const mdStyles = StyleSheet.create({
   trailerWeb: {flex: 1, backgroundColor: '#000'},
-  // כפתור סגירת הטריילר. מי שרוצה לראות את הפוסטר, או שהסאונד מפריע לו,
-  // סוגר וחוזר לתמונה.
-  trailerX: {position: 'absolute', top: 8, right: 8, width: 30, height: 30,
-             borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.55)',
-             alignItems: 'center', justifyContent: 'center'},
-  trailerXTxt: {color: '#fff', fontSize: 15, lineHeight: 17},
+  trailerBox: {marginBottom: 16},
+  trailerHead: {flexDirection: 'row', alignItems: 'center',
+                justifyContent: 'space-between', marginBottom: 8},
+  trailerTtl: {color: '#fff', fontSize: 14, fontWeight: '800'},
+  trailerClose: {color: '#888', fontSize: 12, fontWeight: '600'},
+  // יחס 16:9 קבוע, כדי שהמסגרת לא תקפוץ בזמן הטעינה.
+  trailerFrame: {width: '100%', aspectRatio: 16 / 9, maxWidth: '100%',
+                 borderRadius: 12, overflow: 'hidden', backgroundColor: '#000'},
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0a0a0a',
@@ -1059,7 +1074,9 @@ export default function HomeScreen({navigation, route}) {
                 && c !== 'מועדפים' && c !== DOWNLOADS_CATEGORY)
       .forEach(cat => {
         const items = getItemsForCategory(cat);
-        if (items.length > 0) rows.push({title: cat, items});
+        // הכותרת מתורגמת לתצוגה; cat עצמו נשאר בעברית כי הוא גם המפתח
+        // שלפיו מסננים.
+        if (items.length > 0) rows.push({title: catName(cat), items});
       });
     return rows;
   }, [liveChannels, history, movies, favIds, allCategories, getItemsForCategory, qTokens]);
@@ -1449,7 +1466,7 @@ export default function HomeScreen({navigation, route}) {
               style={styles.catOverlayItem}
               activeOpacity={0.65}>
               <Text style={[styles.catOverlayText, category === c && styles.catOverlayTextActive]}>
-                {c}
+                {catName(c)}
               </Text>
             </TvFocusable>
           ))}

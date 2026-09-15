@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {I18nManager} from 'react-native';
 import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
   PanResponder, Pressable,
@@ -293,8 +294,14 @@ const styles = StyleSheet.create({
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     justifyContent: 'center', alignItems: 'center'},
 
-  topbar: {position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16,
-    paddingTop: 14, paddingBottom: 34, flexDirection: 'row-reverse',
+  topbar: {
+    position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16,
+    paddingTop: 14, paddingBottom: 34,
+    // row-reverse מתהפך אוטומטית תחת ימין-לשמאל: בעברית הוא נתן ✕ משמאל,
+    // ובאנגלית העיף אותו ימינה — בדיוק לאן שסמל השידור יושב, וזו הסיבה
+    // שהבאג הופיע רק באנגלית. הביטוי הזה מבטל את ההיפוך ומשאיר את ✕
+    // משמאל בשתי השפות.
+    flexDirection: I18nManager.isRTL ? 'row-reverse' : 'row',
     alignItems: 'flex-start', backgroundColor: 'rgba(0,0,0,0.55)'},
   xbtn: {width: 34, alignItems: 'center', justifyContent: 'center'},
   xtxt: {color: '#fff', fontSize: 24, lineHeight: 26},

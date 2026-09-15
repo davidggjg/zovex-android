@@ -46,6 +46,9 @@ export default function CastLayer({
 }
 
 const styles = StyleSheet.create({
+  // ימין קבוע — הצד הנגדי לכפתור הסגירה, שנעול עכשיו משמאל בשתי השפות
+  // (ראה NativePlayer.topbar). מיקום מפורש ולא לפי כיוון הכתיבה, אחרת
+  // שניהם נוחתים באותו צד ברגע שמחליפים שפה.
   wrap: {position: 'absolute', top: 10, right: 12, zIndex: 20},
   btn: {width: 40, height: 40, tintColor: '#fff'},
 });
