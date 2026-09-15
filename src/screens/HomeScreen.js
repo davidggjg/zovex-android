@@ -28,12 +28,14 @@ import {
   fetchMoviesFast,
   fetchItemDetail,
   fetchHistory,
+  fetchTrailerKey,
   fetchFavoriteIds,
   addFavorite,
   removeFavorite,
   clearCache,
   isCatalogStale,
 } from '../api/movies';
+import {WebView} from 'react-native-webview';
 import {getUserId} from '../api/userStore';
 import {
   getDownloads,
@@ -158,6 +160,20 @@ function MovieDetailModal({
   downloadedIds, downloadingId, downloadProgress, onDownload, onDeleteDownload,
   isFavorite, onToggleFavorite,
 }) {
+  // ── טריילר ────────────────────────────────────────────────────────────
+  // מנוגן במקום הפוסטר כשיש. הפוסטר נשאר ברירת המחדל ולא מוחלף עד שהמפתח
+  // חוזר בפועל, כך שפריט בלי טריילר נראה בדיוק כמו קודם ואין הבהוב.
+  const [trailerKey, setTrailerKey] = useState(null);
+  const [trailerOff, setTrailerOff] = useState(false);   // הצופה סגר אותו
+  useEffect(() => {
+    let alive = true;
+    setTrailerKey(null); setTrailerOff(false);
+    if (item?.id && !item.is_live) {
+      fetchTrailerKey(item.id).then(k => { if (alive) setTrailerKey(k); });
+    }
+    return () => { alive = false; };
+  }, [item?.id, item?.is_live]);
+
   const [selectedSeason, setSelectedSeason] = useState(null);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
   const [seasonLoading, setSeasonLoading] = useState(false);
@@ -249,7 +265,27 @@ function MovieDetailModal({
           <Text style={mdStyles.closeTxt}>✕</Text>
         </TvFocusable>
         <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
-          {item.thumbnail_url ? (
+          {trailerKey && !trailerOff ? (
+            <View style={mdStyles.thumb}>
+              <WebView
+                style={mdStyles.trailerWeb}
+                source={{uri: `https://www.youtube.com/embed/${trailerKey}` +
+                  '?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1'}}
+                allowsInlineMediaPlayback
+                mediaPlaybackRequiresUserAction={false}
+                javaScriptEnabled
+                domStorageEnabled
+                // כישלון טעינה (אין רשת, יוטיוב חסום) מחזיר לפוסטר במקום
+                // להשאיר מלבן שחור.
+                onError={() => setTrailerOff(true)}
+                onHttpError={() => setTrailerOff(true)}
+              />
+              <TouchableOpacity style={mdStyles.trailerX}
+                onPress={() => setTrailerOff(true)}>
+                <Text style={mdStyles.trailerXTxt}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ) : item.thumbnail_url ? (
             <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
           ) : (
             <View style={mdStyles.noThumb}>
@@ -386,6 +422,13 @@ function MovieDetailModal({
 }
 
 const mdStyles = StyleSheet.create({
+  trailerWeb: {flex: 1, backgroundColor: '#000'},
+  // כפתור סגירת הטריילר. מי שרוצה לראות את הפוסטר, או שהסאונד מפריע לו,
+  // סוגר וחוזר לתמונה.
+  trailerX: {position: 'absolute', top: 8, right: 8, width: 30, height: 30,
+             borderRadius: 15, backgroundColor: 'rgba(0,0,0,0.55)',
+             alignItems: 'center', justifyContent: 'center'},
+  trailerXTxt: {color: '#fff', fontSize: 15, lineHeight: 17},
   overlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: '#0a0a0a',

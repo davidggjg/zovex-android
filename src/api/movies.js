@@ -169,6 +169,23 @@ export async function fetchHistory(userId) {
   return Array.isArray(res) ? res : [];
 }
 
+// ── טריילרים ─────────────────────────────────────────────────────────────────
+// מחזיר מפתח יוטיוב, או null כשאין. השרת מחזיק את מפתח ה-TMDB ואת המטמון —
+// ראה fix_add_trailers.py. null הוא תשובה תקינה ולא שגיאה: לחצי מהקטלוג אין
+// tmdb_id, ולתוכן ישראלי לרוב אין טריילר ב-TMDB בכלל.
+
+export async function fetchTrailerKey(id) {
+  if (!id) return null;
+  try {
+    const res = await fetch(`${BACKEND_URL}/content/trailer/${encodeURIComponent(String(id))}`);
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.key ? String(j.key) : null;
+  } catch {
+    return null;
+  }
+}
+
 // ── מועדפים ──────────────────────────────────────────────────────────────────
 // נשמרים בשרת ולא במכשיר: מועדפים מקומיים נעלמים בהתקנה מחדש ולא עוברים
 // בין טלפון לטלוויזיה. אותו מנגנון בדיוק כמו ההיסטוריה (x-user-id).
