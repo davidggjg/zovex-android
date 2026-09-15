@@ -95,6 +95,14 @@ async function rememberSilent(movie) {
   } catch (_) {}
 }
 
+// "1:23:45" לסרט ארוך, "23:45" לפרק. משמש בחלון "להמשיך מאיפה שעצרת".
+function fmtClock(sec) {
+  const t = Math.max(0, Math.floor(sec || 0));
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  const pad = n => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(x)}` : `${m}:${pad(x)}`;
+}
+
 function silentKeys(movie) {
   const k = [];
   if (movie.id) k.push(String(movie.id));
@@ -776,27 +784,62 @@ export default function PlayerScreen({route, navigation}) {
   // המדרגה הראשונה כשמתגלה שאין קול: לנגן את אותו קובץ בנגן הנייטיב, שבו
   // מפענחי ה-FFmpeg שהאפליקציה מביאה איתה מטפלים ב-ec-3. {at} או null.
   const [nativeAudio, setNativeAudio] = useState(null);
-  // אם כבר ידוע שהפריט (או הסדרה שלו) אילם — נכנסים ישר לנגן הנייטיב, עם
-  // קול מהשנייה הראשונה, בלי ההמתנה של הבדיקה.
+
+  // ── "להמשיך מאיפה שעצרת?" ────────────────────────────────────────────────
+  // שלושת מסלולי הנגינה (WebView, נגן נייטיב, נפילת-קול) קראו כל אחד
+  // loadProgress בנפרד ודילגו בשקט. זה גם שכפל קריאות רשת וגם לא השאיר שום
+  // מקום לשאול את הצופה. עכשיו יש החלטה אחת שכולם קוראים ממנה:
+  //   resumeAt === null → עוד לא הוכרע (החלון פתוח)
+  //   resumeAt === 0    → מההתחלה
+  //   resumeAt > 0      → להמשיך משם
+  const resumeSettled = startTime > 0 || isLive || !userId;
+  const [resumeAt, setResumeAt] = useState(resumeSettled ? (startTime || 0) : null);
+  const [resumeAsk, setResumeAsk] = useState(null);   // המיקום שעליו שואלים
   useEffect(() => {
-    if (isLive || isTv) return;
+    if (resumeSettled) return;
     let alive = true;
-    loadSilentSet().then(async set => {
-      if (!alive || !silentKeys(movie).some(k => set.has(k))) return;
-      // "המשך צפייה" נטען כאן במפורש: המסלול הרגיל מזריק אותו ל-WebView,
-      // ובכניסה ישירה לנגן הנייטיב אין WebView שיקבל את ההזרקה.
-      let at = startTime || 0;
-      if (!at && userId) {
-        try {
-          const pos = await loadProgress(movie.id, userId);
-          if (pos > 5) at = pos;
-        } catch (_) {}
-      }
-      if (alive) setNativeAudio({at});
-    });
+    loadProgress(movie.id, userId)
+      .then(pos => {
+        if (!alive) return;
+        // שואלים רק על מיקום משמעותי. חלון על עשר שניות הוא הפרעה, לא שירות.
+        if (pos > 60) setResumeAsk(pos);
+        else setResumeAt(0);
+      })
+      .catch(() => { if (alive) setResumeAt(0); });
     return () => { alive = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // כל עוד החלון פתוח הווידאו מושתק ועוצר, כדי שלא ינגן מההתחלה מאחוריו.
+  const answerResume = pos => {
+    setResumeAt(pos);
+    setResumeAsk(null);
+    try {
+      webViewRef.current?.injectJavaScript(
+        'try{var v=document.querySelector("video");v&&v.play();}catch(e){};true;');
+    } catch (_) {}
+  };
+  useEffect(() => {
+    if (resumeAsk == null) return;
+    try {
+      webViewRef.current?.injectJavaScript(
+        'try{var v=document.querySelector("video");v&&v.pause();}catch(e){};true;');
+    } catch (_) {}
+  }, [resumeAsk]);
+  // אם כבר ידוע שהפריט (או הסדרה שלו) אילם — נכנסים ישר לנגן הנייטיב, עם
+  // קול מהשנייה הראשונה, בלי ההמתנה של הבדיקה.
+  useEffect(() => {
+    if (isLive || isTv || resumeAt === null) return;
+    let alive = true;
+    loadSilentSet().then(set => {
+      if (!alive || !silentKeys(movie).some(k => set.has(k))) return;
+      // המיקום מגיע מנקודת ההחלטה המשותפת: בכניסה ישירה לנגן הנייטיב אין
+      // WebView שיקבל הזרקת דילוג, ולכן הוא חייב להיוולד עם המיקום הנכון.
+      setNativeAudio({at: resumeAt || 0});
+    });
+    return () => { alive = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeAt]);
 
   const {src, html, isIframe} = useMemo(() => {
     const at = audioFix ? audioFix.at : (isLive ? 0 : startTime);
@@ -894,17 +937,12 @@ export default function PlayerScreen({route, navigation}) {
 
   // Load saved progress in background and seek once the video is ready
   useEffect(() => {
-    if (!userId || startTime > 0 || isLive) return;
-    loadProgress(movie.id, userId).then(pos => {
-      if (pos > 5 && webViewRef.current) {
-        progressRef.current.position = pos;
-        webViewRef.current.injectJavaScript(
-          `window._seekTo&&window._seekTo(${Math.floor(pos)});true;`,
-        );
-      }
-    });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!resumeAt || !webViewRef.current) return;
+    progressRef.current.position = resumeAt;
+    webViewRef.current.injectJavaScript(
+      `window._seekTo&&window._seekTo(${Math.floor(resumeAt)});true;`,
+    );
+  }, [resumeAt]);
 
   // מעבר לפרק הבא (משמש גם ל-WebView וגם לנגן הנייטיב כשפרק נגמר). מחזיר
   // true אם עבר לפרק הבא, false אם אין (סרט בודד / פרק אחרון).
@@ -931,17 +969,10 @@ export default function PlayerScreen({route, navigation}) {
   const [nativeStart, setNativeStart] = useState(startTime || 0);
   const [nativeError, setNativeError] = useState(null);
   useEffect(() => {
-    if (!useNative || !userId || startTime > 0 || isLive) return;
-    let alive = true;
-    loadProgress(movie.id, userId).then(pos => {
-      if (alive && pos > 5) {
-        progressRef.current.position = pos;
-        setNativeStart(pos);
-      }
-    });
-    return () => { alive = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (!useNative || !resumeAt) return;
+    progressRef.current.position = resumeAt;
+    setNativeStart(resumeAt);
+  }, [useNative, resumeAt]);
 
   const onMessage = event => {
     try {
@@ -1012,6 +1043,23 @@ export default function PlayerScreen({route, navigation}) {
 
   return (
     <View style={styles.container}>
+      {resumeAsk != null ? (
+        <View style={styles.resumeWrap}>
+          <View style={styles.resumeCard}>
+            <Text style={styles.resumeTitle}>להמשיך מאיפה שעצרת?</Text>
+            <Text style={styles.resumeSub} numberOfLines={2}>{movie.title || ''}</Text>
+            <Text style={styles.resumeTime}>{fmtClock(resumeAsk)}</Text>
+            <TouchableOpacity
+              style={[styles.resumeBtn, styles.resumeBtnMain]}
+              onPress={() => answerResume(resumeAsk)}>
+              <Text style={styles.resumeBtnMainTxt}>המשך מכאן</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.resumeBtn} onPress={() => answerResume(0)}>
+              <Text style={styles.resumeBtnTxt}>התחל מההתחלה</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
       {/* מסלול תיקון-הקול בטלפון: ExoPlayer (עם מפענחי ה-FFmpeg) אבל עם
           הפקדים שלנו, כדי שזה לא ירגיש כמו אפליקציה אחרת באמצע הסרט.
           בטלוויזיה ממשיכים עם הפקדים המובנים — הם אלה שעובדים עם השלט. */}
@@ -1150,6 +1198,26 @@ export default function PlayerScreen({route, navigation}) {
 }
 
 const styles = StyleSheet.create({
+  // חלון "להמשיך מאיפה שעצרת". יושב מעל הנגן (zIndex גבוה) כי הווידאו
+  // ממשיך להתקיים מתחתיו — הוא רק מושהה עד שהצופה עונה.
+  resumeWrap: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 90,
+    backgroundColor: 'rgba(0,0,0,0.82)', alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 24,
+  },
+  resumeCard: {
+    width: '100%', maxWidth: 380, backgroundColor: '#15181f', borderRadius: 18,
+    paddingVertical: 26, paddingHorizontal: 22, alignItems: 'center',
+  },
+  resumeTitle: {color: '#fff', fontSize: 19, fontWeight: '700', textAlign: 'center'},
+  resumeSub: {color: '#9aa0a6', fontSize: 13, marginTop: 6, textAlign: 'center'},
+  resumeTime: {color: '#4d8dff', fontSize: 30, fontWeight: '800', marginTop: 12,
+               marginBottom: 20, fontVariant: ['tabular-nums']},
+  resumeBtn: {width: '100%', paddingVertical: 14, borderRadius: 12, marginTop: 10,
+              alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.09)'},
+  resumeBtnMain: {backgroundColor: '#2f6df6', marginTop: 0},
+  resumeBtnMainTxt: {color: '#fff', fontSize: 16, fontWeight: '700'},
+  resumeBtnTxt: {color: '#e8eaed', fontSize: 15, fontWeight: '600'},
   container: {flex: 1, backgroundColor: '#000'},
   player: {flex: 1, backgroundColor: '#000'},
   castBtn: {position: 'absolute', top: 10, right: 12, width: 40, height: 40, tintColor: '#fff', zIndex: 20},
