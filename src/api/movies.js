@@ -1,3 +1,5 @@
+import {getLanguage} from '../i18n';
+
 const MAIN_SITE_ORIGIN = 'https://zovex.duckdns.org';
 // /content/lite = אותו קטלוג בלי שדה ה-description הכבד (הכי גדול), עם ETag
 // ותמיכה ב-?limit לציור מיידי. הגרסה הקודמת משכה את /content המלא עם ?t=<now>
@@ -71,7 +73,11 @@ export async function fetchMoviesFast() {
 export async function fetchItemDetail(id) {
   if (!id) return null;
   try {
-    const res = await fetch(ITEM_URL + encodeURIComponent(id));
+    // השרת מחליף שם ותקציר בגרסה האנגלית של TMDB כשיש. פריט בלי tmdb_id
+    // חוזר בעברית — וזו התנהגות תקינה, לא כשל.
+    const lang = getLanguage();
+    const q = lang && lang !== 'he' ? `?lang=${encodeURIComponent(lang)}` : '';
+    const res = await fetch(ITEM_URL + encodeURIComponent(id) + q);
     if (!res.ok) throw new Error('fetch failed');
     const m = await res.json();
     if (m && m.thumbnail_url) m.thumbnail_url = resolveImage(m.thumbnail_url);

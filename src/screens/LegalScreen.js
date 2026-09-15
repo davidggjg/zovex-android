@@ -3,12 +3,15 @@ import TvFocusable from '../components/TvFocusable';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking, StatusBar,
 } from 'react-native';
-import {LEGAL_DOCS, UPDATED} from '../config/legal';
+import {getLegalDocs, getUpdated} from '../config/legal';
 import {TELEGRAM_URL, DISCORD_URL} from '../config/links';
 
 // מסך מידע ותנאים. הטקסט מקומי ולא נמשך מהרשת, כדי שהוא ייפתח גם בלי
 // חיבור — וגם כדי שחנות האפליקציות תראה מדיניות פרטיות זמינה תמיד.
 export default function LegalScreen({route, navigation}) {
+  // נקרא בכל ציור ולא בזמן ייבוא, כדי ששינוי שפה ישתקף כאן מיד.
+  const LEGAL_DOCS = getLegalDocs();
+  const UPDATED = getUpdated();
   const initial = route?.params?.doc;
   const startIndex = Math.max(0, LEGAL_DOCS.findIndex(d => d.key === initial));
   const [index, setIndex] = useState(startIndex);
