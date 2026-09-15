@@ -767,6 +767,13 @@ if(IS_HLS){
     var _cfg={};
     if(IS_LIVE){
       _cfg.streaming={bufferingGoal:30,rebufferingGoal:4,retryParameters:{maxAttempts:5,baseDelay:500,backoffFactor:2,timeout:15000}};
+      // manifest.retryParameters הוא *נפרד* מ-streaming: הראשון חל על
+      // טעינת ה-m3u8 והשני על הסגמנטים. הוגדר כאן רק streaming, ולכן
+      // בקשת המניפסט רצה עם ברירות המחדל ונפלה על
+      //   shaka 1003 (TIMEOUT) | hls networkError/manifestLoadError
+      // הרלה צריך לפתוח את הזרם מול הספק בפנייה הראשונה, וזה לוקח יותר
+      // ממה שברירת המחדל מרשה. בדפדפן זה עבד כי שם התקציב נדיב יותר.
+      _cfg.manifest={retryParameters:{maxAttempts:4,baseDelay:1000,backoffFactor:2,timeout:35000}};
     }
     if(IS_TV){
       _cfg.restrictions={maxHeight:720};
@@ -800,7 +807,12 @@ if(IS_HLS){
     document.getElementById('wrap').insertBefore(v,loader);
     initVideo(v);
     if(window.Hls&&Hls.isSupported()){
-      var hls=new Hls({maxBufferLength:IS_TV?16:30,capLevelToPlayerSize:IS_TV,enableWorker:false});
+      // ברירת המחדל של hls.js למניפסט היא 10 שניות ונסיון אחד — קצר מדי
+      // לפנייה ראשונה שמעירה את הרלה. אותו נימוק כמו ב-manifest של Shaka.
+      var hls=new Hls({maxBufferLength:IS_TV?16:30,capLevelToPlayerSize:IS_TV,enableWorker:false,
+        manifestLoadingTimeOut:35000,manifestLoadingMaxRetry:4,manifestLoadingRetryDelay:1000,
+        levelLoadingTimeOut:35000,levelLoadingMaxRetry:4,
+        fragLoadingTimeOut:40000,fragLoadingMaxRetry:6});
       hls.loadSource(SRC);hls.attachMedia(v);
       hls.on(Hls.Events.MANIFEST_PARSED,function(){
         if(START>1){try{v.currentTime=START;}catch{}}
