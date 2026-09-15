@@ -294,6 +294,23 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #timestr{color:rgba(255,255,255,.75);font:12px Arial;white-space:nowrap}
 .livedot{display:inline-flex;align-items:center;gap:6px;color:#fff;font:900 12px Arial}
 .livedot span{width:8px;height:8px;border-radius:50%;background:#e50914;display:inline-block;animation:liveDot 1.5s ease-in-out infinite}
+/* חלון המהירות. יושב מעל הפקדים ונסגר בלחיצה מחוץ לו. */
+#ratesheet{display:none;position:absolute;right:16px;bottom:96px;z-index:60;
+  background:rgba(22,24,30,0.97);border-radius:14px;padding:12px 10px;min-width:170px;
+  box-shadow:0 10px 30px rgba(0,0,0,0.5);}
+#ratesheet.on{display:block}
+.rshead{color:#9aa0a6;font-size:12px;padding:2px 10px 8px;text-align:right}
+.rsopt{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  color:#e8eaed;font-size:15px;padding:10px 12px;border-radius:9px;cursor:pointer}
+.rsopt.sel{background:rgba(47,109,246,0.22);color:#8db4ff;font-weight:700}
+#ratelbl{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);
+  font-size:9px;font-weight:700;color:#8db4ff;letter-spacing:-0.3px}
+#ratebtn{position:relative}
+/* תג שמופיע כל עוד מחזיקים את המסך — משוב שהמהירות אכן השתנתה. */
+#holdbadge{display:none;position:absolute;top:22px;left:50%;transform:translateX(-50%);
+  z-index:60;background:rgba(0,0,0,0.72);color:#fff;font-size:15px;font-weight:700;
+  padding:7px 16px;border-radius:20px;letter-spacing:0.5px}
+#holdbadge.on{display:block}
 #ctrls{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   display:flex;align-items:center;gap:32px;z-index:20;transition:opacity .3s}
 .cbtn{background:none;border:none;color:#fff;width:58px;height:58px;border-radius:50%;cursor:pointer;
@@ -349,6 +366,7 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
             : '<div id="timestr">0:00 / 0:00</div>'}
         </div>
         <div class="bright">
+          ${isLive ? '' : '<button class="ibtn" id="ratebtn" title="מהירות"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg><span id="ratelbl"></span></button>'}
           <button class="ibtn" id="pipbtn" style="display:none"></button>
           <button class="ibtn" id="fsbtn"></button>
         </div>
@@ -357,6 +375,11 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
     <div id="skipanim"><div class="skipbox"><span id="skipicon"></span><span id="skiptext"></span></div></div>
     ${hasNext ? `<div id="nextcard"><div class="nclbl">הפרק הבא</div><div class="nctitle" id="nexttitle"></div><button class="ncbtn" onclick="goNextEp()">המשך לפרק הבא ▶</button></div>` : ''}
     <div id="resumetoast"></div>
+    <div id="ratesheet">
+      <div class="rshead">מהירות הפעלה</div>
+      <div class="rsopts" id="rsopts"></div>
+    </div>
+    <div id="holdbadge">‏×2 ⏩</div>
   </div>
 </div>
 ${hls ? `<script>${escapeForInlineScript(SHAKA_PLAYER_SOURCE)}</script>
@@ -558,6 +581,70 @@ if(closebtn)closebtn.addEventListener('click',function(){postMsg({type:'close'})
 document.getElementById('mutebtn').addEventListener('click',toggleMute);
 document.getElementById('fsbtn').addEventListener('click',goFullscreen);
 
+/* ── מהירות הפעלה ─────────────────────────────────────────────────────────
+   curRate היא המהירות שהצופה בחר. holdRate היא הזמנית של הלחיצה הארוכה;
+   היא לא דורסת את הבחירה, ולכן שחרור האצבע חוזר בדיוק למה שנבחר.
+   שומרים גם כי הנגן נוצר מחדש במעברים (תיקון קול, פרק הבא) וה-playbackRate
+   מתאפס לאחד — setRate נקרא שוב ב-initVideo.                              */
+var RATES=[0.5,0.75,1,1.25,1.5,1.75,2];
+var curRate=1, holding=false, holdTimer=null, suppressTap=false;
+function applyRate(r){try{if(vid)vid.playbackRate=r;}catch(e){}}
+function renderRate(){
+  var lbl=document.getElementById('ratelbl');
+  if(lbl) lbl.textContent = curRate===1 ? '' : (curRate+'x');
+  var box=document.getElementById('rsopts'); if(!box) return;
+  box.innerHTML = RATES.map(function(r){
+    return '<div class="rsopt'+(r===curRate?' sel':'')+'" data-r="'+r+'">'
+         + '<span>'+(r===1?'רגיל':r+'x')+'</span><span>'+(r===curRate?'✓':'')+'</span></div>';
+  }).join('');
+  Array.prototype.forEach.call(box.querySelectorAll('.rsopt'),function(el){
+    el.addEventListener('click',function(){
+      curRate=parseFloat(el.getAttribute('data-r'));
+      if(!holding) applyRate(curRate);
+      renderRate(); toggleSheet(false);
+    });
+  });
+}
+function toggleSheet(on){
+  var sh=document.getElementById('ratesheet'); if(!sh) return;
+  var show = (on===undefined) ? !sh.classList.contains('on') : !!on;
+  sh.classList.toggle('on',show);
+  if(show) showCtrls();
+}
+var rb=document.getElementById('ratebtn');
+if(rb) rb.addEventListener('click',function(e){e.stopPropagation();toggleSheet();});
+
+/* לחיצה ארוכה על המסך = ×2 כל עוד מחזיקים. מתעלמים מנגיעות על הפקדים
+   עצמם, אחרת החזקה על כפתור הייתה משנה מהירות במקום ללחוץ עליו.        */
+function inControls(t){
+  while(t&&t!==document.body){
+    var id=t.id||'';
+    if(id==='bottombar'||id==='ctrls'||id==='ratesheet'||id==='nextcard') return true;
+    t=t.parentNode;
+  }
+  return false;
+}
+document.addEventListener('touchstart',function(e){
+  if(inControls(e.target)) return;
+  var sh=document.getElementById('ratesheet');
+  if(sh&&sh.classList.contains('on')){toggleSheet(false);return;}
+  holdTimer=setTimeout(function(){
+    holding=true; suppressTap=true; applyRate(2);
+    var b=document.getElementById('holdbadge'); if(b) b.classList.add('on');
+  },450);
+},{passive:true});
+function endHold(){
+  clearTimeout(holdTimer);
+  if(holding){
+    holding=false; applyRate(curRate);
+    var b=document.getElementById('holdbadge'); if(b) b.classList.remove('on');
+  }
+}
+document.addEventListener('touchend',endHold,{passive:true});
+document.addEventListener('touchcancel',endHold,{passive:true});
+document.addEventListener('touchmove',function(){clearTimeout(holdTimer);},{passive:true});
+renderRate();
+
 // ── Seek bar ──────────────────────────────────────────────────
 function doSeek(e){
   if(!vid||!progwrap)return;
@@ -577,6 +664,8 @@ if(progwrap){
 }
 
 function initVideo(el){
+  // הנגן נוצר מחדש במעברים (תיקון קול, פרק הבא) וה-playbackRate מתאפס.
+  try{setTimeout(function(){if(el&&curRate!==1)el.playbackRate=curRate;},0);}catch(e){}
   vid=el;
   function showResume(t){
     var rt=document.getElementById('resumetoast');if(!rt)return;

@@ -119,6 +119,14 @@ export default function NativePlayer({
     }),
   ).current;
 
+  // מהירות הפעלה. rate היא הבחירה של הצופה; held היא הזמנית של הלחיצה
+  // הארוכה, ולכן שחרור האצבע חוזר בדיוק לבחירה ולא ל-1.
+  const RATES = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+  const [rate, setRate] = useState(1);
+  const [held, setHeld] = useState(false);
+  const [rateSheet, setRateSheet] = useState(false);
+  const effRate = held ? 2 : rate;
+
   const frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
 
   return (
@@ -129,6 +137,7 @@ export default function NativePlayer({
         style={StyleSheet.absoluteFill}
         controls={false}
         paused={paused}
+        rate={effRate}
         resizeMode="contain"
         progressUpdateInterval={500}
         onLoad={d => {
@@ -167,7 +176,18 @@ export default function NativePlayer({
 
       {/* שכבת הקשה: מציגה ומסתירה את הפקדים */}
       <Pressable style={StyleSheet.absoluteFill}
-        onPress={() => (shown ? setShown(false) : poke())} />
+        onPress={() => {
+          if (rateSheet) { setRateSheet(false); return; }
+          shown ? setShown(false) : poke();
+        }}
+        onLongPress={() => setHeld(true)}
+        delayLongPress={450}
+        onPressOut={() => setHeld(false)} />
+      {held && (
+        <View style={styles.holdBadge} pointerEvents="none">
+          <Text style={styles.holdTxt}>×2 ⏩</Text>
+        </View>
+      )}
 
       {!ready && <ActivityIndicator style={styles.center} color={ACCENT} size="large" />}
 
@@ -208,6 +228,11 @@ export default function NativePlayer({
             </View>
             <View style={styles.brow}>
               <Text style={styles.time}>{fmt(pos)} / {fmt(dur)}</Text>
+              <TouchableOpacity style={styles.gearBtn}
+                onPress={() => { setRateSheet(v => !v); poke(); }}>
+                <Text style={styles.gearTxt}>⚙</Text>
+                {rate !== 1 && <Text style={styles.gearRate}>{rate}x</Text>}
+              </TouchableOpacity>
               {hasNext && (
                 <TouchableOpacity style={styles.nextBtn} onPress={onNext}>
                   <Text style={styles.nextTxt}>
@@ -217,6 +242,21 @@ export default function NativePlayer({
               )}
             </View>
           </View>
+
+          {rateSheet && (
+            <View style={styles.sheet}>
+              <Text style={styles.sheetHead}>מהירות הפעלה</Text>
+              {RATES.map(r => (
+                <TouchableOpacity key={r} style={[styles.sheetOpt, r === rate && styles.sheetOptSel]}
+                  onPress={() => { setRate(r); setRateSheet(false); poke(); }}>
+                  <Text style={[styles.sheetTxt, r === rate && styles.sheetTxtSel]}>
+                    {r === 1 ? 'רגיל' : `${r}x`}
+                  </Text>
+                  <Text style={styles.sheetTxtSel}>{r === rate ? '✓' : ''}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </>
       )}
 
@@ -230,6 +270,25 @@ export default function NativePlayer({
 }
 
 const styles = StyleSheet.create({
+  gearBtn: {paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center',
+            justifyContent: 'center', flexDirection: 'row'},
+  gearTxt: {color: '#fff', fontSize: 18},
+  gearRate: {color: '#8db4ff', fontSize: 11, fontWeight: '700', marginRight: 3},
+  sheet: {position: 'absolute', right: 16, bottom: 92, zIndex: 60, minWidth: 170,
+          backgroundColor: 'rgba(22,24,30,0.97)', borderRadius: 14, paddingVertical: 10,
+          paddingHorizontal: 8},
+  sheetHead: {color: '#9aa0a6', fontSize: 12, paddingHorizontal: 10, paddingBottom: 6,
+              textAlign: 'right'},
+  sheetOpt: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+             paddingVertical: 10, paddingHorizontal: 12, borderRadius: 9},
+  sheetOptSel: {backgroundColor: 'rgba(47,109,246,0.22)'},
+  sheetTxt: {color: '#e8eaed', fontSize: 15},
+  sheetTxtSel: {color: '#8db4ff', fontWeight: '700'},
+  // תג שמופיע כל עוד מחזיקים — משוב שהמהירות אכן השתנתה.
+  holdBadge: {position: 'absolute', top: 22, alignSelf: 'center', zIndex: 60,
+              backgroundColor: 'rgba(0,0,0,0.72)', paddingVertical: 7,
+              paddingHorizontal: 16, borderRadius: 20},
+  holdTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   wrap: {flex: 1, backgroundColor: '#000'},
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     justifyContent: 'center', alignItems: 'center'},
