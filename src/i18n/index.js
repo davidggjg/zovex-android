@@ -104,3 +104,22 @@ export function catName(cat) {
   if (current !== 'en') return cat;
   return CATEGORIES_EN[cat] || cat;
 }
+
+// ── שמות ז'אנרים של ערוצים חיים ──────────────────────────────────────────────
+// כמו הקטגוריות: השם העברי הוא מפתח הקיבוץ ב-liveGenres.js, אז מתרגמים רק
+// לתצוגה. שינוי המפתח עצמו היה מפרק את החלוקה לשורות.
+const GENRES_EN = {
+  '👶 ילדים': '👶 Kids',
+  '⚽ ספורט': '⚽ Sports',
+  '📰 חדשות ואקטואליה': '📰 News',
+  '🌍 דוקו וטבע': '🌍 Documentary & Nature',
+  '🎬 סרטים': '🎬 Movies',
+  '📺 סדרות ודרמה': '📺 Series & Drama',
+  '✨ לייף סטייל ובידור': '✨ Lifestyle & Entertainment',
+  '📡 עוד ערוצים': '📡 More channels',
+};
+
+export function genreName(g) {
+  if (current !== 'en') return g;
+  return GENRES_EN[g] || g;
+}

@@ -59,6 +59,41 @@ const he = {
   'settings.version': 'גרסה {v}',
 
   // רשת
+
+  // תמיכה
+  'support.kind.support': 'תמיכה 💬',
+  'support.kind.review': 'חוות דעת ⭐',
+  'support.kind.tip': 'טיפ 💡',
+  'support.gate': 'תמיכה, חוות דעת וטיפ פתוחים רק למחוברים',
+  'support.empty': 'כתבו לנו כל דבר — בעיה, חוות דעת או רעיון לשיפור',
+  'support.placeholder': 'כתבו הודעה...',
+  'support.send': 'שלח',
+  'support.button': 'תמיכה',
+
+  // עדכון גרסה
+  'update.install': 'התקן',
+  'update.required': 'עדכון נדרש',
+  'update.available': 'גרסה חדשה זמינה',
+  'update.forcedBody': 'הגרסה שלכם אינה נתמכת יותר. יש לעדכן כדי להמשיך להשתמש באפליקציה.',
+  'update.optionalBody': 'שדרגנו את האפליקציה! מומלץ לעדכן לגרסה האחרונה.',
+  'update.installing': 'מתקין…',
+  'update.badFile': 'הקובץ שהתקבל אינו תקין',
+  'update.failed': 'העדכון האוטומטי נכשל. פותח את הדף להורדה ידנית.',
+
+  // ערוצים חיים
+  'live.notYet': 'עדיין לא הגיע',
+  'live.title': 'שידור חי',
+  'live.reminderSet': '🔔 יזכיר',
+  'live.remindMe': 'הזכר לי',
+  'genre.kids': '👶 ילדים',
+  'genre.sport': '⚽ ספורט',
+  'genre.news': '📰 חדשות ואקטואליה',
+  'genre.doc': '🌍 דוקו וטבע',
+  'genre.movies': '🎬 סרטים',
+  'genre.series': '📺 סדרות ודרמה',
+  'genre.lifestyle': '✨ לייף סטייל ובידור',
+  'genre.other': '📡 עוד ערוצים',
+
   'net.offline': 'אין חיבור לשרת',
   'net.offlineHint': 'ייתכן שהרשת שאתה מחובר אליה חוסמת את השירות. נסה רשת אחרת או נתונים סלולריים.',
 };
@@ -110,6 +145,38 @@ const en = {
   'settings.restartNeeded': 'To finish switching, close the app and open it again.',
   'settings.about': 'About',
   'settings.version': 'Version {v}',
+
+
+  'support.kind.support': 'Support 💬',
+  'support.kind.review': 'Review ⭐',
+  'support.kind.tip': 'Tip 💡',
+  'support.gate': 'Support, reviews and tips are available to signed-in users only',
+  'support.empty': 'Write to us about anything — a problem, feedback or an idea',
+  'support.placeholder': 'Write a message...',
+  'support.send': 'Send',
+  'support.button': 'Support',
+
+  'update.install': 'Install',
+  'update.required': 'Update required',
+  'update.available': 'A new version is available',
+  'update.forcedBody': 'Your version is no longer supported. Please update to keep using the app.',
+  'update.optionalBody': 'We have improved the app. Updating to the latest version is recommended.',
+  'update.installing': 'Installing…',
+  'update.badFile': 'The downloaded file is not valid',
+  'update.failed': 'The automatic update failed. Opening the download page.',
+
+  'live.notYet': 'Not started yet',
+  'live.title': 'Live',
+  'live.reminderSet': '🔔 Reminder set',
+  'live.remindMe': 'Remind me',
+  'genre.kids': '👶 Kids',
+  'genre.sport': '⚽ Sports',
+  'genre.news': '📰 News',
+  'genre.doc': '🌍 Documentary & Nature',
+  'genre.movies': '🎬 Movies',
+  'genre.series': '📺 Series & Drama',
+  'genre.lifestyle': '✨ Lifestyle & Entertainment',
+  'genre.other': '📡 More channels',
 
   'net.offline': 'No connection to the server',
   'net.offlineHint': 'The network you are on may be blocking the service. Try a different network or mobile data.',

@@ -1,4 +1,5 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
+import {t} from '../i18n';
 import {I18nManager} from 'react-native';
 import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity,
@@ -237,7 +238,7 @@ export default function NativePlayer({
               {hasNext && (
                 <TouchableOpacity style={styles.nextBtn} onPress={onNext}>
                   <Text style={styles.nextTxt}>
-                    {nextLabel ? `הבא: ${nextLabel}` : 'הפרק הבא ▶'}
+                    {nextLabel ? `${t('player.nextLabel')}: ${nextLabel}` : t('player.nextEpisode')}
                   </Text>
                 </TouchableOpacity>
               )}
@@ -251,7 +252,7 @@ export default function NativePlayer({
                 <TouchableOpacity key={r} style={[styles.sheetOpt, r === rate && styles.sheetOptSel]}
                   onPress={() => { setRate(r); setRateSheet(false); poke(); }}>
                   <Text style={[styles.sheetTxt, r === rate && styles.sheetTxtSel]}>
-                    {r === 1 ? 'רגיל' : `${r}x`}
+                    {r === 1 ? t('player.speedNormal') : `${r}x`}
                   </Text>
                   <Text style={styles.sheetTxtSel}>{r === rate ? '✓' : ''}</Text>
                 </TouchableOpacity>

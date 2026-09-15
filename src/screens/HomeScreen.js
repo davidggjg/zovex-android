@@ -36,7 +36,7 @@ import {
   isCatalogStale,
 } from '../api/movies';
 import {WebView} from 'react-native-webview';
-import {catName} from '../i18n';
+import {catName, genreName, t} from '../i18n';
 import {getUserId} from '../api/userStore';
 import {
   getDownloads,
@@ -292,8 +292,21 @@ function MovieDetailModal({
                 <View style={mdStyles.trailerFrame}>
                   <WebView
                     style={mdStyles.trailerWeb}
-                    source={{uri: `https://www.youtube.com/embed/${trailerKey}` +
-                      '?playsinline=1&rel=0&modestbranding=1&fs=1'}}
+                    // HTML מקומי עם baseUrl ולא טעינת ה-embed ישירות.
+                    // WebView שטוען youtube.com/embed בכתובת מגיע בלי origin
+                    // תקין, ויוטיוב דוחה את ההטמעה עם "שגיאה 153". עם baseUrl
+                    // של הדומיין שלנו יש מקור חוקי וההטמעה מתקבלת.
+                    originWhitelist={['*']}
+                    source={{
+                      baseUrl: 'https://zovex.duckdns.org',
+                      html: `<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}
+iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
+<iframe src="https://www.youtube.com/embed/${trailerKey}?playsinline=1&rel=0&modestbranding=1&fs=1&enablejsapi=1"
+ allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+ allowfullscreen></iframe></body></html>`,
+                    }}
                     allowsInlineMediaPlayback
                     allowsFullscreenVideo
                     mediaPlaybackRequiresUserAction={false}
@@ -638,22 +651,45 @@ const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// קטגוריית הסדרה נקבעת לפי *רוב* הפרקים ולא לפי הפרק הראשון שנתקלים בו.
+// בקטלוג יש 11 סדרות שבהן פרק בודד מסווג אחרת מכל השאר — למשל 149 פרקים
+// של "דרגון בול לעברית" תחת "סדרות" ועוד 4 תחת "אנימה". כשהקטגוריה נלקחה
+// מהפרק הראשון (סדר שרירותי), אותה סדרה הופיעה בשתי שורות שונות במסך
+// הבית. עכשיו היא נוחתת בשורה אחת בלבד, זו של הרוב.
+//
+// זה מתקן את התצוגה, לא את הנתונים: הדרך לנקות באמת היא הכפתור «קבע
+// קטגוריה לכל הסדרה» שבפאנל.
 function buildSeriesMap(movies) {
-  const map = {};
+  const counts = {};      // שם סדרה → {קטגוריה: מספר פרקים}
+  const best = {};        // שם סדרה → פרק לדוגמה עם תמונה/תיאור
   movies.forEach(m => {
-    if (!m.series_name) return;
-    if (!map[m.series_name]) {
-      map[m.series_name] = {
-        id: 'series_' + m.series_name,
-        isSeries: true,
-        series_name: m.series_name,
-        name: m.series_name,
-        title: m.series_name,
-        thumbnail_url: m.thumbnail_url,
-        description: m.description,
-        category: m.category,
-      };
+    const n = m.series_name;
+    if (!n) return;
+    if (m.category) {
+      (counts[n] = counts[n] || {})[m.category] = (counts[n]?.[m.category] || 0) + 1;
     }
+    // מעדיפים פרק שיש לו תמונה ותיאור — הראשון לא תמיד מחזיק אותם.
+    const cur = best[n];
+    const score = (m.thumbnail_url ? 2 : 0) + (m.description ? 1 : 0);
+    const curScore = cur ? (cur.thumbnail_url ? 2 : 0) + (cur.description ? 1 : 0) : -1;
+    if (score > curScore) best[n] = m;
+  });
+
+  const map = {};
+  Object.keys(best).forEach(n => {
+    const m = best[n];
+    const c = counts[n] || {};
+    const dominant = Object.keys(c).sort((a, b) => c[b] - c[a])[0] || m.category;
+    map[n] = {
+      id: 'series_' + n,
+      isSeries: true,
+      series_name: n,
+      name: n,
+      title: n,
+      thumbnail_url: m.thumbnail_url,
+      description: m.description,
+      category: dominant,
+    };
   });
   return map;
 }
@@ -1039,7 +1075,12 @@ export default function HomeScreen({navigation, route}) {
       const title = m.title || '';
       const seriesName = m.series_name || '';
       const hit = matchItem(m);
-      if (!hit || (cat !== 'הכל' && m.category !== cat)) return;
+      // הקטגוריה שנבדקת לפרק היא זו של *הסדרה* (קטגוריית הרוב) ולא של הפרק
+      // עצמו. בלי זה פרק בודד שסווג אחרת גורר את כל הסדרה לשורה נוספת —
+      // וזה בדיוק מה שהופיע במסך הבית: אותה סדרה גם ב"סדרות" וגם ב"אנימה".
+      const effCat = seriesName && seriesMap && seriesMap[seriesName]
+        ? seriesMap[seriesName].category : m.category;
+      if (!hit || (cat !== 'הכל' && effCat !== cat)) return;
       if (seriesName) {
         if (!seen[seriesName] && seriesMap && seriesMap[seriesName]) {
           seen[seriesName] = true;
@@ -1064,11 +1105,11 @@ export default function HomeScreen({navigation, route}) {
     if (qTokens.length) return [];
     const rows = [];
     if (liveChannels.length > 0)
-      rows.push({title: 'שידורים חיים', isLiveRow: true, items: liveChannels});
+      rows.push({title: t('common.live'), isLiveRow: true, items: liveChannels});
     const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
-    if (histItems.length > 0) rows.push({title: '▶ המשך צפייה', items: histItems});
+    if (histItems.length > 0) rows.push({title: t('home.continueWatching'), items: histItems});
     const favItems = movies.filter(m => m && favIds.has(String(m.id)));
-    if (favItems.length > 0) rows.push({title: '❤ המועדפים שלי', items: favItems});
+    if (favItems.length > 0) rows.push({title: t('home.myFavorites'), items: favItems});
     allCategories
       .filter(c => c !== 'הכל' && c !== 'שידורים חיים' && c !== 'היסטוריה'
                 && c !== 'מועדפים' && c !== DOWNLOADS_CATEGORY)
@@ -1091,7 +1132,8 @@ export default function HomeScreen({navigation, route}) {
   const liveGenreRows = useMemo(() => {
     if (category !== 'שידורים חיים') return [];
     return groupLiveByGenre(getItemsForCategory('שידורים חיים'))
-      .map(g => ({title: g.title, items: g.items, isLiveRow: true}));
+      // g.title הוא גם מפתח הקיבוץ — מתרגמים רק לתצוגה.
+      .map(g => ({title: genreName(g.title), items: g.items, isLiveRow: true}));
   }, [category, getItemsForCategory]);
 
   // כפתור "חזור" בשלט. בלי זה כל לחיצה הגיעה ישר לניווט, ומכיוון שמסך הבית

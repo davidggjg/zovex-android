@@ -9,6 +9,7 @@
 // נופלים חזרה לפתיחת הקישור בדפדפן כדי שתמיד תהיה דרך לעדכן.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {useEffect, useState} from 'react';
+import {t} from '../i18n';
 import TvFocusable from '../components/TvFocusable';
 import {
   View,
@@ -121,7 +122,7 @@ export default function UpdateDialog() {
         <View style={styles.card}>
           <Text style={styles.emoji}>🚀</Text>
           <Text style={styles.title}>
-            {state.forced ? 'עדכון נדרש' : 'גרסה חדשה זמינה'}
+            {state.forced ? t('update.required') : t('update.available')}
           </Text>
           <Text style={styles.body}>
             {state.notes ||
@@ -139,7 +140,7 @@ export default function UpdateDialog() {
                 <View style={[styles.progFill, {width: `${Math.max(pct, 2)}%`}]} />
               </View>
               <Text style={styles.progTxt}>
-                {pct >= 100 ? 'מתקין…' : `מוריד עדכון… ${pct}%`}
+                {pct >= 100 ? t('update.installing') : `מוריד עדכון… ${pct}%`}
               </Text>
             </View>
           ) : (

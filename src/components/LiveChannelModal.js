@@ -1,4 +1,5 @@
 import React, {useEffect, useState, useCallback} from 'react';
+import {t} from '../i18n';
 import {
   View, Text, Image, ScrollView, StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
@@ -68,7 +69,7 @@ export default function LiveChannelModal({channel, onPlay, onClose}) {
   }, [channel, reminded]);
 
   if (!channel) return null;
-  const title = channel.title || channel.name || 'שידור חי';
+  const title = channel.title || channel.name || t('live.title');
   const {current, upcoming} = splitNowNext(programs || []);
 
   return (
@@ -134,7 +135,7 @@ export default function LiveChannelModal({channel, onPlay, onClose}) {
                           style={[s.remindBtn, isSet && s.remindBtnOn]}
                           onPress={() => toggleRemind(p)}>
                           <Text style={[s.remindTxt, isSet && s.remindTxtOn]}>
-                            {isSet ? '🔔 יזכיר' : 'הזכר לי'}
+                            {isSet ? t('live.reminderSet') : t('live.remindMe')}
                           </Text>
                         </TvFocusable>
                       ) : null}
