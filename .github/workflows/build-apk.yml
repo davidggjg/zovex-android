@@ -88,13 +88,20 @@ jobs:
             echo "Created settings.gradle"
           fi
 
+      # packages: '' מדלג על התקנת ברירת המחדל של הפעולה. ברירת המחדל שלה
+      # היא "tools platform-tools", וגוגל הסירה את החבילה tools ממאגר ה-SDK
+      # — כך שכל בנייה נפלה ב-sdkmanager עוד לפני ההידור. מה שבאמת נדרש
+      # מותקן במפורש בשלב הבא, אז אין מה לאבד.
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install Android SDK components
         run: |
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager \
+            "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
             "ndk;26.1.10909125"
