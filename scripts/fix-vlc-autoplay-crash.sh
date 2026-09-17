@@ -39,7 +39,16 @@ set -euo pipefail
 
 F="node_modules/react-native-vlc-media-player/android/src/main/java/com/yuanzhou/vlc/vlcplayer/ReactVlcPlayerViewManager.java"
 
-[[ -f "$F" ]] || { echo "❌ לא נמצא $F"; exit 1; }
+# החבילה אינה מותקנת כרגע: המעבר ל-libVLC בוטל והתלות הוסרה, כי היא
+# הוסיפה ~170MB ל-APK בזמן שהנגן לא משתמש בה. הסקריפט נשאר כדי שאם היא
+# תחזור — התיקון יחזור איתה אוטומטית, בלי לזכור להוסיף שלב ל-workflow.
+# לכן היעדרות היא דילוג שקט ולא כשל בנייה.
+if [[ ! -d "node_modules/react-native-vlc-media-player" ]]; then
+  echo "⃝ react-native-vlc-media-player אינה מותקנת — מדלג (לא נדרש תיקון)"
+  exit 0
+fi
+
+[[ -f "$F" ]] || { echo "❌ החבילה מותקנת אבל $F חסר"; exit 1; }
 
 if grep -q 'hasKey("autoplay")' "$F"; then
   echo "✓ כבר מתוקן (autoplay מוגן ב-hasKey)"

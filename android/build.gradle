@@ -1,9 +1,7 @@
 buildscript {
     ext {
         buildToolsVersion = "34.0.0"
-        // libVLC (react-native-vlc-media-player) מצהירה minSdkVersion 26,
-        // ומיזוג המניפסט נכשל אם האפליקציה נמוכה ממנה. 26 = אנדרואיד 8.0.
-        minSdkVersion = 26
+        minSdkVersion = 24
         compileSdkVersion = 34
         targetSdkVersion = 34
         ndkVersion = "26.1.10909125"
