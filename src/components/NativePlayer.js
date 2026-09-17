@@ -4,7 +4,10 @@ import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image,
   PanResponder, Pressable,
 } from 'react-native';
-import Video from 'react-native-video';
+// המנוע הוא libVLC דרך מתאם עם אותו API בדיוק (ראה VlcVideo.js). ExoPlayer
+// נשען על המפענחים של המכשיר ולכן זרק בשקט קול AC-3/E-AC-3 ונכשל על AVI;
+// libVLC נושאת מפענחים משלה. הפקדים והעיצוב כאן לא השתנו בכלל.
+import Video from './VlcVideo';
 import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
 
 // נגן נייטיב עם הפקדים **שלנו**.
