@@ -17,6 +17,23 @@ android {
         versionName "1.0.42"
     }
 
+    // libVLC נושאת מפענחי FFmpeg מלאים, וב-APK אוניברסלי הם נכנסים פעם אחת
+    // לכל ארכיטקטורה — מה שהקפיץ את ה-APK מ-67MB ל-245MB. Splits מייצר קובץ
+    // נפרד לכל ארכיטקטורה, כך שמכשיר מוריד רק את שלו.
+    //
+    // universalApk נשאר true בכוונה: ערוץ ההורדה הציבורי (latest) ממשיך
+    // להגיש את האוניברסלי, כדי שאף משתמש קיים לא יישבר בגלל ארכיטקטורה.
+    // ערוץ הבדיקות של הטלוויזיה מגיש את arm64 — כל ממיר מודרני הוא arm64,
+    // וממילא minSdk 26 כבר מגדיר מכשירים מ-2017 ומעלה.
+    splits {
+        abi {
+            enable true
+            reset()
+            include "arm64-v8a", "armeabi-v7a"
+            universalApk true
+        }
+    }
+
     signingConfigs {
         release {
             storeFile file(MYAPP_UPLOAD_STORE_FILE)

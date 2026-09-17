@@ -210,7 +210,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zovex-release-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/*.apk
           retention-days: 30
 
       # דריסת ה-release בשם latest מחליפה את ה-APK שכל המשתמשים מורידים.
@@ -222,7 +222,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk zovex.apk
+          # אוניברסלי: אף משתמש קיים לא נשבר בגלל ארכיטקטורה
+          cp android/app/build/outputs/apk/release/app-universal-release.apk zovex.apk
           if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload latest zovex.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
@@ -245,7 +246,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk base.apk
+          # arm64: כל ממיר מודרני, וקטן משמעותית מהאוניברסלי
+          cp android/app/build/outputs/apk/release/app-arm64-v8a-release.apk base.apk
           if gh release view Tv --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload Tv base.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
