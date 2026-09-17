@@ -4,10 +4,11 @@ import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image,
   PanResponder, Pressable,
 } from 'react-native';
-// המנוע הוא libVLC דרך מתאם עם אותו API בדיוק (ראה VlcVideo.js). ExoPlayer
-// נשען על המפענחים של המכשיר ולכן זרק בשקט קול AC-3/E-AC-3 ונכשל על AVI;
-// libVLC נושאת מפענחים משלה. הפקדים והעיצוב כאן לא השתנו בכלל.
-import Video from './VlcVideo';
+// חזרה ל-ExoPlayer. המתאם ל-libVLC (VlcVideo.js) נשאר בעץ ומקמפל, אבל
+// בפועל הוא הקריס את האפליקציה בלחיצה על פליי — וזו רגרסיה גרועה בהרבה
+// מקובץ AVI בודד שלא מתנגן. עד שיהיה לוג קריסה שמצביע על הסיבה, המנוע
+// חוזר להיות זה שעובד. ההחלפה חזרה היא שורה אחת: './VlcVideo'.
+import Video from 'react-native-video';
 import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
 
 // נגן נייטיב עם הפקדים **שלנו**.
