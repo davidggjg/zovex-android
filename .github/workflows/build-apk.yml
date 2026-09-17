@@ -11,6 +11,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      publish_tv:
+        description: 'לפרסם ל-release Tv (base.apk)? ערוץ הבדיקות של הטלוויזיה, לא נוגע ב-latest'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -224,3 +230,26 @@ jobs:
               --notes "קובץ ה-APK העדכני ביותר. הקישור הזה מתעדכן אוטומטית עם כל build חדש."
           fi
           echo "Public download URL: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/zovex.apk"
+
+      # מסלול נפרד לבדיקות טלוויזיה. התקנה על טלוויזיה דרך artifact של
+      # Actions היא סיזיפית — היא דורשת התחברות לגיטהאב ופתיחת zip, ואין
+      # דפדפן נוח על המסך. לכן בנייה לבדיקה יכולה להתפרסם ל-release בשם Tv,
+      # שנותן כתובת ציבורית ישירה שכל טלוויזיה יודעת להוריד — בלי לגעת
+      # ב-latest, שהוא ה-APK שכל המשתמשים הקיימים מורידים.
+      # שם האסֶט נשאר base.apk בכוונה: זו הכתובת שכפתור הטלוויזיה באתר
+      # מצביע אליה, ולכן היא חייבת להישאר יציבה בין בניות.
+      - name: Publish APK to the Tv release (TV test channel)
+        if: inputs.publish_tv == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-release.apk base.apk
+          if gh release view Tv --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload Tv base.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create Tv base.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "ZOVEX - גרסת טלוויזיה" \
+              --notes "APK לבדיקה על Android TV. מתעדכן בכל בנייה עם publish_tv."
+          fi
+          echo "TV download URL: https://github.com/$GITHUB_REPOSITORY/releases/download/Tv/base.apk"
