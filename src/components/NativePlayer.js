@@ -4,15 +4,15 @@ import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image,
   PanResponder, Pressable,
 } from 'react-native';
-// המנוע הוא libVLC דרך מתאם עם אותו API בדיוק (ראה VlcVideo.js). ExoPlayer
-// נשען על המפענחים של המכשיר ולכן זרק בשקט קול AC-3/E-AC-3 ונכשל על AVI;
-// libVLC נושאת מפענחים משלה. הפקדים והעיצוב כאן לא השתנו בכלל.
+// ExoPlayer. ניסיון המעבר ל-libVLC בוטל: הוא הקריס בלחיצה על פליי, וגם
+// אחרי שאותר ותוקן בו באג אמיתי (ראה scripts/fix-vlc-autoplay-crash.sh)
+// הוא קרס שוב. בלי adb אין דרך לנפות קריסה נייטיבית בלי לנחש, וכל ניחוש
+// עולה למשתמש אפליקציה שבורה. המתאם VlcVideo.js נשאר בעץ ומקמפל, כך
+// שחזרה לניסיון היא שורה אחת — אבל רק כשיהיה לוג.
 //
-// הקריסה בלחיצה על פליי אובחנה ותוקנה: באג בחבילה עצמה, שקראה
-// src.getBoolean("autoplay") על מפתח שלא קיים. ראה
-// scripts/fix-vlc-autoplay-crash.sh. חזרה ל-ExoPlayer היא שורה אחת:
-// import Video from 'react-native-video';
-import Video from './VlcVideo';
+// את בעיית התוכן שבגללה רצינו את VLC פותרים כאן במסלול שכבר מוכח באתר:
+// נפילה ל-/vt, שממיר בשרת עם ffmpeg. ראה vtFallbackSrc למטה.
+import Video from 'react-native-video';
 import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
 
 // נגן נייטיב עם הפקדים **שלנו**.
@@ -29,6 +29,19 @@ import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
 //
 // בטלוויזיה ממשיכים עם TvNativePlayer והפקדים המובנים, כי הם אלה
 // שעובדים עם ה-D-pad של השלט.
+
+// נפילה להמרה בשרת, זהה למה שהאתר עושה ומוכח שם.
+//
+// ExoPlayer לא פותח AVI (ומכולות/קודקים נוספים), והשרת כבר יודע להמיר
+// אותם ל-HLS דרך /vt — אותה חתימה של /stream, ולכן ה-exp+sig שבקישור
+// עוברים כמו שהם. ExoPlayer מנגן HLS מצוין, אז זה עובד בלי שום תלות
+// נייטיבית חדשה ובלי לוותר על אנדרואיד 7.
+export function vtFallbackSrc(src) {
+  if (!src) return null;
+  const m = String(src).match(/^(.*)\/stream\/(-?\d+)\/(\d+)(\?.*)?$/);
+  if (!m) return null;                       // לא קישור /stream שלנו
+  return `${m[1]}/vt/${m[2]}/${m[3]}/index.m3u8${m[4] || ''}`;
+}
 
 const ACCENT = '#e91e8c';
 const HIDE_AFTER = 3500;
@@ -59,6 +72,8 @@ export default function NativePlayer({
   debug = false,
 }) {
   const ref = useRef(null);
+  // כשהניגון הישיר נכשל, עוברים פעם אחת למסלול ההמרה בשרת.
+  const [vtSrc, setVtSrc] = useState(null);
   const [paused, setPaused] = useState(false);
   const [ready, setReady] = useState(false);
   const [pos, setPos] = useState(0);
@@ -156,7 +171,7 @@ export default function NativePlayer({
     <View style={styles.wrap}>
       <Video
         ref={ref}
-        source={{uri: src, minLoadRetryCount: 6}}
+        source={{uri: vtSrc || src, minLoadRetryCount: 6}}
         style={StyleSheet.absoluteFill}
         controls={false}
         paused={paused}
@@ -188,6 +203,18 @@ export default function NativePlayer({
         }}
         onEnd={() => onEnd && onEnd()}
         onError={e => {
+          // ניסיון אחד למסלול ההמרה לפני שמדווחים כשלון. מנסים על כל
+          // שגיאה ולא לפי קוד מסוים: מיפוי קודי ExoPlayer שביר, והמחיר
+          // של ניסיון מיותר הוא שנייה אחת, בזמן שהמחיר של פספוס הוא
+          // סרט שלא נפתח בכלל.
+          if (!vtSrc) {
+            const alt = vtFallbackSrc(src);
+            if (alt) {
+              if (debug) setDiag(d => `${d}\nנפילה ל-/vt`);
+              setVtSrc(alt);
+              return;
+            }
+          }
           if (debug) {
             const x = e?.error || {};
             setDiag(d => `${d}\nשגיאה: ${x.errorCode || ''} ` +

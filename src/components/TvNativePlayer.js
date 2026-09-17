@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {View, StyleSheet, ActivityIndicator, Text} from 'react-native';
 import Video from 'react-native-video';
+import {vtFallbackSrc} from './NativePlayer';
 
 // נגן נייטיב (ExoPlayer) לטלוויזיה. בטלוויזיות ה-WebView חלש וקורס בפענוח
 // 1080p; ExoPlayer משתמש בשבב הפענוח של הטלוויזיה, מנגן חלק, ותומך בשלט
@@ -18,6 +19,8 @@ export default function TvNativePlayer({
   debug = false,
 }) {
   const ref = useRef(null);
+  // כשהניגון הישיר נכשל, ניסיון אחד למסלול ההמרה בשרת (/vt).
+  const [vtSrc, setVtSrc] = useState(null);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   // מתחיל עם טקסט ולא ריק בכוונה: אם הנגן נתקע *לפני* onLoad, שום דבר לא
@@ -45,7 +48,7 @@ export default function TvNativePlayer({
         // שממנה ExoPlayer מסיק את הפורמט. בלי זה הוא עלול לנסות לנגן playlist
         // כאילו היה קובץ רגיל ולהיתקע.
         source={{
-          uri: src,
+          uri: vtSrc || src,
           type: isHls ? 'm3u8' : undefined,
           // הממסר איטי: נמדד 0.7–3s ל-playlist ועוד 1.6–3.7s למקטע של 6 שניות.
           // עם ברירת המחדל אין מרווח ביטחון וכל עיכוב מרוקן את הבאפר — זה מה
@@ -91,6 +94,12 @@ export default function TvNativePlayer({
         }}
         onEnd={() => { if (onEnd) onEnd(); }}
         onError={e => {
+          // לפני שמציגים "לא ניתן לנגן" — ניסיון אחד דרך ההמרה בשרת.
+          // זה מה שפותר AVI ומכולות שה-ExoPlayer לא פותח.
+          if (!vtSrc) {
+            const alt = vtFallbackSrc(src);
+            if (alt) { setVtSrc(alt); return; }
+          }
           setFailed(true);
           if (debug) {
             const x = e?.error || {};
