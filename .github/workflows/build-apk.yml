@@ -49,6 +49,11 @@ jobs:
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)
         run: bash scripts/enable-ffmpeg-decoder.sh
 
+      # גם זה חייב לרוץ אחרי npm install. בלעדיו האפליקציה קורסת בלחיצה על
+      # פליי: החבילה קוראת src.getBoolean("autoplay") על מפתח שלא קיים.
+      - name: Fix libVLC crash on play (missing autoplay key)
+        run: bash scripts/fix-vlc-autoplay-crash.sh
+
       - name: Ensure gradle-plugin at top-level node_modules
         run: |
           PLUGIN_DIR="node_modules/@react-native/gradle-plugin"

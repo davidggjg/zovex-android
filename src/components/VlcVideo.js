@@ -30,10 +30,13 @@ import React, {forwardRef, useCallback, useImperativeHandle, useRef} from 'react
 import {StyleSheet} from 'react-native';
 import VLCPlayer from 'react-native-vlc-media-player/VLCPlayer';
 
-// caching של הרשת: הכתובות שלנו נמשכות מטלגרם דרך השרת, ונמדד ש-window
-// חוזר תוך שנייה-שתיים או נזנח. מרווח של 3 שניות נותן לבאפר לעמוד בעיכוב
-// בלי להאריך יותר מדי את ההתחלה.
-const DEFAULT_INIT_OPTIONS = ['--network-caching=3000'];
+// הערה למי שיבוא לכוון כאן באפרים: אי אפשר, לא דרך initOptions.
+// הצד הנייטיבי (ReactVlcPlayerView) אכן קורא initOptions — אבל **ממפת
+// src**, ו-VLCPlayer.js בונה את src עם uri/isNetwork/isAsset/type/mainVer/
+// patchVer בלבד. initOptions נשתל על ה-prop ‏source, שאין לו @ReactProp,
+// ולכן הוא נופל בדרך. אותו דבר נכון ל-hwDecoderEnabled, mediaOptions
+// ו-initType. ניסיתי להעביר --network-caching=3000 וזה פשוט לא הגיע.
+// כדי להגיע לשם באמת צריך לפאץ' את VLCPlayer.js שיכניס אותם ל-src.
 
 const VlcVideo = forwardRef(function VlcVideo(props, fwdRef) {
   const {
@@ -95,11 +98,7 @@ const VlcVideo = forwardRef(function VlcVideo(props, fwdRef) {
     <VLCPlayer
       ref={inner}
       style={[StyleSheet.absoluteFill, style]}
-      source={{
-        uri,
-        initOptions:
-          (source && source.initOptions) || DEFAULT_INIT_OPTIONS,
-      }}
+      source={{uri}}
       paused={!!paused}
       rate={typeof rate === 'number' ? rate : 1}
       resizeMode={resizeMode || 'contain'}
