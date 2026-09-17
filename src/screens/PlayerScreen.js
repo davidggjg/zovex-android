@@ -2,7 +2,7 @@ import React, {useEffect, useRef, useMemo, useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
-import NativePlayer from '../components/NativePlayer';
+import NativePlayer, {vtFallbackSrc} from '../components/NativePlayer';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
@@ -912,6 +912,12 @@ export default function PlayerScreen({route, navigation}) {
   // המדרגה הראשונה כשמתגלה שאין קול: לנגן את אותו קובץ בנגן הנייטיב, שבו
   // מפענחי ה-FFmpeg שהאפליקציה מביאה איתה מטפלים ב-ec-3. {at} או null.
   const [nativeAudio, setNativeAudio] = useState(null);
+  // מכולה שה-WebView לא פותח בכלל (AVI וכו'). ה-WebView הוא דפדפן, ולכן
+  // הוא נכשל על אותם קבצים שהאתר נכשל עליהם — ובדיוק כמו באתר, הפתרון
+  // הוא /vt, שממיר בשרת. {src, at} או null.
+  const [vtFix, setVtFix] = useState(null);
+  // נדלק כשגם ההמרה נכשלה, כדי שלא ננסה אותה שוב ושוב.
+  const vtFixFailedRef = useRef(false);
 
   // ── "להמשיך מאיפה שעצרת?" ────────────────────────────────────────────────
   // שלושת מסלולי הנגינה (WebView, נגן נייטיב, נפילת-קול) קראו כל אחד
@@ -970,8 +976,10 @@ export default function PlayerScreen({route, navigation}) {
   }, [resumeAt]);
 
   const {src, html, isIframe} = useMemo(() => {
-    const at = audioFix ? audioFix.at : (isLive ? 0 : startTime);
-    const s = audioFix ? audioFix.src : buildSrc(movie, isLive ? 0 : startTime);
+    const at = vtFix ? vtFix.at : audioFix ? audioFix.at : (isLive ? 0 : startTime);
+    const s = vtFix ? vtFix.src
+            : audioFix ? audioFix.src
+            : buildSrc(movie, isLive ? 0 : startTime);
     if (!s) return {src: null, html: null, isIframe: false};
     const iframe = isIframeUrl(s, movie.type || 'direct');
     return {
@@ -979,7 +987,7 @@ export default function PlayerScreen({route, navigation}) {
       html: buildPlayerHtml(movie, s, at, isLive, hasNext, isTv),
       isIframe: iframe,
     };
-  }, [movie, startTime, isLive, hasNext, isTv, audioFix]);
+  }, [movie, startTime, isLive, hasNext, isTv, audioFix, vtFix]);
 
   // ── Chromecast: כפתור שידור לטלוויזיה ──
   // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה).
@@ -1132,10 +1140,25 @@ export default function PlayerScreen({route, navigation}) {
         // כי אחרי החזרה הבדיקה תזהה שוב שאין קול ותרצה להחליף בחזרה.
         // soft = שומר-הסף, לא שגיאה אמיתית. מציגים ולא מחזירים, כי טעינה
         // איטית מטלגרם היא מצב לגיטימי כאן.
-        if (audioFix && !m.soft) {
-          audioFixFailedRef.current = true;
-          setAudioFix(null);
-          setWvKey(k => k + 1);
+        if (!m.soft) {
+          if (vtFix) {
+            // גם ההמרה נכשלה. משאירים את השגיאה על המסך ולא חוזרים למקור,
+            // שממילא ייכשל — טעינה נוספת רק מאריכה את ההמתנה לשום דבר.
+            vtFixFailedRef.current = true;
+          } else if (audioFix) {
+            audioFixFailedRef.current = true;
+            setAudioFix(null);
+            setWvKey(k => k + 1);
+          } else if (!vtFixFailedRef.current) {
+            // ה-WebView לא פתח את הקובץ. זה מה שקורה על AVI ("direct 4"),
+            // ובדיוק המקרה שבו /vt פותר באתר. ניסיון אחד דרך ההמרה בשרת,
+            // עם אותה חתימה שכבר בקישור.
+            const alt = vtFallbackSrc(buildSrc(movie, 0));
+            if (alt) {
+              setVtFix({src: alt, at: isLive ? 0 : (startTime || 0)});
+              setWvKey(k => k + 1);
+            }
+          }
         }
       } else if (m.type === 'no_audio') {
         // ה-WebView זרק את רצועת הקול. מדרגה ראשונה: אותו קובץ בדיוק, בנגן
