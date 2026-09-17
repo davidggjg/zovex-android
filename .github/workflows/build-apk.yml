@@ -215,7 +215,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zovex-release-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          path: android/app/build/outputs/apk/release/app-universal-release.apk
           retention-days: 30
 
       # דריסת ה-release בשם latest מחליפה את ה-APK שכל המשתמשים מורידים.
@@ -251,8 +251,11 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # arm64: כל ממיר מודרני, וקטן משמעותית מהאוניברסלי
-          cp android/app/build/outputs/apk/release/app-arm64-v8a-release.apk base.apk
+          # אוניברסלי, כמו הערוץ הציבורי. וריאנט פר-ארכיטקטורה חסך ~30MB
+          # אבל יצר בלבול אמיתי: שלושה קבצים עם אותו versionCode, שאנדרואיד
+          # מסרב להתקין אחד מעל השני, ווריאנט לא מתאים קורס. בהפצה ידנית
+          # קובץ אחד שעובד בכל מקום שווה יותר מ-30MB.
+          cp android/app/build/outputs/apk/release/app-universal-release.apk base.apk
           if gh release view Tv --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload Tv base.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
