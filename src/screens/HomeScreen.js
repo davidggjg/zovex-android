@@ -68,6 +68,10 @@ const {width: SW, height: SH} = Dimensions.get(Platform.isTV ? 'screen' : 'windo
 const MAIN_SITE = 'https://zovex.duckdns.org';
 const IS_TV = Platform.isTV;
 const NUM_COLS = IS_TV ? 6 : 3;
+// בטלוויזיה שכבת רקע לוחצת היא יעד focus מיותר; בטלפון היא הדרך לסגור.
+const OverlayWrap = IS_TV
+  ? ({style, children}) => <View style={style}>{children}</View>
+  : TouchableOpacity;
 // לכל אריח 5px שוליים מכל צד (10) + לרשת 8px ריפוד מכל צד (16):
 // SW = N*CARD_W + N*10 + 16  →  CARD_W = (SW - 16 - N*10) / N
 const CARD_W = Math.floor((SW - 16 - NUM_COLS * 10) / NUM_COLS);
@@ -281,14 +285,20 @@ function MovieDetailModal({
               <View style={mdStyles.trailerBox}>
                 <View style={mdStyles.trailerHead}>
                   <Text style={mdStyles.trailerTtl}>🎬 טריילר</Text>
-                  <TouchableOpacity onPress={() => setTrailerOff(true)} hitSlop={10}>
+                  {/* TvFocusable ולא TouchableOpacity: בשלט אי אפשר היה
+                      להגיע לכפתור הזה, כלומר מי שהטריילר הפריע לו נתקע איתו. */}
+                  <TvFocusable onPress={() => setTrailerOff(true)} hitSlop={10}>
                     <Text style={mdStyles.trailerClose}>סגור</Text>
-                  </TouchableOpacity>
+                  </TvFocusable>
                 </View>
                 {/* נגן יוטיוב מלא ולא תצוגה מקדימה: בלי autoplay ובלי השתקה
                     כפויה, עם הפקדים המקוריים ועם מסך מלא. קודם זה היה סרטון
                     מושתק שכיסה את הפוסטר ולא הגיב לשום לחיצה. */}
-                <View style={mdStyles.trailerFrame}>
+                {/* WebView הוא רכיב נייטיב שיכול לתפוס את ה-focus ולכלוא את
+                    ה-D-pad בתוך עמוד היוטיוב. TvFocusable חוסם focus לילדים
+                    (descendantFocusability = FOCUS_BLOCK_DESCENDANTS), ולכן
+                    המסגרת היא עצירת focus אחת ומוגדרת במקום מלכודת. */}
+                <TvFocusable style={mdStyles.trailerFrame}>
                   <WebView
                     style={mdStyles.trailerWeb}
                     // HTML מקומי עם baseUrl ולא טעינת ה-embed ישירות.
@@ -318,7 +328,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                     onError={() => setTrailerOff(true)}
                     onHttpError={() => setTrailerOff(true)}
                   />
-                </View>
+                </TvFocusable>
               </View>
             )}
 
@@ -454,7 +464,11 @@ const mdStyles = StyleSheet.create({
   trailerTtl: {color: '#fff', fontSize: 14, fontWeight: '800'},
   trailerClose: {color: '#888', fontSize: 12, fontWeight: '600'},
   // יחס 16:9 קבוע, כדי שהמסגרת לא תקפוץ בזמן הטעינה.
-  trailerFrame: {width: '100%', aspectRatio: 16 / 9, maxWidth: '100%',
+  // ברוחב מלא על מסך 16:9 הטריילר תופס כמעט את כל הגובה, דוחף את כפתורי
+  // הניגון אל מחוץ לתצוגה, ומנוע ה-focus הגאומטרי מתקשה למצוא אותם. בטלוויזיה
+  // הוא יושב כפאנל צדדי במקום להשתלט על המסך.
+  trailerFrame: {width: IS_TV ? '40%' : '100%', alignSelf: 'flex-start',
+                 aspectRatio: 16 / 9, maxWidth: '100%',
                  borderRadius: 12, overflow: 'hidden', backgroundColor: '#000'},
   overlay: {
     ...StyleSheet.absoluteFillObject,
@@ -1543,7 +1557,11 @@ export default function HomeScreen({navigation, route}) {
       transparent
       animationType="fade"
       onRequestClose={() => setShowUserMenu(false)}>
-      <TouchableOpacity
+      {/* בטלפון השכבה סוגרת בלחיצה מחוץ לתפריט. בטלוויזיה היא View רגיל:
+          TouchableOpacity שמכסה מסך מלא הוא עוד יעד focus אפשרי שיכול
+          לבלוע את ה-D-pad, ואין בו צורך — יציאה היא כפתור Back, שכבר
+          מטופל. */}
+      <OverlayWrap
         style={styles.modalOverlay}
         activeOpacity={1}
         onPress={() => setShowUserMenu(false)}>
@@ -1560,7 +1578,13 @@ export default function HomeScreen({navigation, route}) {
           <Text style={styles.menuName}>{user?.name || user?.given_name || ''}</Text>
           <Text style={styles.menuEmail}>{user?.email || ''}</Text>
           <View style={styles.menuDivider} />
+          {/* Modal של RN הוא **חלון חדש**, והפוקוס לא עובר אליו מעצמו —
+              ה-D-pad ממשיך לנווט במסך שמאחור, ולמשתמש זה נראה כאילו השלט
+              מת. hasFocus מבקש את הפוקוס ההתחלתי פעם אחת (הצד הנייטיבי
+              קורא requestFocus רק כשה-prop משתנה ל-true), ומשם הניווט בין
+              הפריטים חופשי. */}
           <TvFocusable
+            hasFocus={showUserMenu}
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); setSearch(''); }}>
             <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
@@ -1586,7 +1610,7 @@ export default function HomeScreen({navigation, route}) {
             <Text style={[styles.menuItemText, {color: '#e50914'}]}>🚪  יציאה מהחשבון</Text>
           </TvFocusable>
         </View>
-      </TouchableOpacity>
+      </OverlayWrap>
     </Modal>
   );
 
