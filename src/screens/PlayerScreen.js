@@ -725,16 +725,43 @@ function initVideo(el){
   // מתוך 16 פרקי ונסדיי. בדיקה ב-VLC לא מגלה את זה — יש לו מפענח Dolby
   // משלו והוא ניגן אותם כל הזמן.
   // webkitAudioDecodedByteCount הוא הסימן היחיד: הוא נשאר 0 בזמן שהווידאו
-  // מתקדם. בודקים פעם אחת, ורק אחרי שהניגון באמת התקדם, כדי לא לבלבל
-  // "עוד לא התחיל" עם "אין קול".
-  var audioProbed=false;
+  // מתקדם.
+  //
+  // קודם זו הייתה בדיקה **אחת** 3.5 שניות אחרי 'playing', עם התנאי
+  // currentTime>1. זה מרוץ שהבדיקה מפסידה בו: משיכה מטלגרם מתחילה איטי
+  // (נמדד TTFB של 6–15 שניות), והניגון בהתחלה מקרטע. אם באותה שנייה
+  // בדיוק הזמן עוד לא עבר 1 או שהנגן ממתין — audioProbed כבר דלוק,
+  // ההסקלציה לא תקרה לעולם, והצופה מקבל סרט שלם בלי קול. בדיוק זה דווח.
+  //
+  // עכשיו דוגמים כל שנייה עד שיש תשובה חד-משמעית, ומוסיפים תנאי:
+  // webkitVideoDecodedByteCount>0, כלומר הפענוח באמת עובד. ההבחנה הזאת
+  // היא מה שמפריד "אין קול" מ"עוד לא התחיל", והיא נכונה גם כשהניגון
+  // מקרטע — בלי להישען על הרגע שבו נדגם.
+  var audioProbeTimer=null,audioProbeDone=false;
+  function stopAudioProbe(){
+    if(audioProbeTimer)clearInterval(audioProbeTimer);
+    audioProbeTimer=null;
+  }
   function probeAudio(){
-    if(audioProbed)return;audioProbed=true;
-    setTimeout(function(){
-      var b=vid.webkitAudioDecodedByteCount;
-      if(b===0&&vid.currentTime>1&&!vid.paused)
+    // audioProbeDone נפרד מהטיימר בכוונה: בלעדיו מזהה שכבר סיים היה
+    // משאיר id דלוק ו-'playing' הבא לא היה מדליק דגימה מחדש, או להפך —
+    // מדליק שוב אחרי שכבר דיווחנו.
+    if(audioProbeTimer||audioProbeDone)return;
+    var ticks=0;
+    audioProbeTimer=setInterval(function(){
+      ticks++;
+      var a=vid.webkitAudioDecodedByteCount;
+      var v=vid.webkitVideoDecodedByteCount;
+      // אין מדידה בדפדפן הזה, או שנמצא קול — אין מה לבדוק יותר.
+      if(a===undefined||a>0){audioProbeDone=true;stopAudioProbe();return;}
+      if(v>0&&vid.currentTime>1.5&&!vid.paused){
+        audioProbeDone=true;stopAudioProbe();
         postMsg({type:'no_audio',position:vid.currentTime});
-    },3500);
+        return;
+      }
+      // תקרה: 90 שניות של קרטוע ואין תשובה — מפסיקים לדגום ולא מסיקים.
+      if(ticks>90){audioProbeDone=true;stopAudioProbe();}
+    },1000);
   }
   vid.addEventListener('canplay',function(){loader.style.display='none';});
 }
@@ -1229,11 +1256,19 @@ export default function PlayerScreen({route, navigation}) {
           בטלוויזיה כן ממשיכים עם המובנים — הם אלה שעובדים עם השלט. */}
       {useNative && !isTv ? (
         <NativePlayer
-          key={nativeAudio ? 'native-ours-audiofix' : 'native-ours'}
+          // ה-key חייב להשתנות בכל מעבר מסלול. ExoPlayer ממשיך עם המקור
+          // הישן כשהוא מקבל רק source חדש, ולכן מעבר ל-/vh היה נראה
+          // כאילו לא קרה כלום — עוד שעתיים בלי קול.
+          key={audioFix ? 'native-ours-vh' : vtFix ? 'native-ours-vt'
+               : nativeAudio ? 'native-ours-audiofix' : 'native-ours'}
           src={fsSrc(src) || src}
           title={movie.title}
           subtitle={episodeLabel}
-          startTime={nativeAudio ? nativeAudio.at : nativeStart}
+          // כל מסלול והמיקום שלו. בלי audioFix.at המעבר ל-/vh היה חוזר
+          // ל-nativeStart, כלומר מקפיץ את הצופה אחורה לתחילת הסרט.
+          startTime={audioFix ? audioFix.at
+                   : vtFix ? vtFix.at
+                   : nativeAudio ? nativeAudio.at : nativeStart}
           hasNext={hasNext}
           nextLabel={nextEp?.episode_title || ''}
           debug={false}
@@ -1254,6 +1289,19 @@ export default function PlayerScreen({route, navigation}) {
             if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
           }}
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
+          // הנגן הנייטיב הודיע שיש רצועת קול שהוא לא בחר בה, כלומר אין
+          // במכשיר מפענח עבורה. אין כאן שגיאה שתפיל אותנו לענף onError,
+          // ולכן זו הדרך היחידה לרדת ל-/vh — ההמרה בשרת, שהיא המדרגה
+          // שממילא נועדה בדיוק למקרה הזה.
+          onNoAudio={at => {
+            if (audioFix || audioFixFailedRef.current) return;
+            const fixed = audioFixSrc(buildSrc(movie, 0));
+            if (!fixed) return;
+            rememberSilent(movie);       // בפעם הבאה ניכנס ישר, בלי ההמתנה
+            setNativeAudio(null);
+            setAudioFix({src: fixed, at: Math.max(0, at || 0)});
+            setWvKey(k => k + 1);
+          }}
           onError={() => {
             // nativeAudio נבדק במפורש: הענף הזה משמש עכשיו גם לתוכן רגיל,
             // שבו הוא null. בלי הבדיקה הקריאה ל-nativeAudio.at מקריסה את

@@ -66,6 +66,7 @@ export default function NativePlayer({
   onProgress,
   onEnd,
   onError,
+  onNoAudio,
   onNext,
   onPlayingChange,
   onFullscreen,
@@ -183,6 +184,24 @@ export default function NativePlayer({
           const dd = d?.duration || 0;
           durRef.current = dd;
           setDur(dd);
+          // ── רצועת קול שקיימת בקובץ ואף אחד לא בחר בה ──────────────────
+          //
+          // אומת בקוד של react-native-video 6.4.5:
+          // getAudioTrackInfo מחזיר **כל** קבוצת רצועה שיש בקובץ, בלי
+          // לסנן לפי תמיכה (בשונה מ-getVideoTrackInfo, שמסנן ב-
+          // isFormatSupported), ואת selected הוא לוקח מ-
+          // player.getCurrentTrackSelections(). ExoPlayer לא בוחר רצועה
+          // שאין לה מפענח — ולכן "יש רצועות, אף אחת לא נבחרה" פירושו
+          // בדיוק: הקובץ מכיל קול, והמכשיר הזה לא יודע לפענח אותו.
+          //
+          // זה הכשל השקט: ExoPlayer לא זורק onError על זה. הווידאו מנגן
+          // שעתיים בלי קול, ושום מדרגה בסולם הנפילה-אחורה לא נדרכת, כי
+          // כולן תלויות בשגיאה. מכאן יורדים ל-/vh, שממיר את הקול בשרת.
+          const at = d?.audioTracks || [];
+          if (at.length && !at.some(t => t.selected) && onNoAudio && !vtSrc) {
+            onNoAudio(d?.currentTime || startTime || 0,
+                      at.map(t => t.type || '?').join(','));
+          }
           if (debug) {
             const a = (d?.audioTracks || []).map(
               t => `${t.index}:${t.type || '?'}${t.selected ? '*' : ''}`).join(' ');
