@@ -71,6 +71,43 @@ function audioFixSrc(src) {
   return `${m[1]}/vh/${m[2]}/${m[3]}/index.m3u8${m[4] || ''}`;
 }
 
+// ── לאן ללכת כשאין קול, לפי השרת ─────────────────────────────────────────
+//
+// ‎/vh לבדו הוא מסלול ללא מוצא על חלק מהקטלוג. נמדד על הקובץ שדוד שלח:
+//
+//     GET /vh/-1003936100530/7170/index.m3u8  →  415
+//     {"detail":"אין ftyp — לא קובץ MP4"}
+//
+// ‎/vh בונה את נקודות החיתוך מה-moov של MP4, ולכן הוא מסרב ל-MKV —
+// כלומר דווקא לקבצים שהכי צריכים אותו. זה מה שהשאיר סרט שלם בלי קול גם
+// כשהזיהוי עבד מצוין: היעד היה שבור, לא הזיהוי.
+//
+// ‎/vodinfo יודע לענות: ‎/vh לקובץ MP4 (בדיוק כמו קודם) ו-‎/vt לכל השאר.
+// אין תשובה — נשארים על ‎/vh, שזו ההתנהגות הישנה.
+function vodInfoSrc(src) {
+  if (!src) return null;
+  const m = String(src).match(/^(.*)\/stream\/(-?\d+)\/(\d+)(\?.*)?$/);
+  if (!m) return null;
+  return `${m[1]}/vodinfo/${m[2]}/${m[3]}${m[4] || ''}`;
+}
+
+async function resolveFixSrc(src) {
+  const info = vodInfoSrc(src);
+  const fallback = audioFixSrc(src);
+  if (!info) return fallback;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 20000);
+    const r = await fetch(info, {signal: ctl.signal});
+    clearTimeout(t);
+    if (!r.ok) return fallback;
+    const d = await r.json();
+    return d && d.url ? d.url : fallback;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 // ── זיכרון של פריטים אילמים ──────────────────────────────────────────────
 // בלי זה כל צפייה מתחילה באותו טקס: מנגן בלי קול, אחרי 3.5 שניות מזוהה,
 // ורק אז עובר. פעם אחת זה סביר; בכל פרק מחדש זה פשוט מעצבן.
@@ -1291,28 +1328,40 @@ export default function PlayerScreen({route, navigation}) {
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
           // הנגן הנייטיב הודיע שיש רצועת קול שהוא לא בחר בה, כלומר אין
           // במכשיר מפענח עבורה. אין כאן שגיאה שתפיל אותנו לענף onError,
-          // ולכן זו הדרך היחידה לרדת ל-/vh — ההמרה בשרת, שהיא המדרגה
-          // שממילא נועדה בדיוק למקרה הזה.
+          // ולכן זו הדרך היחידה לרדת להמרה בשרת — המדרגה שממילא נועדה
+          // בדיוק למקרה הזה. השרת מחליט אם זה /vh או /vt.
           onNoAudio={at => {
             if (audioFix || audioFixFailedRef.current) return;
-            const fixed = audioFixSrc(buildSrc(movie, 0));
-            if (!fixed) return;
-            rememberSilent(movie);       // בפעם הבאה ניכנס ישר, בלי ההמתנה
-            setNativeAudio(null);
-            setAudioFix({src: fixed, at: Math.max(0, at || 0)});
-            setWvKey(k => k + 1);
+            resolveFixSrc(buildSrc(movie, 0)).then(fixed => {
+              if (!fixed) return;
+              rememberSilent(movie);     // בפעם הבאה ניכנס ישר, בלי ההמתנה
+              setNativeAudio(null);
+              setAudioFix({src: fixed, at: Math.max(0, at || 0)});
+              setWvKey(k => k + 1);
+            });
           }}
           onError={() => {
             // nativeAudio נבדק במפורש: הענף הזה משמש עכשיו גם לתוכן רגיל,
             // שבו הוא null. בלי הבדיקה הקריאה ל-nativeAudio.at מקריסה את
             // המסך במקום להציג שגיאה — וזה היה תחת onError, כלומר דווקא
             // ברגע שכבר משהו לא בסדר.
-            const fixed = audioFixSrc(buildSrc(movie, 0));
-            if (nativeAudio && fixed && !audioFix) {
-              const at = nativeAudio.at;
-              setNativeAudio(null);
-              setAudioFix({src: fixed, at});
+            const toWebView = () => {
+              // מוחקים את סימון האילמות: אם הגענו לכאן, המסלול שהסימון
+              // מנתב אליו לא עבד. בלי זה הסדרה נשארת נעולה עליו לנצח.
+              forgetSilent(movie);
+              setNativeFailed(true);
               setWvKey(k => k + 1);
+            };
+            if (nativeAudio && !audioFix) {
+              const at = nativeAudio.at;
+              resolveFixSrc(buildSrc(movie, 0)).then(fixed => {
+                // בלי הענף הזה כשל בבניית הכתובת היה משאיר את המסך תקוע
+                // בשקט, במקום ליפול ל-WebView כמו שהיה קודם.
+                if (!fixed) return toWebView();
+                setNativeAudio(null);
+                setAudioFix({src: fixed, at});
+                setWvKey(k => k + 1);
+              }).catch(toWebView);
             } else {
               // נפילה-אחורה ל-WebView במקום מסך שגיאה ללא מוצא. לא
               // מציבים nativeError: הוא היה מצייר מסך שגיאה מעל ה-WebView
@@ -1346,11 +1395,12 @@ export default function PlayerScreen({route, navigation}) {
           // "לוחץ הפעל וזה מחזיר אותי". עכשיו נשארים במסך ומראים מה נכשל.
           onError={e => {
             // הגענו לנגן הנייטיב רק בגלל תיקון קול? אז יש עוד מדרגה אחת
-            // מתחת: /vh, שממיר את הקול בשרת. יורדים אליה במקום להיתקע.
+            // מתחת: ההמרה בשרת. יורדים אליה במקום להיתקע, והשרת מחליט
+            // אם זה /vh (קובץ MP4) או /vt (כל השאר).
             if (nativeAudio && !audioFix) {
-              const fixed = audioFixSrc(buildSrc(movie, 0));
-              if (fixed) {
-                const at = nativeAudio.at;
+              const at = nativeAudio.at;
+              resolveFixSrc(buildSrc(movie, 0)).then(fixed => {
+                if (!fixed) return;
                 // שמונה שניות לפני שיורדים למדרגה הבאה, כדי שהשגיאה שמוצגת
                 // על המסך תישאר מספיק זמן כדי לקרוא אותה. בלי זה המסך מתחלף
                 // מיד וההודעה נעלמת — וזה בדיוק המידע שחסר לנו.
@@ -1359,8 +1409,8 @@ export default function PlayerScreen({route, navigation}) {
                   setAudioFix({src: fixed, at});
                   setWvKey(k => k + 1);
                 }, 8000);
-                return;
-              }
+              });
+              return;
             }
             // מה שהנייטיב לא הצליח — ה-WebView יקבל הזדמנות, ורק אם גם
             // הוא ייכשל תוצג הודעה (שלו, מתוך ה-HTML). לא מציבים
