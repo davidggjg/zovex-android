@@ -238,7 +238,7 @@ export async function fetchFavoriteIds(userId) {
 // לכיבוי בדיקת העדכונים: הוא היה 1.0.42 מול 1.0.43 בבנייה, והשרת הכריז
 // על 1.0.41 — כלומר כל משתמש נענה "אתה מעודכן" לנצח.
 // שלב check-version-sync ב-build-apk.yml מפיל את הבנייה אם השניים נפרדים.
-export const APP_VERSION = '1.0.43';
+export const APP_VERSION = '1.0.44';
 
 export async function sendFeedback({userId, name, email, text, kind}) {
   if (!userId || !text) return false;
