@@ -761,10 +761,23 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, f
         keyExtractor={item => String(item.id)}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.rowList}
-        initialNumToRender={5}
-        maxToRenderPerBatch={5}
-        windowSize={3}
-        removeClippedSubviews
+        // ── למה הערכים שונים בטלוויזיה ──────────────────────────────────
+        //
+        // דווח: "הסמן לא רץ את כל הדרך בגלילה ימינה, מגיע רק למה שמופיע
+        // על המסך". זה לא באג של הסימון אלא של מה שקיים: אנדרואיד מזיז
+        // focus רק בין תצוגות **מחוברות**, ו-removeClippedSubviews מנתק
+        // מהעץ הנייטיבי כל מה שמחוץ למסך. כשאין יעד מימין, ה-focus נשאר
+        // במקום, ולכן גם הגלילה לא קורית — בטלוויזיה הגלילה נגררת אחרי
+        // ה-focus, אין אצבע שתגרור אותה.
+        //
+        // בטלפון זה לא מזיק והחיסכון בזיכרון אמיתי, ולכן ההתנהגות שם לא
+        // משתנה בכלל. בטלוויזיה מוותרים על הניתוק ומחזיקים חלון רחב יותר,
+        // כך שתמיד יש כרטיס אחד לפחות מעבר לקצה שאפשר לעבור אליו — ומשם
+        // ה-ScrollView גולל אליו והרשימה מרנדרת את הבא.
+        initialNumToRender={IS_TV ? 12 : 5}
+        maxToRenderPerBatch={IS_TV ? 12 : 5}
+        windowSize={IS_TV ? 11 : 3}
+        removeClippedSubviews={!IS_TV}
         renderItem={({item, index}) => (
           <MovieCard item={item} onPress={onPress}
             hasTVPreferredFocus={IS_TV && firstRow && index === 0} />
@@ -1650,10 +1663,13 @@ export default function HomeScreen({navigation, route}) {
             </Text>
           }
           showsVerticalScrollIndicator={false}
-          removeClippedSubviews
-          initialNumToRender={3}
-          maxToRenderPerBatch={2}
-          windowSize={5}
+          // אותו נימוק בדיוק כמו בשורה האופקית: מה שמנותק מהעץ אינו יעד
+          // focus, ולכן החץ למטה לא מוצא לאן לרדת. כאן שומרים על חלון
+          // צנוע — כל שורה היא רשימה בפני עצמה, והטלוויזיה חלשה.
+          removeClippedSubviews={!IS_TV}
+          initialNumToRender={IS_TV ? 4 : 3}
+          maxToRenderPerBatch={IS_TV ? 3 : 2}
+          windowSize={IS_TV ? 7 : 5}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
           }
@@ -1665,10 +1681,10 @@ export default function HomeScreen({navigation, route}) {
             keyExtractor={item => String(item?.id || '')}
             numColumns={NUM_COLS}
             contentContainerStyle={styles.grid}
-            initialNumToRender={9}
-            maxToRenderPerBatch={9}
-            windowSize={5}
-            removeClippedSubviews
+            initialNumToRender={IS_TV ? 18 : 9}
+            maxToRenderPerBatch={IS_TV ? 18 : 9}
+            windowSize={IS_TV ? 9 : 5}
+            removeClippedSubviews={!IS_TV}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
             }

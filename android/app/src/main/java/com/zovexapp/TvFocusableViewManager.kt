@@ -106,6 +106,54 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         }
         return super.onKeyUp(keyCode, event)
     }
+
+    // ── בקשת focus שמחכה עד שהיא באמת יכולה להצליח ──────────────────────
+    //
+    // קודם היה כאן post { requestFocus() } — ניסיון **אחד**. זה עובד במסך
+    // רגיל ולא עובד ב-Modal, ותפריט הפרופיל בטלוויזיה נשאר בלי focus:
+    // ה-D-pad המשיך לנווט במסך שמאחור, ולמשתמש זה נראה כאילו השלט מת.
+    // אומת על הגרסה האחרונה, אחרי שהתיקון הקודם כבר היה בפנים.
+    //
+    // ‎requestFocus מחזיר false כשהתצוגה עוד לא מחוברת לחלון, כשאין לה
+    // עדיין גודל, או כשחלון הדיאלוג עצמו עוד לא קיבל focus — וכל השלושה
+    // נכונים ברגע שבו ה-prop מגיע, כי Modal של RN הוא **חלון חדש** שנפתח
+    // אחרי שה-props כבר נכתבו. post יחיד רץ מוקדם מדי, ואז אף אחד לא
+    // מנסה שוב.
+    //
+    // לכן מנסים עד שמצליח, עד שנייה אחת. הניסיונות נעצרים ברגע שיש
+    // focus, ותקרה קשיחה מונעת לולאה אם משהו אחר מונע אותו לגמרי.
+    private var focusTries = 0
+    private var focusWanted = false
+
+    fun requestFocusWhenReady() {
+        focusWanted = true
+        focusTries = 0
+        tryFocusSoon()
+    }
+
+    private fun tryFocusSoon() {
+        post {
+            if (!focusWanted || isFocused) return@post
+            val ready = isAttachedToWindow && width > 0 && height > 0 &&
+                hasWindowFocus()
+            if (ready && requestFocus()) {
+                focusWanted = false
+                return@post
+            }
+            if (focusTries++ < 20) postDelayed({ tryFocusSoon() }, 50)
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // חיבור לחלון הוא בדיוק הרגע שבו בקשה שנכשלה קודם יכולה להצליח.
+        if (focusWanted && !isFocused) tryFocusSoon()
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus && focusWanted && !isFocused) tryFocusSoon()
+    }
 }
 
 class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
@@ -130,12 +178,12 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
             else android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
 
-    /** מבקש את ה-focus ההתחלתי — כך שלשלט יש מאיפה להתחיל כשהמסך נטען. */
+    /** מבקש את ה-focus ההתחלתי — כך שלשלט יש מאיפה להתחיל כשהמסך נטען.
+     *  ראה requestFocusWhenReady: ב-Modal הבקשה מגיעה לפני שהחלון קיים,
+     *  ולכן היא חוזרת עד שהיא מצליחה במקום לנסות פעם אחת. */
     @ReactProp(name = "hasFocus")
     fun setHasFocus(view: TvFocusableView, hasFocus: Boolean) {
-        if (hasFocus) {
-            view.post { view.requestFocus() }
-        }
+        if (hasFocus) view.requestFocusWhenReady()
     }
 
     override fun getExportedCustomDirectEventTypeConstants(): MutableMap<String, Any> =

@@ -70,6 +70,10 @@ export default function NativePlayer({
   onNext,
   onPlayingChange,
   onFullscreen,
+  // האורך האמיתי של הסרט, כפי שהשרת קרא אותו מהקובץ. בהמרה זורמת
+  // (/vt) הרשימה גדלה תוך כדי, ולכן הנגן לבדו מכיר רק את מה שכבר הומר
+  // ומראה אורך שמטפס בכמה שניות כל פעם. כשיש מספר אמיתי הוא מנצח.
+  knownDuration = 0,
   debug = false,
 }) {
   const ref = useRef(null);
@@ -182,8 +186,9 @@ export default function NativePlayer({
         onLoad={d => {
           setReady(true);
           const dd = d?.duration || 0;
-          durRef.current = dd;
-          setDur(dd);
+          const best = Math.max(dd, knownDuration || 0);
+          durRef.current = best;
+          setDur(best);
           // ── רצועת קול שקיימת בקובץ ואף אחד לא בחר בה ──────────────────
           //
           // אומת בקוד של react-native-video 6.4.5:
@@ -222,7 +227,8 @@ export default function NativePlayer({
             posRef.current = p.currentTime || 0;
             setPos(posRef.current);
           }
-          const d2 = p.seekableDuration || durRef.current || 0;
+          const d2 = Math.max(p.seekableDuration || 0, durRef.current || 0,
+                              knownDuration || 0);
           if (d2 && d2 !== durRef.current) { durRef.current = d2; setDur(d2); }
           onProgress && onProgress(p.currentTime || 0, d2);
         }}

@@ -980,6 +980,9 @@ export default function PlayerScreen({route, navigation}) {
   // הוא נכשל על אותם קבצים שהאתר נכשל עליהם — ובדיוק כמו באתר, הפתרון
   // הוא /vt, שממיר בשרת. {src, at} או null.
   const [vtFix, setVtFix] = useState(null);
+  // אורך הסרט לפי השרת. ראה knownDuration ב-NativePlayer: בהמרה זורמת
+  // הנגן לבדו מראה אורך שמטפס בכמה שניות כל פעם.
+  const [knownDuration, setKnownDuration] = useState(0);
   // נדלק כשגם ההמרה נכשלה, כדי שלא ננסה אותה שוב ושוב.
   const vtFixFailedRef = useRef(false);
 
@@ -1063,7 +1066,9 @@ export default function PlayerScreen({route, navigation}) {
       fetch(info)
         .then(r => (r.ok ? r.json() : null))
         .then(d => {
-          if (!alive || !d || d.browser_ok !== false || !d.url) return;
+          if (!alive || !d) return;
+          if (d.duration) setKnownDuration(d.duration);
+          if (d.browser_ok !== false || !d.url) return;
           // ממשיכים מהמקום שבו הצופה נמצא עכשיו, לא מההתחלה.
           const at = Math.max(progressRef.current.position || 0, resumeAt || 0);
           rememberSilent(movie);
@@ -1352,6 +1357,7 @@ export default function PlayerScreen({route, navigation}) {
           // (הכוכבית). שני מנגנוני הזיהוי שניסינו נכשלו בשקט על אותו
           // קובץ, ובלי הנתון הזה אני רק מנחשת עוד סיבוב.
           // להסיר לפני פרסום ל-latest.
+          knownDuration={knownDuration}
           debug={true}
           onClose={() => navigation.goBack()}
           onNext={goNextEpisode}
