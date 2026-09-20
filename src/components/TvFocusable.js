@@ -23,6 +23,15 @@ export default function TvFocusable({
   hasFocus = false,
   focusChildOnSelect = false,
   allowChildFocus = false,
+  // עמעום האפשרות שאינה ממוקדת, בקבוצת בחירה.
+  //
+  // דווח: "כשיש אפשרות בחירה... קל להבין על איזה אופציה עומדים" — הבקשה
+  // הייתה להדגיש את הבחירה ולהחליש את השנייה. הצבעים נשארים בדיוק כפי
+  // שהם; מה שמשתנה הוא רק העוצמה, וזה בדיוק ההבדל שמבקשים.
+  //
+  // opt-in ולא ברירת מחדל: על מסך הבית ממוקד פריט אחד בכל רגע, ועמעום
+  // גורף היה מכהה את כל הקטלוג.
+  dimUnfocused = false,
   disabled = false,
   activeOpacity = 0.8,
   children,
@@ -33,7 +42,9 @@ export default function TvFocusable({
   if (IS_TV && NativeTvFocusable) {
     return (
       <NativeTvFocusable
-        style={[style, focused && (focusStyle || styles.ring)]}
+        style={[style,
+                dimUnfocused && !focused && styles.dim,
+                focused && (focusStyle || styles.ring)]}
         hasFocus={hasFocus}
         focusChildOnSelect={focusChildOnSelect}
         allowChildFocus={allowChildFocus}
@@ -68,4 +79,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.14)',
     zIndex: 5,
   },
+  // רק שקיפות. אין כאן שום צבע חדש, ולכן הפריסה והפלטה זהות.
+  dim: {opacity: 0.55},
 });

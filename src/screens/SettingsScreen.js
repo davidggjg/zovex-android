@@ -1,6 +1,7 @@
 import React, {useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, ScrollView, StatusBar} from 'react-native';
 import {LANGS, getLanguage, setLanguage, t} from '../i18n';
+import TvFocusable from '../components/TvFocusable';
 import {APP_VERSION} from '../api/movies';
 
 // מסך הגדרות. כרגע שפה בלבד — נבנה כמסך ולא כחלון קופץ כדי שיהיה מקום
@@ -20,9 +21,9 @@ export default function SettingsScreen({navigation}) {
     <View style={s.wrap}>
       <StatusBar barStyle="light-content" backgroundColor="#0f1115" />
       <View style={s.top}>
-        <TouchableOpacity style={s.back} onPress={() => navigation.goBack()} hitSlop={12}>
+        <TvFocusable style={s.back} onPress={() => navigation.goBack()} hitSlop={12}>
           <Text style={s.backTxt}>✕</Text>
-        </TouchableOpacity>
+        </TvFocusable>
         <Text style={s.topTtl}>{t('settings.title')}</Text>
         <View style={s.back} />
       </View>
@@ -30,11 +31,16 @@ export default function SettingsScreen({navigation}) {
       <ScrollView contentContainerStyle={s.body}>
         <Text style={s.section}>{t('settings.language')}</Text>
         <View style={s.card}>
-          {Object.keys(LANGS).map(code => (
-            <TouchableOpacity key={code} style={s.row} onPress={() => pick(code)}>
+          {/* בטלוויזיה TouchableOpacity אינו יעד focus, ולכן מסך ההגדרות
+              היה נפתח מתפריט הפרופיל ואי אפשר היה לגעת בכלום — לא להחליף
+              שפה ולא לצאת. hasFocus על הראשון מציב את השלט בתוך הרשימה
+              ברגע שהמסך נפתח. */}
+          {Object.keys(LANGS).map((code, i) => (
+            <TvFocusable key={code} hasFocus={i === 0} style={s.row}
+              onPress={() => pick(code)}>
               <Text style={[s.rowTxt, code === lang && s.rowTxtSel]}>{LANGS[code]}</Text>
               <Text style={s.check}>{code === lang ? '✓' : ''}</Text>
-            </TouchableOpacity>
+            </TvFocusable>
           ))}
         </View>
         <Text style={s.hint}>{t('settings.languageHint')}</Text>

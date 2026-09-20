@@ -3,6 +3,7 @@ import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Plat
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
 import NativePlayer, {vtFallbackSrc} from '../components/NativePlayer';
+import TvFocusable from '../components/TvFocusable';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {saveProgress, saveHistory, loadProgress} from '../api/movies';
@@ -1298,9 +1299,9 @@ export default function PlayerScreen({route, navigation}) {
         <Text style={styles.errorBody}>
           לפריט הזה אין כתובת וידאו תקינה. נסה פרק אחר, או דווח לנו כדי שנתקן.
         </Text>
-        <TouchableOpacity style={styles.errorBtn} onPress={() => navigation.goBack()}>
+        <TvFocusable style={styles.errorBtn} hasFocus onPress={() => navigation.goBack()}>
           <Text style={styles.errorBtnTxt}>חזרה</Text>
-        </TouchableOpacity>
+        </TvFocusable>
       </View>
     );
   }
@@ -1318,14 +1319,22 @@ export default function PlayerScreen({route, navigation}) {
             <Text style={styles.resumeTitle}>להמשיך מאיפה שעצרת?</Text>
             <Text style={styles.resumeSub} numberOfLines={2}>{movie.title || ''}</Text>
             <Text style={styles.resumeTime}>{fmtClock(resumeAsk)}</Text>
-            <TouchableOpacity
+            {/* TvFocusable ולא TouchableOpacity: בטלוויזיה Touchable אינו
+                יעד focus כלל, ולכן שני הכפתורים האלה היו **בלתי נגישים
+                לשלט**. החלון הזה נפתח על כל סרט שיש לו התקדמות שמורה,
+                ועוצר את הניגון עד שעונים — כלומר בטלוויזיה הוא פשוט חסם
+                את הצפייה. hasFocus מציב את השלט על "המשך מכאן". */}
+            <TvFocusable
+              hasFocus
+              dimUnfocused
               style={[styles.resumeBtn, styles.resumeBtnMain]}
               onPress={() => answerResume(resumeAsk)}>
               <Text style={styles.resumeBtnMainTxt}>המשך מכאן</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.resumeBtn} onPress={() => answerResume(0)}>
+            </TvFocusable>
+            <TvFocusable dimUnfocused style={styles.resumeBtn}
+              onPress={() => answerResume(0)}>
               <Text style={styles.resumeBtnTxt}>התחל מההתחלה</Text>
-            </TouchableOpacity>
+            </TvFocusable>
           </View>
         </View>
       ) : null}
