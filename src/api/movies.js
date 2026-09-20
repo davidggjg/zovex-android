@@ -233,7 +233,12 @@ export async function fetchFavoriteIds(userId) {
 // חייבת להתאים ל-versionName ב-build.gradle. היא עמדה על 1.0.22 בעוד
 // ה-gradle כבר על 1.0.24 — שתי גרסאות פער, כלומר האפליקציה דיווחה על
 // עצמה מספר שאינו נכון והשוואת הגרסאות מול השרת התבססה עליו.
-export const APP_VERSION = '1.0.42';
+// חייב להיות זהה ל-versionName ב-android/app/build.gradle. זה המספר
+// שדיאלוג העדכון משווה מול /app/version של השרת, ולכן פער כאן שקול
+// לכיבוי בדיקת העדכונים: הוא היה 1.0.42 מול 1.0.43 בבנייה, והשרת הכריז
+// על 1.0.41 — כלומר כל משתמש נענה "אתה מעודכן" לנצח.
+// שלב check-version-sync ב-build-apk.yml מפיל את הבנייה אם השניים נפרדים.
+export const APP_VERSION = '1.0.43';
 
 export async function sendFeedback({userId, name, email, text, kind}) {
   if (!userId || !text) return false;

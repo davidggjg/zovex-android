@@ -41,6 +41,23 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      # שני מספרי גרסה, ואם הם נפרדים בדיקת העדכונים מתה בשקט:
+      # UpdateDialog משווה את APP_VERSION שב-JS מול /app/version של השרת,
+      # בעוד שמה שמותקן בפועל הוא versionName של גרדל. נמצא בפער —
+      # gradle 1.0.43, JS 1.0.42, שרת 1.0.41 — ולכן כל משתמש קיבל
+      # "אתה מעודכן" לנצח. עדיף שהבנייה תיפול מאשר שזה יחזור בשקט.
+      - name: Check version numbers agree
+        run: |
+          G=$(grep -m1 'versionName' android/app/build.gradle | tr -d '"' | awk '{print $2}')
+          J=$(grep -m1 "APP_VERSION = " src/api/movies.js | sed "s/.*'\\(.*\\)'.*/\\1/")
+          echo "gradle=$G  js=$J"
+          if [ "$G" != "$J" ]; then
+            echo "❌ versionName ($G) ו-APP_VERSION ($J) לא זהים."
+            echo "   בלי התאמה דיאלוג העדכון לא יציע לאף אחד לעדכן."
+            exit 1
+          fi
+          echo "✓ תואמים"
+
       - name: Install dependencies
         run: npm install
 
