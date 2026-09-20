@@ -1360,14 +1360,10 @@ export default function PlayerScreen({route, navigation}) {
                    : nativeAudio ? nativeAudio.at : nativeStart}
           hasNext={hasNext}
           nextLabel={nextEp?.episode_title || ''}
-          // ── זמני, לבנייה הזאת בלבד ─────────────────────────────────
-          // שורת אבחון קטנה בראש המסך עם מה ש-ExoPlayer באמת רואה:
-          // אילו רצועות קול יש בקובץ, מה הקודק של כל אחת, ואיזו נבחרה
-          // (הכוכבית). שני מנגנוני הזיהוי שניסינו נכשלו בשקט על אותו
-          // קובץ, ובלי הנתון הזה אני רק מנחשת עוד סיבוב.
-          // להסיר לפני פרסום ל-latest.
           knownDuration={knownDuration}
-          debug={true}
+          // כבוי. שורת האבחון עשתה את שלה — הקול עובד — ואין סיבה שצופה
+          // יראה שמות קודקים על המסך.
+          debug={false}
           onClose={() => navigation.goBack()}
           onNext={goNextEpisode}
           onPlayingChange={v => PipModule?.setVideoPlaying(!!v)}

@@ -114,14 +114,22 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
     // ה-D-pad המשיך לנווט במסך שמאחור, ולמשתמש זה נראה כאילו השלט מת.
     // אומת על הגרסה האחרונה, אחרי שהתיקון הקודם כבר היה בפנים.
     //
-    // ‎requestFocus מחזיר false כשהתצוגה עוד לא מחוברת לחלון, כשאין לה
-    // עדיין גודל, או כשחלון הדיאלוג עצמו עוד לא קיבל focus — וכל השלושה
-    // נכונים ברגע שבו ה-prop מגיע, כי Modal של RN הוא **חלון חדש** שנפתח
-    // אחרי שה-props כבר נכתבו. post יחיד רץ מוקדם מדי, ואז אף אחד לא
-    // מנסה שוב.
+    // אומת במקור של react-native 0.73.6, ReactModalHostView:
     //
-    // לכן מנסים עד שמצליח, עד שנייה אחת. הניסיונות נעצרים ברגע שיש
-    // focus, ותקרה קשיחה מונעת לולאה אם משהו אחר מונע אותו לגמרי.
+    //     mDialog.getWindow().setFlags(FLAG_NOT_FOCUSABLE, FLAG_NOT_FOCUSABLE);
+    //     ...
+    //     mDialog.getWindow().clearFlags(FLAG_NOT_FOCUSABLE);
+    //
+    // כלומר RN פותח את חלון ה-Modal **כחלון שאינו יכול לקבל focus**,
+    // ומסיר את הדגל רק אחרי שהחלון כבר מוצג. ברגע שבו ה-prop מגיע אף
+    // תצוגה בחלון הזה לא יכולה לקבל focus, ולכן post יחיד תמיד נכשל —
+    // וגם בדיקה מקדימה על hasWindowFocus() רק דוחה את כל הניסיונות.
+    //
+    // onWindowFocusChanged הוא בדיוק הרגע שבו הדגל מוסר, ולכן הוא
+    // הטריגר האמין; הניסיונות החוזרים הם רשת ביטחון סביבו.
+    //
+    // הניסיונות נעצרים ברגע שיש focus, ותקרה של 30 (כ-1.5 שניות) מונעת
+    // לולאה אם משהו אחר מונע אותו לגמרי.
     private var focusTries = 0
     private var focusWanted = false
 
@@ -134,13 +142,20 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
     private fun tryFocusSoon() {
         post {
             if (!focusWanted || isFocused) return@post
-            val ready = isAttachedToWindow && width > 0 && height > 0 &&
-                hasWindowFocus()
-            if (ready && requestFocus()) {
+            // פשוט לנסות, ולבדוק אם הצליח.
+            //
+            // כאן הייתה בדיקה מקדימה — width/height/hasWindowFocus — ובמקום
+            // להגן היא חסמה: ב-Dialog של Modal אחד התנאים לא מתקיים בזמן,
+            // כל 20 הניסיונות נדחו בלי שאף אחד מהם באמת ניסה, והתפריט נשאר
+            // בלי focus. התנאי הזה החמיר את המצב במקום לתקן אותו.
+            //
+            // requestFocus כבר מחזיר false בעצמו כשאי אפשר, ולכן ערך החזרה
+            // שלו הוא הבדיקה הנכונה היחידה — ומנסים שוב עד שהוא מצליח.
+            if (isAttachedToWindow && requestFocus()) {
                 focusWanted = false
                 return@post
             }
-            if (focusTries++ < 20) postDelayed({ tryFocusSoon() }, 50)
+            if (focusTries++ < 30) postDelayed({ tryFocusSoon() }, 50)
         }
     }
 
