@@ -207,7 +207,13 @@ export default function NativePlayer({
               t => `${t.index}:${t.type || '?'}${t.selected ? '*' : ''}`).join(' ');
             const v = (d?.videoTracks || []).map(
               t => `${t.index}:${t.codecs || '?'}${t.selected ? '*' : ''}`).join(' ');
-            setDiag(`אודיו[${a || 'אין'}] וידאו[${v || 'אין'}] ${Math.round(dd)}ש`);
+            // איזה מסלול מנגן עכשיו. בלי זה אי אפשר לדעת אם המעבר להמרה
+            // בשרת בכלל קרה, או שאנחנו עדיין על הקובץ המקורי.
+            const cur = vtSrc || src || '';
+            const route = cur.includes('/vt/') ? 'vt'
+                        : cur.includes('/vh/') ? 'vh'
+                        : cur.includes('/fs/') ? 'fs' : 'stream';
+            setDiag(`[${route}] אודיו[${a || 'אין'}] וידאו[${v || 'אין'}] ${Math.round(dd)}ש`);
           }
           if (startTime > 1) seekTo(startTime);
         }}

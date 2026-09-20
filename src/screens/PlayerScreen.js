@@ -1039,6 +1039,44 @@ export default function PlayerScreen({route, navigation}) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resumeAt]);
 
+  // ── לשאול את השרת מה יש בקובץ, בלי להסתמך על שום זיהוי ────────────────
+  //
+  // כל מנגנון שניסינו עד כה שאל את **הנגן** אם יש קול: webkitAudioDecoded-
+  // ByteCount ב-WebView, ורצועה שנבחרה ב-ExoPlayer. שניהם נכשלו על אותו
+  // קובץ, כל אחד מסיבה אחרת, ובשניהם הכישלון שקט — אין שגיאה, יש תמונה,
+  // ואין קול. אי אפשר לבנות על תשובה שהנגן לא תמיד נותן.
+  //
+  // השרת יודע בוודאות: MKV הוא MKV, וקובץ כזה לא מתנגן נכון על מכשיר בלי
+  // מפענח Dolby. ‎/vodinfo מחזיר browser_ok=false ואת הכתובת המומרת, שבה
+  // הווידאו מועתק והקול AAC — וזה מתנגן על כל מכשיר, בלי שום תלות במה
+  // שיש או אין במכשיר הזה.
+  //
+  // חמש שניות ולא מיד: התשובה הראשונה על פריט עולה לשרת משיכה של 2MB
+  // מטלגרם, וזה בדיוק המשאב שהצופה מחכה לו בשניות הראשונות. התשובה
+  // נשמרת בשרת לשש שעות, ולכן הצופה הבא מקבל אותה מיד.
+  useEffect(() => {
+    if (isLive || resumeAt === null || audioFix || vtFix) return;
+    const info = vodInfoSrc(buildSrc(movie, 0));
+    if (!info) return;
+    let alive = true;
+    const timer = setTimeout(() => {
+      fetch(info)
+        .then(r => (r.ok ? r.json() : null))
+        .then(d => {
+          if (!alive || !d || d.browser_ok !== false || !d.url) return;
+          // ממשיכים מהמקום שבו הצופה נמצא עכשיו, לא מההתחלה.
+          const at = Math.max(progressRef.current.position || 0, resumeAt || 0);
+          rememberSilent(movie);
+          setNativeAudio(null);
+          setAudioFix({src: d.url, at});
+          setWvKey(k => k + 1);
+        })
+        .catch(() => {});
+    }, 5000);
+    return () => { alive = false; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resumeAt]);
+
   const {src, html, isIframe} = useMemo(() => {
     const at = vtFix ? vtFix.at : audioFix ? audioFix.at : (isLive ? 0 : startTime);
     const s = vtFix ? vtFix.src
@@ -1308,7 +1346,13 @@ export default function PlayerScreen({route, navigation}) {
                    : nativeAudio ? nativeAudio.at : nativeStart}
           hasNext={hasNext}
           nextLabel={nextEp?.episode_title || ''}
-          debug={false}
+          // ── זמני, לבנייה הזאת בלבד ─────────────────────────────────
+          // שורת אבחון קטנה בראש המסך עם מה ש-ExoPlayer באמת רואה:
+          // אילו רצועות קול יש בקובץ, מה הקודק של כל אחת, ואיזו נבחרה
+          // (הכוכבית). שני מנגנוני הזיהוי שניסינו נכשלו בשקט על אותו
+          // קובץ, ובלי הנתון הזה אני רק מנחשת עוד סיבוב.
+          // להסיר לפני פרסום ל-latest.
+          debug={true}
           onClose={() => navigation.goBack()}
           onNext={goNextEpisode}
           onPlayingChange={v => PipModule?.setVideoPlaying(!!v)}
