@@ -1434,12 +1434,20 @@ export default function PlayerScreen({route, navigation}) {
         <TvNativePlayer
           // key: כשעוברים לכאן באמצע צפייה (תיקון קול) צריך מופע נקי, אחרת
           // ExoPlayer ממשיך עם המקור הישן.
-          key={nativeAudio ? 'native-audiofix' : 'native'}
+          // ה-key חייב להשתנות בכל מעבר מסלול, אחרת ExoPlayer ממשיך עם
+          // המקור הישן כשהוא מקבל רק source חדש — והמעבר להמרה בשרת נראה
+          // כאילו לא קרה כלום. בטלפון זה כבר תוקן; כאן זה נשאר, ובדיוק
+          // המסך הזה הוא מה שהטלוויזיה מריצה.
+          key={audioFix ? 'native-vh' : vtFix ? 'native-vt'
+               : nativeAudio ? 'native-audiofix' : 'native'}
           // במסלול תיקון-הקול מגישים דרך /fs — הכותרת בהתחלה במקום בסוף
-          // הקובץ. ‎/stream נשאר כשאין המרה כזאת.
+          // הקובץ. ‎/stream נשאר כשאין המרה כזאת. כתובת HLS של המרה לא
+          // עוברת דרך fsSrc (התבנית לא מתאימה) ולכן עוברת כמו שהיא.
           src={(nativeAudio && fsSrc(src)) || src}
           isLive={isLive}
-          startTime={nativeAudio ? nativeAudio.at : nativeStart}
+          startTime={audioFix ? audioFix.at
+                   : vtFix ? vtFix.at
+                   : nativeAudio ? nativeAudio.at : nativeStart}
           debug={!!nativeAudio}
           onProgress={(pos, dur) => {
             progressRef.current = {position: pos, duration: dur};
