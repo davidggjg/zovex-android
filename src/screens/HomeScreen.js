@@ -178,7 +178,21 @@ function MovieDetailModal({
     return () => { alive = false; };
   }, [item?.id, item?.is_live]);
 
+  // ── פרק מסוים שנלחץ, ולא הסדרה כולה ────────────────────────────────
+  //
+  // מהמשך צפייה, מההורדות ומהמועדפים מגיע פרק בודד, עם עונה ומספר. עד
+  // עכשיו החלון התעלם מזה: הוא נפתח תמיד על העונה הראשונה, וכפתור
+  // "הפעל" ניגן את הפרק הראשון שלה. כלומר צפית בעונה 3 פרק 5, לחצת
+  // "המשך", וקיבלת עונה 1 פרק 1. גם כפתור ההורדה הוריד את הפרק הראשון.
+  const tappedEp = (item && !item.isSeries && item.series_name && item.episode_number)
+    ? item : null;
   const [selectedSeason, setSelectedSeason] = useState(null);
+  // עונה חדשה לכל פריט שנפתח. בלי האיפוס, עונה שנבחרה בחלון הקודם נשארה
+  // תקועה גם כשנפתחה סדרה אחרת.
+  useEffect(() => {
+    setSelectedSeason(tappedEp ? (tappedEp.season_number || 1) : null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item?.id]);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
   const [seasonLoading, setSeasonLoading] = useState(false);
   // ה-description לא נשלח ב-/content/lite (זה השדה הכבד). כשפותחים סרט
@@ -278,6 +292,12 @@ function MovieDetailModal({
           )}
           <View style={mdStyles.body}>
             <Text style={mdStyles.title}>{displayTitle}</Text>
+            {tappedEp ? (
+              <Text style={mdStyles.epHeading}>
+                עונה {tappedEp.season_number || 1} · פרק {tappedEp.episode_number}
+                {tappedEp.episode_title ? `  —  ${tappedEp.episode_title}` : ''}
+              </Text>
+            ) : null}
             {!!description && (
               <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
@@ -335,8 +355,10 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
             <View style={mdStyles.actionsRow}>
               <TvFocusable style={mdStyles.playBtn} activeOpacity={0.8}
                 hasFocus={IS_TV}
-                onPress={() => onPlayDirect(firstEp || item)}>
-                <Text style={mdStyles.playTxt}>▶ הפעל</Text>
+                onPress={() => onPlayDirect(tappedEp || firstEp || item)}>
+                <Text style={mdStyles.playTxt}>
+                  {tappedEp ? `▶ פרק ${tappedEp.episode_number}` : '▶ הפעל'}
+                </Text>
               </TvFocusable>
               {onToggleFavorite && (
                 <TvFocusable
@@ -349,7 +371,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                 </TvFocusable>
               )}
               <DownloadControl
-                item={firstEp || item}
+                item={tappedEp || firstEp || item}
                 downloadedIds={downloadedIds}
                 downloadingId={downloadingId}
                 downloadProgress={downloadProgress}
@@ -392,7 +414,9 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                 </View>
               ) : (
                 visibleEpisodes.map(ep => (
-                  <TvFocusable key={ep.id} style={mdStyles.epRow} activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
+                  <TvFocusable key={ep.id}
+                    style={[mdStyles.epRow, tappedEp && ep.id === tappedEp.id && mdStyles.epRowCurrent]}
+                    activeOpacity={0.75} onPress={() => onPlayDirect(ep)}>
                     {ep.thumbnail_url ? (
                       <Image source={{uri: ep.thumbnail_url}} style={mdStyles.epThumb} />
                     ) : (
@@ -486,6 +510,7 @@ const mdStyles = StyleSheet.create({
   noThumb: {width: '100%', height: 200, backgroundColor: '#1c1c1e', justifyContent: 'center', alignItems: 'center'},
   body: {padding: 18},
   title: {color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8},
+  epHeading: {color: '#ddd', fontSize: 14, fontWeight: '700', textAlign: 'right', marginTop: -4, marginBottom: 8},
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
   actionsRow: {flexDirection: 'row', gap: 10},
   playBtn: {flex: 1, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
@@ -526,6 +551,8 @@ const mdStyles = StyleSheet.create({
   seasonPickerTxtActive: {color: '#e50914', fontSize: 17, fontWeight: '800'},
   epsHeader: {color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10, paddingTop: 10},
   epRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a'},
+  // הפרק שממנו נפתח החלון. רק הדגשה עדינה של הרקע — הפלטה לא משתנה.
+  epRowCurrent: {backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8},
   epThumb: {width: 110, height: 62, borderRadius: 6, resizeMode: 'cover'},
   epThumbEmpty: {width: 110, height: 62, borderRadius: 6, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center'},
   epInfo: {flex: 1, marginHorizontal: 10},
@@ -721,6 +748,8 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
   const isLive = !!item.is_live;
   const displayTitle = String(item.name || item.title || '');
   if (!displayTitle) return null;
+  const epLabel = (!item.isSeries && item.series_name && item.episode_number)
+    ? `עונה ${item.season_number || 1} · פרק ${item.episode_number}` : '';
   const borderColor = isLive ? '#e50914' : 'transparent';
   const borderWidth = isLive ? 2 : 0;
   return (
@@ -736,6 +765,11 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
         )}
         {item.isSeries && <View style={styles.badge}><Text style={styles.badgeText}>סדרה</Text></View>}
         {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
+        {/* פרק בודד — בהורדות, בהמשך צפייה ובמועדפים. השם שלו הוא שם הסדרה,
+            ולכן בלי השורה הזו עשרה פרקים שהורדו נראו כעשרה כרטיסים זהים.
+            מונח על התמונה ולא מתחת לשם, כדי שגובה הכרטיס לא ישתנה והשורה
+            לא תצא עקומה. */}
+        {epLabel ? <View style={styles.epBadge}><Text style={styles.epBadgeText} numberOfLines={1}>{epLabel}</Text></View> : null}
       </View>
       <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
     </TvFocusable>
@@ -2075,6 +2109,9 @@ const styles = StyleSheet.create({
   badge: {position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2},
   liveBadge: {backgroundColor: '#e50914'},
   badgeText: {color: '#fff', fontSize: 9, fontWeight: '800'},
+  epBadge: {position: 'absolute', bottom: 6, left: 6, right: 6, alignItems: 'center',
+            backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 6, paddingVertical: 3},
+  epBadgeText: {color: '#fff', fontSize: 10, fontWeight: '800'},
 
   // ── Grid ──
   grid: {paddingHorizontal: 8, paddingBottom: 20, paddingTop: 4},
