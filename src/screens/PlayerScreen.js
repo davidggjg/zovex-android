@@ -92,17 +92,46 @@ function vodInfoSrc(src) {
   return `${m[1]}/vodinfo/${m[2]}/${m[3]}${m[4] || ''}`;
 }
 
+// ── למה זה מנסה יותר מפעם אחת ────────────────────────────────────────────
+//
+// נמדד מול השרת החי, מדגם אקראי מהקטלוג: חלק לא קטן מהקריאות ל-/vodinfo
+// נופל ב-"Connection reset by peer" אחרי 11.1 שניות — באופן עקבי, אותו
+// זמן בדיוק. אותם פריטים עונים תוך 2-4 שניות בניסיון חוזר. בקרה של ארבע
+// משיכות מקטע גדולות במקביל עברה במלואה, כלומר זו לא הרשת ולא העומס.
+//
+// מה שזה עשה באפליקציה: כל כישלון כזה נפל אחורה ל-/vh **בניחוש**. ל-AVI
+// ול-MKV בלי Cues זה נתיב שאינו יכול לנגן, והתוצאה היא בדיוק
+// "לא הצלחתי לנגן את הפריט הזה" על פריט תקין לגמרי.
+//
+// לכן: מנסים שלוש פעמים לפני שמוותרים, ורק אחר כך נופלים אחורה. השרת
+// עדיין צריך תיקון — זה מטפל בתסמין, ובצדק, כי צופה לא אמור לשלם על
+// תקלת רשת חולפת.
+const VODINFO_TRIES = 3;
+
+async function fetchVodInfo(url) {
+  for (let i = 0; i < VODINFO_TRIES; i++) {
+    try {
+      const ctl = new AbortController();
+      const t = setTimeout(() => ctl.abort(), 20000);
+      const r = await fetch(url, {signal: ctl.signal});
+      clearTimeout(t);
+      if (r.ok) return await r.json();
+      // 4xx הוא תשובה, לא תקלה — אין טעם לשאול שוב את אותה שאלה
+      if (r.status >= 400 && r.status < 500) return null;
+    } catch (_) { /* ניתוק או timeout — מנסים שוב */ }
+    if (i < VODINFO_TRIES - 1) {
+      await new Promise(res => setTimeout(res, 700 * (i + 1)));
+    }
+  }
+  return null;
+}
+
 async function resolveFixSrc(src) {
   const info = vodInfoSrc(src);
   const fallback = audioFixSrc(src);
   if (!info) return fallback;
   try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 20000);
-    const r = await fetch(info, {signal: ctl.signal});
-    clearTimeout(t);
-    if (!r.ok) return fallback;
-    const d = await r.json();
+    const d = await fetchVodInfo(info);
     return d && d.url ? d.url : fallback;
   } catch (_) {
     return fallback;
@@ -1070,8 +1099,10 @@ export default function PlayerScreen({route, navigation}) {
     if (!info) return;
     let alive = true;
     const timer = setTimeout(() => {
-      fetch(info)
-        .then(r => (r.ok ? r.json() : null))
+      // fetchVodInfo ולא fetch: הקריאה הזאת נופלת מדי פעם בניתוק אחרי
+      // 11 שניות (נמדד), וכשהיא נופלת הפריט מנוגן בלי הפסק דין על הקול —
+      // כלומר לפעמים בלי קול בכלל. ראה VODINFO_TRIES.
+      fetchVodInfo(info)
         .then(d => {
           if (!alive || !d) return;
           if (d.duration) setKnownDuration(d.duration);
