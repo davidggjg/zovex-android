@@ -36,9 +36,11 @@ class VideoPickerModule(private val ctx: ReactApplicationContext) :
 
     companion object {
         private const val REQ = 0x5A01
+        private const val REQ_IMAGE = 0x5A02
     }
 
     private var pending: Promise? = null
+    private var pendingImage: Promise? = null
 
     init {
         ctx.addActivityEventListener(this)
@@ -79,12 +81,61 @@ class VideoPickerModule(private val ctx: ReactApplicationContext) :
         }
     }
 
+    /**
+     * תמונה לפוסטר — אותו בורר קבצים של המערכת, מסונן לתמונות. מחזיר רק
+     * uri/name/size: ההקטנה וההמרה ל-JPEG נעשות ברגע השליחה (UploadModule).
+     */
+    @ReactMethod
+    fun pickImage(promise: Promise) {
+        val act = currentActivity
+        if (act == null) {
+            promise.reject("NO_ACTIVITY", "האפליקציה אינה בחזית")
+            return
+        }
+        pendingImage?.resolve(cancelled())
+        pendingImage = promise
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/*"
+            putExtra(Intent.EXTRA_LOCAL_ONLY, true)
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, false)
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
+        }
+        try {
+            act.startActivityForResult(intent, REQ_IMAGE)
+        } catch (e: ActivityNotFoundException) {
+            pendingImage = null
+            promise.reject("NO_PICKER", "אין במכשיר בורר קבצים", e)
+        } catch (e: Exception) {
+            pendingImage = null
+            promise.reject("PICK_FAILED", e.message, e)
+        }
+    }
+
     override fun onActivityResult(
         activity: Activity?,
         requestCode: Int,
         resultCode: Int,
         data: Intent?
     ) {
+        if (requestCode == REQ_IMAGE) {
+            val p = pendingImage ?: return
+            pendingImage = null
+            val u = data?.data
+            if (resultCode != Activity.RESULT_OK || u == null) {
+                p.resolve(cancelled())
+                return
+            }
+            try {
+                p.resolve(describeImage(u))
+            } catch (e: Exception) {
+                p.reject("READ_FAILED", e.message, e)
+            }
+            return
+        }
         if (requestCode != REQ) return
         val promise = pending ?: return
         pending = null
@@ -109,6 +160,35 @@ class VideoPickerModule(private val ctx: ReactApplicationContext) :
 
     private fun cancelled(): WritableMap =
         Arguments.createMap().apply { putBoolean("cancelled", true) }
+
+    private fun describeImage(uri: Uri): WritableMap {
+        // ההעלאה עשויה להתחיל דקות אחרי הבחירה — הרשאה מתמשכת, אם הספק מרשה
+        try {
+            ctx.contentResolver.takePersistableUriPermission(
+                uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) {
+        }
+        var name = "poster.jpg"
+        var size = 0.0
+        try {
+            ctx.contentResolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) {
+                    val ni = c.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (ni >= 0 && !c.isNull(ni)) name = c.getString(ni)
+                    val si = c.getColumnIndex(OpenableColumns.SIZE)
+                    if (si >= 0 && !c.isNull(si)) size = c.getLong(si).toDouble()
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return Arguments.createMap().apply {
+            putBoolean("cancelled", false)
+            putString("uri", uri.toString())
+            putString("name", name)
+            putDouble("size", size)
+        }
+    }
 
     private fun describe(uri: Uri): WritableMap {
         // הרשאה מתמשכת, כדי שההעלאה תשרוד גם אם המסך נבנה מחדש. לא כל ספק

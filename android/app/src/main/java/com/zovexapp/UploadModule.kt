@@ -1,7 +1,11 @@
 package com.zovexapp
 
 import android.app.NotificationManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import com.facebook.react.bridge.Arguments
@@ -14,6 +18,7 @@ import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
@@ -88,6 +93,12 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         private const val MAX_PARALLEL = 16
         private const val PROBE_MS = 12_000L    // כל כמה זמן בודקים אם לעלות
         private const val RATE_WINDOW_MS = 10_000L
+
+        // ── פוסטר שבחרת ──────────────────────────────────────────────────
+        // מוקטן בטלפון לפני השליחה: תמונה ערוכה יכולה לשקול 10MB, וב-WiFi
+        // גרוע זה עוד חלק שלם של המתנה. 1500 פיקסלים זה גם מה שהשרת שומר.
+        private const val POSTER_MAX_PX = 1500
+        private const val POSTER_GIVE_UP_MS = 3 * 60_000L
     }
 
     @Volatile private var running = false
@@ -109,6 +120,9 @@ class UploadModule(private val ctx: ReactApplicationContext) :
     // כמה חלקים ממתינים עכשיו לרשת. ההעלאה לא נכשלה — היא מחכה — והמסך
     // צריך לדעת להגיד את זה במקום להיראות תקוע.
     private val waitingParts = AtomicInteger(0)
+    // מה קרה לפוסטר שבחרת: ""=לא נבחר | sending | sent | failed | old_server
+    @Volatile private var posterState = ""
+    @Volatile private var posterError = ""
 
     override fun getName() = "ZovexUploader"
 
@@ -141,6 +155,8 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         val type = opts.getString("type") ?: "application/octet-stream"
         val name = opts.getString("name") ?: "video.mp4"
         val caption = opts.getString("caption") ?: ""
+        val posterUri = (if (opts.hasKey("posterUri")) opts.getString("posterUri") else null)
+            ?.takeIf { it.isNotEmpty() }?.let { Uri.parse(it) }
         val hinted = if (opts.hasKey("size")) opts.getDouble("size").toLong() else 0L
         val duration = if (opts.hasKey("duration")) opts.getDouble("duration").toLong() else 0L
         val width = if (opts.hasKey("width")) opts.getInt("width") else 0
@@ -157,12 +173,14 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         job = ""
         lastError = ""
         mode = ""
+        posterState = if (posterUri != null) "sending" else ""
+        posterError = ""
         startedAt = System.currentTimeMillis()
         total = if (hinted > 0) hinted else resolveSize(uri)
 
         UploadService.start(ctx, name)
         Thread({
-            drive(uri, base, code, type, name, caption, duration, width, height)
+            drive(uri, base, code, type, name, caption, duration, width, height, posterUri)
         }, "zovex-upload").start()
         promise.resolve(snapshot())
     }
@@ -185,7 +203,8 @@ class UploadModule(private val ctx: ReactApplicationContext) :
 
     private fun drive(
         uri: Uri, base: String, code: String, type: String,
-        name: String, caption: String, duration: Long, width: Int, height: Int
+        name: String, caption: String, duration: Long, width: Int, height: Int,
+        posterUri: Uri?
     ) {
         try {
             var begun: JSONObject? = null
@@ -210,11 +229,16 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                 // השרת קובע כמה חיבורים לפתוח. כך אפשר למדוד 12/16/20 בשינוי
                 // משתנה סביבה, בלי לבנות ולהתקין APK חדש לכל ניסיון.
                 val want = begun.optInt("workers", PARALLEL).coerceIn(1, 32)
+                // הפוסטר לפני הסרט: הוא קטן, והשרת מקבל אותו רק עד finish.
+                // כישלון שלו לא עוצר את ההעלאה — הסרט חשוב ממנו.
+                if (posterUri != null) sendPoster(base, code, job, posterUri)
                 uploadParts(uri, base, code, partSize, nParts, want)
                 if (cancelRequested) throw IOException("ההעלאה בוטלה")
                 finish(base, code, job)
             } else {
                 mode = "single"
+                // המסלול הישן אינו מכיר פוסטר — ואומרים את זה במקום לשתוק
+                if (posterUri != null) posterState = "old_server"
                 singleUpload(uri, base, code, type, name, caption, duration, width, height)
             }
 
@@ -500,6 +524,100 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         }
     }
 
+    // ── פוסטר שבחרת ─────────────────────────────────────────────────────────
+
+    /** התמונה כ-JPEG עד POSTER_MAX_PX בצד. null אם אי אפשר לפענח אותה. */
+    private fun posterJpeg(uri: Uri): ByteArray? {
+        return try {
+            val bmp: Bitmap = if (Build.VERSION.SDK_INT >= 28) {
+                // ImageDecoder גם מסובב לפי EXIF וגם קורא HEIC
+                ImageDecoder.decodeBitmap(
+                    ImageDecoder.createSource(ctx.contentResolver, uri)
+                ) { dec, info, _ ->
+                    val w = info.size.width
+                    val h = info.size.height
+                    val big = maxOf(w, h)
+                    if (big > POSTER_MAX_PX) {
+                        val k = POSTER_MAX_PX.toDouble() / big
+                        dec.setTargetSize(maxOf(1, (w * k).toInt()), maxOf(1, (h * k).toInt()))
+                    }
+                    dec.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                }
+            } else {
+                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                ctx.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, o) }
+                var sample = 1
+                while (maxOf(o.outWidth, o.outHeight) / (sample * 2) >= POSTER_MAX_PX) sample *= 2
+                ctx.contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null,
+                        BitmapFactory.Options().apply { inSampleSize = sample })
+                } ?: return null
+            }
+            val out = ByteArrayOutputStream()
+            bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
+            bmp.recycle()
+            out.toByteArray()
+        } catch (_: Throwable) {
+            null     // כולל OutOfMemoryError על תמונה ענקית
+        }
+    }
+
+    /**
+     * שולח את הפוסטר. לא זורק: פוסטר שלא עבר לא מפיל העלאה של סרט.
+     * ב-WiFi שנופל מנסה שוב עד שלוש דקות, כמו החלקים.
+     */
+    private fun sendPoster(base: String, code: String, jobId: String, uri: Uri) {
+        val bytes = posterJpeg(uri)
+        if (bytes == null) {
+            posterState = "failed"
+            posterError = "לא הצלחתי לקרוא את התמונה"
+            return
+        }
+        val giveUpAt = System.currentTimeMillis() + POSTER_GIVE_UP_MS
+        var wait = 1_000L
+        while (!cancelRequested) {
+            var c: HttpURLConnection? = null
+            try {
+                val conn = open("$base/panel/saved-upload/poster?job=" + enc(jobId), code,
+                    "image/jpeg")
+                c = conn
+                conn.readTimeout = PART_READ_TIMEOUT_MS
+                conn.setFixedLengthStreamingMode(bytes.size)
+                conn.outputStream.use { it.write(bytes) }
+                val status = conn.responseCode
+                val body = readBody(conn, status)
+                when {
+                    status == 200 -> posterState = "sent"
+                    // שרת שעוד לא עודכן: FastAPI עונה על מסלול שאינו קיים
+                    // "Not Found". משימה שלא נמצאה עונה בעברית.
+                    status == 404 && (detail(body) ?: "Not Found") == "Not Found" ->
+                        posterState = "old_server"
+                    else -> {
+                        posterState = "failed"
+                        posterError = detail(body) ?: "השרת החזיר $status"
+                    }
+                }
+                emit("progress") {}
+                return
+            } catch (_: IOException) {
+                if (System.currentTimeMillis() > giveUpAt) {
+                    posterState = "failed"
+                    posterError = "הרשת לא אפשרה לשלוח את הפוסטר"
+                    return
+                }
+                sleepUnlessCancelled(wait)
+                wait = minOf(wait * 2, BACKOFF_CAP_MS)
+            } catch (e: Exception) {
+                // כל תקלה אחרת — הפוסטר נופל, הסרט ממשיך
+                posterState = "failed"
+                posterError = e.message ?: "שגיאה"
+                return
+            } finally {
+                try { c?.disconnect() } catch (_: Exception) {}
+            }
+        }
+    }
+
     // ── שלב 3: סגירה ─────────────────────────────────────────────────────────
 
     private fun finish(base: String, code: String, jobId: String) {
@@ -645,6 +763,8 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         // ההעלאה במקום פשוט לראות אותו.
         putInt("workers", if (mode == "parallel") activeWorkers else if (mode == "single") 1 else 0)
         putInt("waiting", waitingParts.get())
+        putString("poster", posterState)
+        putString("posterError", posterError)
         putString("error", lastError)
     }
 

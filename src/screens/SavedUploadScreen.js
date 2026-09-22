@@ -10,7 +10,7 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator, TextInput, Alert, NativeModules,
+  ActivityIndicator, TextInput, Alert, NativeModules, Image,
 } from 'react-native';
 
 // בורר משלנו ולא react-native-image-picker: זה פתח את גוגל תמונות, שמציג
@@ -43,6 +43,11 @@ export default function SavedUploadScreen({route, navigation}) {
 
   const [file, setFile] = useState(null);
   const [caption, setCaption] = useState('');
+  // פוסטר שבחרת בעצמך. בלעדיו השרת מחפש לבד לפי הכיתוב (TMDB); איתו — TMDB
+  // לא נשאל בכלל, והתמונה שלך מוטמעת בקובץ ומשמשת גם כתצוגה בטלגרם.
+  const [poster, setPoster] = useState(null);     // {uri, name}
+  const [posterState, setPosterState] = useState('');   // ''|sending|sent|failed|old_server
+  const [posterError, setPosterError] = useState('');
   const [phase, setPhase] = useState('idle');     // idle|sending|telegram|done|error
   const [sent, setSent] = useState(0);
   // הבורר לא תמיד יודע לומר את גודל הקובץ (fileSize חוזר 0 בחלק ממכשירי
@@ -96,6 +101,18 @@ export default function SavedUploadScreen({route, navigation}) {
     }
   }, []);
 
+  const pickPoster = useCallback(async () => {
+    if (!VideoPicker?.pickImage) { setError('בחירת פוסטר דורשת גרסה חדשה של האפליקציה'); return; }
+    try {
+      const a = await VideoPicker.pickImage();
+      if (!a || a.cancelled) return;
+      setPoster({uri: a.uri, name: a.name || 'poster.jpg'});
+      setPosterState(''); setPosterError('');
+    } catch (e) {
+      setError(e.message || 'בחירת התמונה נכשלה');
+    }
+  }, []);
+
   const poll = useCallback(job => {
     clearInterval(pollRef.current);
     pollRef.current = setInterval(async () => {
@@ -122,6 +139,8 @@ export default function SavedUploadScreen({route, navigation}) {
       if (e.total > 0) setTotal(e.total);
       if (e.mode) setLink({mode: e.mode, workers: e.workers || 0});
       if (typeof e.waiting === 'number') setWaiting(e.waiting);
+      if (typeof e.poster === 'string') setPosterState(e.poster);
+      if (typeof e.posterError === 'string') setPosterError(e.posterError);
       if (e.type === 'done') {
         if (e.job) { setPhase('telegram'); poll(e.job); }
         else { setPhase('error'); setError('השרת לא החזיר מזהה משימה'); }
@@ -139,6 +158,7 @@ export default function SavedUploadScreen({route, navigation}) {
         setSent(st.sent || 0);
         setTotal(st.total || 0);
         if (st.mode) setLink({mode: st.mode, workers: st.workers || 0});
+        if (st.poster) setPosterState(st.poster);
         // המהירות נמדדת מרגע החיבור מחדש, כי אין לנו את זמן ההתחלה המקורי.
         startedRef.current = Date.now();
       } else if (st.stage === 'done' && st.job) {
@@ -153,18 +173,20 @@ export default function SavedUploadScreen({route, navigation}) {
     if (!file || phase === 'sending' || phase === 'telegram') return;
     setPhase('sending'); setSent(0); setTotal(file.size || 0); setTg(null); setError('');
     setLink({mode: '', workers: 0});
+    setPosterState(poster ? 'sending' : ''); setPosterError('');
     startedRef.current = Date.now();
     try {
       await startUpload({
         code, uri: file.uri, name: file.name, type: file.type,
         size: file.size, caption,
         duration: file.duration, width: file.width, height: file.height,
+        posterUri: poster?.uri || '',
       });
     } catch (e) {
       setPhase('error');
       setError(e.message || 'ההעלאה לשרת נכשלה');
     }
-  }, [file, phase, code, caption]);
+  }, [file, phase, code, caption, poster]);
 
   const busy = phase === 'sending' || phase === 'telegram';
   // הקובץ גדול מהמותר — אין טעם להתחיל. עדיף לומר את זה עכשיו מאשר אחרי
@@ -235,6 +257,36 @@ export default function SavedUploadScreen({route, navigation}) {
           />
         )}
 
+        {!!file && (
+          <View style={styles.posterRow}>
+            {poster ? (
+              <>
+                <Image source={{uri: poster.uri}} style={styles.posterImg} resizeMode="cover" />
+                <View style={styles.posterInfo}>
+                  <Text style={styles.stage}>🖼 הפוסטר שלך</Text>
+                  <Text style={styles.meta} numberOfLines={1}>{poster.name}</Text>
+                  <Text style={styles.meta}>יוטמע בקובץ במקום החיפוש האוטומטי</Text>
+                  {!busy && (
+                    <View style={styles.posterBtns}>
+                      <TouchableOpacity onPress={pickPoster} style={styles.smallBtn}>
+                        <Text style={styles.smallTxt}>החלף</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setPoster(null)} style={styles.smallBtn}>
+                        <Text style={styles.smallTxt}>הסר</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </>
+            ) : (
+              <TouchableOpacity onPress={pickPoster} disabled={busy} style={styles.posterPick}>
+                <Text style={styles.pickTxt}>🖼 פוסטר משלי (לא חובה)</Text>
+                <Text style={styles.meta}>בלי — השרת ימצא פוסטר לפי השם בכיתוב</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {/* ① טלפון → שרת */}
         {(phase === 'sending' || phase === 'telegram' || phase === 'done') && (
           <View style={styles.card}>
@@ -250,6 +302,19 @@ export default function SavedUploadScreen({route, navigation}) {
                   (upSpeed && total ? ` · ${fmtBytes(upSpeed)}/שנ׳ · נותרו ${fmtEta((total - sent) / upSpeed)}` : '')
                 : '✓ הושלם'}
             </Text>
+            {!!poster && posterState === 'sent' && (
+              <Text style={[styles.meta, {color: '#7ee2a0'}]}>✓ הפוסטר הגיע לשרת</Text>
+            )}
+            {!!poster && posterState === 'failed' && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                הפוסטר לא נשלח ({posterError || 'שגיאה'}) — הסרטון ממשיך לעלות בלעדיו
+              </Text>
+            )}
+            {!!poster && posterState === 'old_server' && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                השרת עוד לא מכיר פוסטר משלך — הסרטון עולה בלעדיו
+              </Text>
+            )}
             {phase === 'sending' && waiting > 0 && (
               <Text style={[styles.meta, {color: '#f0b429'}]}>
                 הרשת נפלה — ממתין שתחזור וממשיך מאותה נקודה, לא מההתחלה
@@ -276,6 +341,14 @@ export default function SavedUploadScreen({route, navigation}) {
         {phase === 'done' && (
           <View style={[styles.card, styles.okCard]}>
             <Text style={styles.okTxt}>✅ הסרטון בהודעות השמורות</Text>
+            {tg?.poster === 'embedded' && (
+              <Text style={styles.meta}>🖼 הפוסטר מוטמע בתוך הקובץ</Text>
+            )}
+            {!!poster && posterState === 'sent' && tg?.poster !== 'embedded' && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                הפוסטר שלך לא הוטמע (סוג הקובץ לא נתמך) — הוא עדיין התצוגה בטלגרם
+              </Text>
+            )}
             <Text style={styles.meta}>הקובץ הזמני נמחק מהשרת.</Text>
           </View>
         )}
@@ -330,6 +403,16 @@ const styles = StyleSheet.create({
   input: {backgroundColor: '#141416', borderRadius: 12, borderWidth: 1,
           borderColor: '#232326', color: '#fff', paddingHorizontal: 14,
           paddingVertical: 12, textAlign: 'right', fontSize: 14},
+  posterRow: {flexDirection: 'row-reverse', gap: 12, alignItems: 'center'},
+  posterPick: {flex: 1, backgroundColor: '#141416', borderRadius: 14, paddingVertical: 14,
+               alignItems: 'center', borderWidth: 1, borderColor: '#232326',
+               borderStyle: 'dashed', gap: 4},
+  posterImg: {width: 72, height: 108, borderRadius: 8, backgroundColor: '#1c1c1e'},
+  posterInfo: {flex: 1, gap: 4},
+  posterBtns: {flexDirection: 'row-reverse', gap: 8, marginTop: 4},
+  smallBtn: {backgroundColor: '#1c1c1e', borderRadius: 8, paddingHorizontal: 14,
+             paddingVertical: 6, borderWidth: 1, borderColor: '#2c2c2e'},
+  smallTxt: {color: '#fff', fontSize: 13, fontWeight: '700'},
   barBg: {height: 8, borderRadius: 4, backgroundColor: '#242428', overflow: 'hidden'},
   barFill: {height: '100%', borderRadius: 4},
   okCard: {borderColor: '#2b5d3a', backgroundColor: '#12301d'},
