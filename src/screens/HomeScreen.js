@@ -711,25 +711,23 @@ function buildSeriesMap(movies) {
 
 const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = false}) {
   // בטלוויזיה חובה שיהיה סימון ברור לאן ה-focus הגיע — אחרת נראה כאילו השלט
-  // "לא עובד". onFocus/onBlur קיימים רק ב-TV; בטלפון הם פשוט לא נורים.
+  // "לא עובד". הסימון הזה מצויר עכשיו כולו בצד הנייטיב, ב-TvFocusableView.
   //
-  // ה-useState חייב להיות כאן, לפני הבדיקות: קודם הוא ישב אחריהן, כך שכרטיס
-  // בלי כותרת יצא עם אפס hooks וכרטיס תקין עם אחד. React מזהה רכיבים לפי
-  // מיקום ברשימה, ובגלילה מהירה — שבה אותו מקום מתמלא בכרטיס אחר — זה בדיוק
-  // המצב שמפיל אותו. וזה הרכיב שמצויר יותר מכל אחר באפליקציה.
-  const [focused, setFocused] = useState(false);
+  // מה שהיה כאן: useState + onFocusChange, כלומר רינדור מחדש של הכרטיס על
+  // כל תזוזת חץ — ובעצם **שני** כרטיסים בכל לחיצה, זה שאיבד וזה שקיבל.
+  // זה הרכיב שמצויר יותר מכל אחר באפליקציה, ובטלוויזיה חלשה זה בדיוק מה
+  // שהצטבר עד ש"השלט לא הגיב". הפסק דין ויזואלית זהה, בלי שום JS בדרך.
   if (!item || typeof item !== 'object') return null;
   const isLive = !!item.is_live;
   const displayTitle = String(item.name || item.title || '');
   if (!displayTitle) return null;
-  const borderColor = focused ? '#fff' : (isLive ? '#e50914' : 'transparent');
-  const borderWidth = focused ? 3 : (isLive ? 2 : 0);
+  const borderColor = isLive ? '#e50914' : 'transparent';
+  const borderWidth = isLive ? 2 : 0;
   return (
     <TvFocusable
-      style={[styles.card, {width: CARD_W}, focused && styles.cardFocused]}
+      style={[styles.card, {width: CARD_W}]}
       onPress={() => onPress(item)}
-      hasFocus={hasTVPreferredFocus}
-      onFocusChange={setFocused}>
+      hasFocus={hasTVPreferredFocus}>
       <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
         {item.thumbnail_url ? (
           <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} fadeDuration={200} />
@@ -774,10 +772,28 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, f
         // משתנה בכלל. בטלוויזיה מוותרים על הניתוק ומחזיקים חלון רחב יותר,
         // כך שתמיד יש כרטיס אחד לפחות מעבר לקצה שאפשר לעבור אליו — ומשם
         // ה-ScrollView גולל אליו והרשימה מרנדרת את הבא.
-        initialNumToRender={IS_TV ? 12 : 5}
-        maxToRenderPerBatch={IS_TV ? 12 : 5}
-        windowSize={IS_TV ? 11 : 3}
+        //
+        // ── ולמה הערכים חזרו למטה ────────────────────────────────────────
+        //
+        // הדבר שתיקן את הבאג הוא removeClippedSubviews בלבד. את החלון
+        // הרחבתי "ליתר ביטחון", וזאת הייתה טעות שעלתה ביוקר: windowSize=11
+        // הוא חמישה מסכים לכל צד, ועל מסך עם שש עמודות ועשר שורות זה מאות
+        // כרטיסים מחוברים בבת אחת, כל אחד עם תמונה. מזה הגיע "אחרי העדכון
+        // הכל נתקע".
+        //
+        // מה שבאמת דרוש ל-focus הוא יעד אחד מעבר לקצה. windowSize=3 נותן
+        // מסך שלם לכל צד — יותר מדי ולא פחות מדי — וזה גם הערך שהיה כאן
+        // לפני כל הסיפור.
+        initialNumToRender={IS_TV ? 7 : 5}
+        maxToRenderPerBatch={IS_TV ? 4 : 5}
+        updateCellsBatchingPeriod={IS_TV ? 80 : 50}
+        windowSize={3}
         removeClippedSubviews={!IS_TV}
+        // כל הכרטיסים ברוחב זהה, ולכן אפשר לומר ל-FlatList איפה כל אחד
+        // יושב במקום שימדוד. חוסך מדידה אסינכרונית בכל אצווה, וזה בדיוק
+        // העומס שמתחרה עם מקשי השלט על אותו thread.
+        getItemLayout={(d, i) => ({length: CARD_W + 10,
+                                   offset: (CARD_W + 10) * i, index: i})}
         renderItem={({item, index}) => (
           <MovieCard item={item} onPress={onPress}
             hasTVPreferredFocus={IS_TV && firstRow && index === 0} />
@@ -836,10 +852,10 @@ export default function HomeScreen({navigation, route}) {
   const [showCatModal, setShowCatModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   // סימון focus לפקדי הסרגל העליון בטלוויזיה (בטלפון נשאר תמיד false)
-  const [userBtnFocus, setUserBtnFocus] = useState(false);
-  const [supportBtnFocus, setSupportBtnFocus] = useState(false);
-  const [catsBtnFocus, setCatsBtnFocus] = useState(false);
-  const [clearCatFocus, setClearCatFocus] = useState(false);
+  // ארבעת מצבי ה-focus של פקדי הסרגל הוסרו. הם ישבו ב-state של מסך הבית
+  // כולו, ולכן כל תזוזת חץ אל כפתור בסרגל או ממנו רינדרה מחדש את **כל**
+  // המסך — כל השורות, כל הכרטיסים. הטבעת הלבנה מצוירת עכשיו בנייטיב,
+  // ב-TvFocusableView, ולכן אין למי לספר על זה.
   const [showDonation, setShowDonation] = useState(false);
   // אישור יציאה — בטלוויזיה בלבד. ראה את המטפל ב-hardwareBackPress.
   const [showExit, setShowExit] = useState(false);
@@ -1482,8 +1498,7 @@ export default function HomeScreen({navigation, route}) {
       {IS_TV && (
         <TvFocusable
           onPress={() => setShowSupport(true)}
-          onFocusChange={setSupportBtnFocus}
-          style={[styles.tvSupportBtn, supportBtnFocus && styles.tvFocusRing]}>
+          style={styles.tvSupportBtn}>
           <Text style={styles.tvSupportTxt}>➤ {t('home.support')}</Text>
         </TvFocusable>
       )}
@@ -1491,8 +1506,7 @@ export default function HomeScreen({navigation, route}) {
       {user ? (
         <TvFocusable
           onPress={() => setShowUserMenu(true)}
-          onFocusChange={setUserBtnFocus}
-          style={[styles.userBtn, userBtnFocus && styles.tvFocusRing]}>
+          style={styles.userBtn}>
           {user.picture ? (
             <Image source={{uri: user.picture}} style={styles.userAvatar} />
           ) : (
@@ -1506,8 +1520,7 @@ export default function HomeScreen({navigation, route}) {
       ) : (
         <TvFocusable
           onPress={startSignIn}
-          onFocusChange={setUserBtnFocus}
-          style={[styles.signInBtn, userBtnFocus && styles.tvFocusRing]}>
+          style={styles.signInBtn}>
           <Text style={styles.signInTxt}>כניסה</Text>
         </TvFocusable>
       )}
@@ -1519,15 +1532,13 @@ export default function HomeScreen({navigation, route}) {
       {category !== 'הכל' && (
         <TvFocusable
           onPress={() => { setCategory('הכל'); setSearch(''); }}
-          onFocusChange={setClearCatFocus}
-          style={[styles.activeCatChip, clearCatFocus && styles.tvFocusRing]}>
+          style={styles.activeCatChip}>
           <Text style={styles.activeCatChipTxt}>✕  {category}</Text>
         </TvFocusable>
       )}
       <TvFocusable
         onPress={() => setShowCatModal(true)}
-        onFocusChange={setCatsBtnFocus}
-        style={[styles.catsModalBtn, catsBtnFocus && styles.tvFocusRing]}>
+        style={styles.catsModalBtn}>
         <Text style={styles.catsModalBtnTxt}>≡  קטגוריות</Text>
       </TvFocusable>
     </View>
@@ -1667,9 +1678,13 @@ export default function HomeScreen({navigation, route}) {
           // focus, ולכן החץ למטה לא מוצא לאן לרדת. כאן שומרים על חלון
           // צנוע — כל שורה היא רשימה בפני עצמה, והטלוויזיה חלשה.
           removeClippedSubviews={!IS_TV}
-          initialNumToRender={IS_TV ? 4 : 3}
-          maxToRenderPerBatch={IS_TV ? 3 : 2}
-          windowSize={IS_TV ? 7 : 5}
+          // כל שורה כאן היא רשימה שלמה בפני עצמה, ולכן כל מסך נוסף בחלון
+          // מכפיל את מספר הכרטיסים המחוברים. windowSize=3 הוא שורה-שתיים
+          // מעבר לקצה — די והותר כדי שלחץ למטה יהיה לאן לרדת.
+          initialNumToRender={IS_TV ? 3 : 3}
+          maxToRenderPerBatch={2}
+          updateCellsBatchingPeriod={IS_TV ? 80 : 50}
+          windowSize={IS_TV ? 3 : 5}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
           }
@@ -1681,9 +1696,10 @@ export default function HomeScreen({navigation, route}) {
             keyExtractor={item => String(item?.id || '')}
             numColumns={NUM_COLS}
             contentContainerStyle={styles.grid}
-            initialNumToRender={IS_TV ? 18 : 9}
-            maxToRenderPerBatch={IS_TV ? 18 : 9}
-            windowSize={IS_TV ? 9 : 5}
+            initialNumToRender={IS_TV ? 12 : 9}
+            maxToRenderPerBatch={IS_TV ? 6 : 9}
+            updateCellsBatchingPeriod={IS_TV ? 80 : 50}
+            windowSize={IS_TV ? 3 : 5}
             removeClippedSubviews={!IS_TV}
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
@@ -2047,18 +2063,9 @@ const styles = StyleSheet.create({
   // 14 ולא 10: אותו רדיוס עיגול שכבר כויל באתר (.zv-card__art), כדי
   // שהאפליקציה תרגיש כמו המשך של אותו עיצוב ולא כמו גרסה ישנה יותר.
   card: {marginHorizontal: 5, borderRadius: 14, overflow: 'hidden'},
-  // הדגשת ה-focus בטלוויזיה: הכרטיס ה"נבחר" עולה מעל השכנים ומקבל רקע בהיר
-  // קל, בנוסף למסגרת הלבנה על התמונה. בלי scale כדי לא לחתוך/לחפוף שכנים —
-  // זו בדיוק הסיבה שבאתר אפשר להגדיל כרטיס בפוקוס (רשת CSS רגילה, בלי
-  // חיתוך שכנים) ובאפליקציה לא (FlatList אופקי עם removeClippedSubviews).
-  // הצללית מפצה על ההיעדר: elevation גבוה יותר מרים את הכרטיס בעין בלי
-  // לגעת בגודל שלו.
-  cardFocused: {
-    backgroundColor: '#2a2a2c', zIndex: 3, elevation: 9,
-    shadowColor: '#fff', shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: {width: 0, height: 4},
-  },
-  // טבעת ה-focus לפקדים בסרגל העליון — אותו שפה ויזואלית כמו הכרטיסים
-  tvFocusRing: {borderWidth: 2, borderColor: '#fff', borderRadius: 8},
+  // cardFocused ו-tvFocusRing הוסרו: ההדגשה כולה מצוירת בנייטיב, מיד עם
+  // תזוזת החץ. ה-elevation עבר ל-translationZ שם, וה-shadow* שהיה כאן הוא
+  // iOS בלבד ומעולם לא צויר באנדרואיד.
   cardImg: {width: '100%', borderRadius: 14, overflow: 'hidden', backgroundColor: '#1c1c1e'},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},

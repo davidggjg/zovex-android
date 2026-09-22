@@ -1,5 +1,5 @@
 import React, {useState} from 'react';
-import {Platform, TouchableOpacity, StyleSheet, requireNativeComponent} from 'react-native';
+import {Platform, TouchableOpacity, requireNativeComponent} from 'react-native';
 
 // תחליף ישיר ל-TouchableOpacity שעובד גם עם שלט של טלוויזיה.
 //
@@ -39,20 +39,33 @@ export default function TvFocusable({
 }) {
   const [focused, setFocused] = useState(false);
 
+  // ── מתי בכלל צריך לערב את JS בתזוזת focus ────────────────────────────
+  //
+  // דווח: "לוקח לשלט המון זמן להגיב, צריך הרבה לחיצות עד שהוא זז". כל
+  // תזוזת חץ היא שתי תזוזות focus, וכל אחת שלחה אירוע ל-JS → setState →
+  // רינדור מחדש → עדכון תצוגה בחזרה לנייטיב. ארבע חציות גשר ושני רינדורים
+  // של React על כל לחיצה, בזמן שהרשימה ממילא מרנדרת אצווה — וכך הלחיצות
+  // הצטברו מאחור.
+  //
+  // הסימון (מסגרת לבנה, הרמה, עמעום) מצויר בצד הנייטיב ממילא, מיד עם
+  // תזוזת החץ. לכן כשאין למסך שימוש אמיתי בידיעה הזאת — והמקרה הזה הוא
+  // כל כרטיס וכל כפתור בסרגל — לא מדווחים בכלל, ו-JS לא מעורב בניווט.
+  const needsJs = !!(focusStyle || onFocusChange);
+
   if (IS_TV && NativeTvFocusable) {
     return (
       <NativeTvFocusable
-        style={[style,
-                dimUnfocused && !focused && styles.dim,
-                focused && (focusStyle || styles.ring)]}
+        style={[style, needsJs && focused && focusStyle]}
         hasFocus={hasFocus}
+        reportFocus={needsJs}
+        dimUnfocused={dimUnfocused}
         focusChildOnSelect={focusChildOnSelect}
         allowChildFocus={allowChildFocus}
-        onFocusChange={e => {
+        onFocusChange={needsJs ? (e => {
           const f = !!(e && e.nativeEvent && e.nativeEvent.focused);
-          setFocused(f);
+          if (focusStyle) setFocused(f);
           if (onFocusChange) onFocusChange(f);
-        }}
+        }) : undefined}
         onSelect={() => { if (!disabled && onPress) onPress(); }}>
         {children}
       </NativeTvFocusable>
@@ -71,14 +84,7 @@ export default function TvFocusable({
   );
 }
 
-const styles = StyleSheet.create({
-  // המרובע הלבן עצמו מצויר בצד הנייטיב (foreground), כך שהוא לא משנה גודל
-  // או מיקום של כלום ומופיע מיד עם תזוזת החץ. כאן נשארת רק הבהרה עדינה של
-  // הרקע, שמדגישה את הפריט הממוקד גם על תמונות בהירות.
-  ring: {
-    backgroundColor: 'rgba(255,255,255,0.14)',
-    zIndex: 5,
-  },
-  // רק שקיפות. אין כאן שום צבע חדש, ולכן הפריסה והפלטה זהות.
-  dim: {opacity: 0.55},
-});
+// אין כאן יותר סגנונות focus. המסגרת הלבנה, ההרמה מעל השכנים והעמעום
+// מצוירים כולם בצד הנייטיב ב-TvFocusableView, ברגע שהחץ זז ובלי מעבר
+// דרך JS. מה שהיה כאן — ring ו-dim — היה בדיוק מה שחייב סבב React על כל
+// לחיצה. הפלטה לא השתנתה: הרקע שהוסר ישב מאחורי תמונת הפוסטר ממילא.

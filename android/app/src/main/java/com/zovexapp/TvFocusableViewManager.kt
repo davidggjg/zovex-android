@@ -49,6 +49,27 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
     }
 
+    /** האם בכלל להודיע ל-JS על תזוזת focus.
+     *
+     *  זה הפרט שקבע את תחושת השלט. כל תזוזת חץ היא *שתי* תזוזות focus —
+     *  אחת מאבדת ואחת מקבלת — וכל אחת שלחה אירוע ל-JS, שם setState רינדר
+     *  מחדש את הכרטיס, ומשם חזרה עדכון תצוגה לצד הנייטיב. ארבע חציות גשר
+     *  ושני רינדורים של React על כל לחיצה בודדת, בזמן שהרשימה ממילא
+     *  מרנדרת אצווה חדשה — ולכן הלחיצות הצטברו והשלט "לא הגיב".
+     *
+     *  הסימון עצמו מצויר כאן ממילא, בלי JS. לכן ברירת המחדל היא לא לדווח,
+     *  ומי שבאמת צריך לדעת (דיאלוג עם עמעום, למשל) מבקש זאת במפורש.
+     */
+    var reportFocus = false
+
+    /** עמעום כשאין focus — בקבוצת בחירה של שני כפתורים. נעשה כאן ולא ב-JS
+     *  מאותה סיבה: שקיפות היא תכונת תצוגה, ואין שום סיבה לסבב React בשבילה. */
+    var dimUnfocused = false
+        set(v) {
+            field = v
+            alpha = if (!v || isFocused) 1f else 0.55f
+        }
+
     private fun emit(name: String, focused: Boolean) {
         val ctx = context as? ReactContext ?: return
         val payload = Arguments.createMap().apply { putBoolean("focused", focused) }
@@ -60,7 +81,12 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         // מציירים/מסירים את המרובע מיד, בלי לחכות לסבב JS — כך הסימון עוקב
         // אחרי החץ בלי השהיה, כמו בכל ממשק טלוויזיה.
         foreground = if (gainFocus) focusRect else null
-        emit("topFocusChange", gainFocus)
+        // הרמה קלה של הפריט הממוקד מעל שכניו. זה מה ש-cardFocused עשה ב-JS
+        // דרך elevation; ה-shadow* שלצידו הוא iOS בלבד ולא צויר כאן מעולם.
+        // translationZ ולא elevation, כדי לא לדרוס ערך שמגיע מהסגנון.
+        translationZ = if (gainFocus) dp(9f) else 0f
+        if (dimUnfocused) alpha = if (gainFocus) 1f else 0.55f
+        if (reportFocus) emit("topFocusChange", gainFocus)
     }
 
     /** true לשדה החיפוש: לחיצה על המקש המרכזי מעבירה את ה-focus לתיבת הטקסט
@@ -176,6 +202,19 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
     override fun getName() = "TvFocusable"
 
     override fun createViewInstance(ctx: ThemedReactContext) = TvFocusableView(ctx)
+
+    /** האם לשלוח ל-JS אירוע על כל תזוזת focus. ברירת המחדל היא לא — ראה
+     *  reportFocus ב-TvFocusableView: זה היה המחיר של כל לחיצת חץ. */
+    @ReactProp(name = "reportFocus")
+    fun setReportFocus(view: TvFocusableView, v: Boolean) {
+        view.reportFocus = v
+    }
+
+    /** עמעום כשאין focus, בצד הנייטיב. */
+    @ReactProp(name = "dimUnfocused")
+    fun setDimUnfocused(view: TvFocusableView, v: Boolean) {
+        view.dimUnfocused = v
+    }
 
     /** שדה חיפוש: לחיצה מרכזית מעבירה focus לתיבת הטקסט ופותחת מקלדת. */
     @ReactProp(name = "focusChildOnSelect")
