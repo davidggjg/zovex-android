@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useMemo, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useMemo, useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
@@ -987,9 +987,40 @@ window.addEventListener('beforeunload',function(){clearMediaSession();if(_refres
 </body></html>`;
 }
 
+// ── שמירת נקודת הצפייה, אותו כלל בכל הנגנים ──────────────────────────────
+//
+// לנגן ה-WebView היה כלל: בדקה האחרונה או אחרי 95% הפרק נחשב נצפה ונשמר
+// 0, כך שבפעם הבאה הוא מתחיל מההתחלה. לשני הנגנים הנייטיביים — הטלפון
+// והטלוויזיה — לא היה. הם שמרו את המיקום הגולמי, ומי שסיים פרק בטלוויזיה
+// קיבל בפעם הבאה "להמשיך מ-43:00?" — מהכתוביות.
+const NEAR_END_S = 60;
+const NEAR_RATIO = 0.95;
+// הנגן בטלפון שלח שמירה לשרת פעמיים בשנייה (progressUpdateInterval=500),
+// וכל שמירה בשרת קוראת וכותבת את כל קובץ ההתקדמות. עשר שניות מספיקות:
+// ביציאה ממילא נשמר המיקום המדויק.
+const SAVE_EVERY_MS = 10000;
+
+function progressToSave(pos, dur) {
+  if (!(dur > 0)) return pos;
+  return (dur - pos <= NEAR_END_S || pos / dur >= NEAR_RATIO) ? 0 : pos;
+}
+
 export default function PlayerScreen({route, navigation}) {
   const {movie, startTime = 0, userId = null, seriesEpisodes = null, onLeaveCleanup = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
+  const lastSaveRef = useRef({at: 0, finished: false});
+  const persistProgress = useCallback((pos, dur) => {
+    if (!userId || !(dur > 0)) return;
+    const save = progressToSave(pos, dur);
+    const finished = save === 0;
+    if (!finished && pos <= 5) return;
+    const now = Date.now();
+    // המעבר ל"נצפה" נשמר מיד — אם יוצאים בדיוק עכשיו, הוא לא יאבד
+    const justFinished = finished && !lastSaveRef.current.finished;
+    if (!justFinished && now - lastSaveRef.current.at < SAVE_EVERY_MS) return;
+    lastSaveRef.current = {at: now, finished};
+    saveProgress(movie.id, Math.floor(save), Math.floor(dur), userId);
+  }, [movie.id, userId]);
   const seriesEpisodesRef = useRef(seriesEpisodes);
   const isLive = !!movie.is_live;
   const isTv = Platform.isTV; // טלוויזיה חכמה (Android TV) — WebView חלש יותר
@@ -1203,8 +1234,10 @@ export default function PlayerScreen({route, navigation}) {
       PipModule?.setVideoPlaying(false);
       if (!userId) return;
       const {position, duration} = progressRef.current;
+      // אותו כלל "נצפה" גם ביציאה: סוף הפרק נשמר כ-0 ולא כמיקום הכתוביות
       if (position > 5 && duration > 0)
-        saveProgress(movie.id, position, duration, userId);
+        saveProgress(movie.id, Math.floor(progressToSave(position, duration)),
+                     Math.floor(duration), userId);
     };
     // isTv הוא Platform.isTV — קבוע לאורך חיי האפליקציה, ולכן הוספתו כאן לא
     // מריצה את ה-effect מחדש אף פעם. נכלל רק כדי שהרשימה תהיה מלאה ואמיתית.
@@ -1418,7 +1451,7 @@ export default function PlayerScreen({route, navigation}) {
           }}
           onProgress={(pos, dur) => {
             progressRef.current = {position: pos, duration: dur};
-            if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
+            persistProgress(pos, dur);
           }}
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
           // הנגן הנייטיב הודיע שיש רצועת קול שהוא לא בחר בה, כלומר אין
@@ -1491,7 +1524,7 @@ export default function PlayerScreen({route, navigation}) {
           debug={!!nativeAudio}
           onProgress={(pos, dur) => {
             progressRef.current = {position: pos, duration: dur};
-            if (userId && pos > 5 && dur > 0) saveProgress(movie.id, pos, dur, userId);
+            persistProgress(pos, dur);
           }}
           onEnd={() => { if (!goNextEpisode()) { try { navigation.goBack(); } catch (_) {} } }}
           // קודם כשל ניגון החזיר את המשתמש אחורה בשקט, וזה נראה בדיוק כמו
