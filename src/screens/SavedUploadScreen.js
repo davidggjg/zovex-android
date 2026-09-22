@@ -52,6 +52,9 @@ export default function SavedUploadScreen({route, navigation}) {
   // באיזה מסלול ההעלאה רצה וכמה חיבורים פתוחים. בלי זה נאלצנו לבדוק את
   // השרת מבחוץ כדי לדעת אם המקביליות בכלל הופעלה.
   const [link, setLink] = useState({mode: '', workers: 0});
+  // כמה חלקים ממתינים עכשיו לרשת. כשה-WiFi נופל ההעלאה לא נכשלת אלא
+  // מחכה שהוא יחזור, ובלי השורה הזו זה נראה בדיוק כמו תקיעה.
+  const [waiting, setWaiting] = useState(0);
   const [tg, setTg] = useState(null);             // מצב מהשרת
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -118,6 +121,7 @@ export default function SavedUploadScreen({route, navigation}) {
       if (typeof e.sent === 'number') { setSent(e.sent); sample(e.sent); }
       if (e.total > 0) setTotal(e.total);
       if (e.mode) setLink({mode: e.mode, workers: e.workers || 0});
+      if (typeof e.waiting === 'number') setWaiting(e.waiting);
       if (e.type === 'done') {
         if (e.job) { setPhase('telegram'); poll(e.job); }
         else { setPhase('error'); setError('השרת לא החזיר מזהה משימה'); }
@@ -246,6 +250,11 @@ export default function SavedUploadScreen({route, navigation}) {
                   (upSpeed && total ? ` · ${fmtBytes(upSpeed)}/שנ׳ · נותרו ${fmtEta((total - sent) / upSpeed)}` : '')
                 : '✓ הושלם'}
             </Text>
+            {phase === 'sending' && waiting > 0 && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                הרשת נפלה — ממתין שתחזור וממשיך מאותה נקודה, לא מההתחלה
+              </Text>
+            )}
           </View>
         )}
 
