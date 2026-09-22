@@ -1360,9 +1360,23 @@ export default function HomeScreen({navigation, route}) {
         userId,
       });
     } else {
-      navigation.navigate('Player', {movie: item, startTime: 0, userId});
+      // רשימת הפרקים של הסדרה, בסדר צפייה ובכל העונות, כדי שהנגן יידע מה
+      // "הפרק הבא". הנגן מציג את כרטיס הפרק הבא ועובר אליו לבד רק כשהוא
+      // מקבל אותה — ורק מסך הסדרה הישן העביר אותה. מכאן, שהוא הדרך שבה
+      // חלון הפרטים מנגן, היא לא עברה: פרק נגמר ולא היה לא כפתור ולא מעבר.
+      // בכל העונות, כך שעונה 1 פרק אחרון ממשיך לעונה 2 פרק 1.
+      const eps = item.series_name && Array.isArray(movies)
+        ? movies
+            .filter(m => m && !m.is_live && m.series_name === item.series_name)
+            .sort((a, b) => ((a.season_number || 1) - (b.season_number || 1))
+                         || ((a.episode_number || 0) - (b.episode_number || 0)))
+        : null;
+      navigation.navigate('Player', {
+        movie: item, startTime: 0, userId,
+        seriesEpisodes: eps && eps.length > 1 ? eps : null,
+      });
     }
-  }, [navigation, user]);
+  }, [navigation, user, movies]);
 
   const handleHeroPlay = useCallback(movie => {
     const d = movie.series_name ? {...seriesMap[movie.series_name], thumbnail_url: movie.thumbnail_url, description: movie.description} : movie;
