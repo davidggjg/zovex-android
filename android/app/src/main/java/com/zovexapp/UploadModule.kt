@@ -96,8 +96,12 @@ class UploadModule(private val ctx: ReactApplicationContext) :
 
         // ── פוסטר שבחרת ──────────────────────────────────────────────────
         // מוקטן בטלפון לפני השליחה: תמונה ערוכה יכולה לשקול 10MB, וב-WiFi
-        // גרוע זה עוד חלק שלם של המתנה. 1500 פיקסלים זה גם מה שהשרת שומר.
-        private const val POSTER_MAX_PX = 1500
+        // גרוע זה עוד חלק שלם של המתנה. 2000 פיקסלים זה גם מה שהשרת שומר,
+        // והוא נבחר כך שתמונה טיפוסית (1024×1536) תעבור בלי הקטנה בכלל —
+        // הקטנה מרככת טקסט על פוסטר, וזה נראה בדיוק כמו טשטוש.
+        private const val POSTER_MAX_PX = 2000
+        // 95 ולא 92: הפרש של כמה עשרות קילובייט, והילה סביב אותיות נעלמת
+        private const val POSTER_QUALITY = 95
         private const val POSTER_GIVE_UP_MS = 3 * 60_000L
     }
 
@@ -554,7 +558,7 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                 } ?: return null
             }
             val out = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
+            bmp.compress(Bitmap.CompressFormat.JPEG, POSTER_QUALITY, out)
             bmp.recycle()
             out.toByteArray()
         } catch (_: Throwable) {
