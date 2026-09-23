@@ -17,6 +17,12 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      publish_test:
+        description: 'לפרסם לערוץ בודקים (test/zovex-test.apk)? קישור ישיר לבודק, לא נוגע ב-latest ולא ב-Tv'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -282,3 +288,29 @@ jobs:
               --notes "APK לבדיקה על Android TV. מתעדכן בכל בנייה עם publish_tv."
           fi
           echo "TV download URL: https://github.com/$GITHUB_REPOSITORY/releases/download/Tv/base.apk"
+
+      # ערוץ בודקים. הצורך: לתת לאדם אחד קישור הורדה ישיר בלי שאיש אחר
+      # יקבל את הגרסה. artifact של Actions לא מתאים — הוא דורש חשבון גיטהאב
+      # והוצאה מ-zip; latest ו-Tv שניהם ציבוריים ומחוברים לכפתורים באתר.
+      #
+      # ‎--prerelease אינו קישוט: /app/version בשרת מצביע על
+      # ‎releases/latest/download/... ‏, וגיטהאב מחשב "latest" לפי ה-release
+      # הלא-prerelease החדש ביותר. בלי הדגל הזה כל בנייה לבדיקה הייתה הופכת
+      # ל"האחרונה" עבור גיטהאב.
+      - name: Publish APK to the test release (tester channel)
+        if: inputs.publish_test == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-universal-release.apk zovex-test.apk
+          if gh release view test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload test zovex-test.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create test zovex-test.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "ZOVEX - גרסת בדיקה" \
+              --notes "APK לבדיקה בלבד. הכתובת קבועה ומתעדכנת בכל בנייה עם publish_test. אינו מגיע למשתמשים."
+          fi
+          gh release edit test --repo "$GITHUB_REPOSITORY" --prerelease
+          echo "Tester download URL: https://github.com/$GITHUB_REPOSITORY/releases/download/test/zovex-test.apk"
