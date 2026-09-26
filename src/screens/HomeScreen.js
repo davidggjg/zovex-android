@@ -1233,6 +1233,11 @@ export default function HomeScreen({navigation, route}) {
       if (showCatModal) { setShowCatModal(false); return true; }
       if (showUserMenu) { setShowUserMenu(false); return true; }
       if (showSupport) { setShowSupport(false); return true; }
+      // [tv_keyboard] יציאה ממצב הקלדה קודמת לניקוי החיפוש.
+      // זהו הצעד שמחליף את ה-onBlur שהיה מכבה את מצב ההקלדה מעצמו (ראה
+      // ההסבר ליד searchTyping): כל עוד המקלדת פתוחה, "אחורה" סוגר אותה,
+      // ורק לחיצה נוספת מנקה את מה שהוקלד.
+      if (searchTyping) { setSearchTyping(false); return true; }
       if (search) { setSearch(''); return true; }
       if (category !== 'הכל') { setCategory('הכל'); return true; }
       // אין יותר מה לסגור — כאן אנדרואיד סוגר את האפליקציה. בטלוויזיה זה קורה
@@ -1243,7 +1248,7 @@ export default function HomeScreen({navigation, route}) {
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, category, showExit]);
+  }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, searchTyping, category, showExit]);
 
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
@@ -1530,7 +1535,22 @@ export default function HomeScreen({navigation, route}) {
             value={search}
             onChangeText={handleSearchChange}
             onFocus={onSearchFocus}
-            onBlur={() => { setSearchTyping(false); onSearchBlur && onSearchBlur(); }}
+            // [tv_keyboard] מצב ההקלדה **אינו** נכבה כאן.
+            //
+            // דווח: "מקליד מילה אחת ואז צריך לסגור את המקלדת ולפתוח מחדש".
+            // זו הייתה השורה. המקלדת של אנדרואיד TV היא חלון נפרד שלוקח
+            // את ה-focus, ולכן היא מפיקה onBlur על התיבה תוך כדי הקלדה.
+            // כיבוי מצב ההקלדה שם מחזיר descendantFocusability ל-
+            // FOCUS_BLOCK_DESCENDANTS, ואנדרואיד **מנקה focus מילד ממוקד**
+            // ברגע שחוסמים — כלומר התיבה איבדה focus, ה-IME נסגר, והדרך
+            // היחידה חזרה הייתה לחיצה מרכזית נוספת. בדיוק מה שדווח.
+            //
+            // היציאה ממצב הקלדה נעשית עכשיו רק לפי כוונה מפורשת של
+            // המשתמש: "אישור" במקלדת, או "אחורה" (ראה מטפל ה-Back).
+            onBlur={() => { onSearchBlur && onSearchBlur(); }}
+            onSubmitEditing={() => setSearchTyping(false)}
+            returnKeyType="search"
+            blurOnSubmit
             textAlign="right"
           />
         </Animated.View>

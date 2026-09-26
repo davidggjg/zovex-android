@@ -227,9 +227,25 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
      *  שאמין יותר מ-showSoftInput ידני, ואז החסימה חוזרת. */
     @ReactProp(name = "allowChildFocus")
     fun setAllowChildFocus(view: TvFocusableView, allow: Boolean) {
-        view.descendantFocusability =
-            if (allow) android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
-            else android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        if (allow) {
+            view.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+            return
+        }
+        // [tv_keyboard] חסימה כשילד ממוקד — לאן ה-focus הולך.
+        //
+        // setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS) מנקה את
+        // ה-focus מילד שממוקב באותו רגע, ומשם אנדרואיד מחפש יעד חדש
+        // גאומטרית — כלומר ה-focus עלול לנחות במקום שרירותי במסך, או
+        // לא לנחות בכלום. בתיבת החיפוש זה נראה כמו שלט שהפסיק להגיב.
+        //
+        // לכן מבקשים אותו בחזרה אל העטיפה עצמה, שהיא focusable ממילא
+        // (ראה init). כך היציאה ממצב הקלדה מחזירה את המרובע בדיוק למקום
+        // שממנו המשתמש נכנס, וה-D-pad ממשיך משם.
+        val had = view.findFocus() != null
+        view.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        if (had && !view.isFocused) {
+            view.requestFocusWhenReady()
+        }
     }
 
     /** מבקש את ה-focus ההתחלתי — כך שלשלט יש מאיפה להתחיל כשהמסך נטען.
