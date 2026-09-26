@@ -411,9 +411,10 @@ const styles = StyleSheet.create({
   // הכיוון נקבע ב-render דרך ltrRow.
   mid: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     alignItems: 'center', justifyContent: 'center', gap: 34},
-  cbtn: {width: 58, height: 58, borderRadius: 29, alignItems: 'center',
+  cbtn: {width: 62, height: 62, borderRadius: 31, alignItems: 'center',
     justifyContent: 'center'},
-  skipIcon: {width: 42, height: 42},
+  // 44 מול 144 פיקסל במקור — כלומר פי 3.3, חד גם ב-xxhdpi בלי להימתח.
+  skipIcon: {width: 44, height: 44},
   play: {color: '#fff', fontSize: 30, lineHeight: 34},
 
   bottombar: {position: 'absolute', left: 0, right: 0, bottom: 0,

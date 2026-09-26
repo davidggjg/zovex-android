@@ -407,9 +407,9 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #holdbadge.on{display:block}
 #ctrls{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   display:flex;align-items:center;gap:32px;z-index:20;transition:opacity .3s}
-.cbtn{background:none;border:none;color:#fff;width:58px;height:58px;border-radius:50%;cursor:pointer;
+.cbtn{background:none;border:none;color:#fff;width:62px;height:62px;border-radius:50%;cursor:pointer;
   display:flex;align-items:center;justify-content:center;position:relative;-webkit-tap-highlight-color:transparent;outline:none}
-.cbtn .num{position:absolute;top:54%;left:50%;transform:translate(-50%,-50%);font:900 10px Arial;color:#fff}
+/* המספר יושב בתוך ה-SVG עצמו, ולכן אין יותר .num למקם */
 #skipanim{position:absolute;top:40%;z-index:20;animation:fadeInOut .7s ease forwards;display:none}
 .skipbox{background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border-radius:18px;padding:14px 22px;
   display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.18)}
@@ -440,15 +440,13 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
     </div>
     <div id="ctrls">
       ${isLive ? '' : `<button class="cbtn" id="skipback">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 .49-3.51"></path></svg>
-        <span class="num">10</span></button>`}
+        <svg width="44" height="44" viewBox="0 0 48 48" fill="none"><g transform="scale(-1,1) translate(-48,0)"><path d="M 37.86 16 A 16 16 0 1 1 24 8" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/><path d="M 24 3.5 L 30.5 8 L 24 12.5 Z" fill="#fff"/></g><text x="24" y="27.5" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700" fill="#fff">10</text></svg></button>`}
       <button class="cbtn" style="width:58px;height:58px" id="playbtn">
         <svg id="pauseIcon" width="28" height="28" viewBox="0 0 28 28" fill="white"><rect x="3" y="3" width="8" height="22" rx="2"/><rect x="17" y="3" width="8" height="22" rx="2"/></svg>
         <svg id="playIcon" width="28" height="28" viewBox="0 0 28 28" fill="white" style="display:none"><polygon points="5,2 26,14 5,26"/></svg>
       </button>
       ${isLive ? '' : `<button class="cbtn" id="skipfwd">
-        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-.49-3.51"></path></svg>
-        <span class="num">10</span></button>`}
+        <svg width="44" height="44" viewBox="0 0 48 48" fill="none"><path d="M 37.86 16 A 16 16 0 1 1 24 8" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/><path d="M 24 3.5 L 30.5 8 L 24 12.5 Z" fill="#fff"/><text x="24" y="27.5" text-anchor="middle" font-family="Arial" font-size="13" font-weight="700" fill="#fff">10</text></svg></button>`}
     </div>
     <div id="bottombar">
       ${isLive ? '' : `<div id="progwrap"><div id="progtrack"><div id="progfill"></div><div id="progdot"></div></div></div>`}
