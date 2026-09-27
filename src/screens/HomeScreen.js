@@ -759,7 +759,12 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
       hasFocus={hasTVPreferredFocus}>
       <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
         {item.thumbnail_url ? (
-          <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} fadeDuration={200} />
+          // [tv_perf] ‎resizeMethod="resize"‎ — נמדד: הפוסטרים הם 500x750
+          // ומוצגים ברוחב ~320px בטלוויזיה. בלי זה אנדרואיד מפענח את
+          // המקור במלואו, כלומר 1.5MB של bitmap לכרטיס; עם זה הפענוח
+          // עצמו יורד לגודל התצוגה — פחות מחצי. עם עשרות כרטיסים
+          // מחוברים בו-זמנית זה ההבדל בין לחץ זיכרון לבין שקט.
+          <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} resizeMethod="resize" fadeDuration={200} />
         ) : (
           <View style={styles.noThumb}><Text style={styles.thumbEmoji}>{isLive ? '📡' : '🎬'}</Text></View>
         )}
@@ -820,7 +825,7 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, f
         // לפני כל הסיפור.
         initialNumToRender={IS_TV ? 7 : 5}
         maxToRenderPerBatch={IS_TV ? 4 : 5}
-        updateCellsBatchingPeriod={IS_TV ? 80 : 50}
+        updateCellsBatchingPeriod={IS_TV ? 30 : 50}
         windowSize={3}
         removeClippedSubviews={!IS_TV}
         // כל הכרטיסים ברוחב זהה, ולכן אפשר לומר ל-FlatList איפה כל אחד
@@ -1238,7 +1243,7 @@ export default function HomeScreen({navigation, route}) {
       // ההסבר ליד searchTyping): כל עוד המקלדת פתוחה, "אחורה" סוגר אותה,
       // ורק לחיצה נוספת מנקה את מה שהוקלד.
       if (searchTyping) { setSearchTyping(false); return true; }
-      if (search) { setSearch(''); return true; }
+      if (search) { clearSearch(); return true; }
       if (category !== 'הכל') { setCategory('הכל'); return true; }
       // אין יותר מה לסגור — כאן אנדרואיד סוגר את האפליקציה. בטלוויזיה זה קורה
       // בלחיצה אחת על השלט, בלי שום אזהרה, ולכן צופים נזרקו החוצה באמצע. שואלים
@@ -1410,7 +1415,7 @@ export default function HomeScreen({navigation, route}) {
       try {
         const d = await verifyPanelCode(c);
         if (!d || !d.ok) return;
-        setSearch('');
+        clearSearch();
         // maxSize מגיע מהשרת לפי סוג חשבון הטלגרם (2GB רגיל, 4GB Premium),
         // כדי שהפאנל יוכל לומר מראש שקובץ גדול מדי במקום להעלות אותו לחינם.
         navigation.navigate('SavedUpload', {
@@ -1422,6 +1427,14 @@ export default function HomeScreen({navigation, route}) {
       }
     }, 700);
   }, [navigation]);
+
+  // [tv_perf] בטלוויזיה תיבת החיפוש אינה מבוקרת (ראה ההסבר ליד ה-TextInput),
+  // ולכן ניקוי מ-JS חייב לנקות גם את הטקסט הנייטיב — אחרת ה-state מתרוקן
+  // והאות נשארת על המסך.
+  const clearSearch = useCallback(() => {
+    setSearch('');
+    if (IS_TV) searchRef.current?.clear();
+  }, []);
 
   const handleSearchChange = useCallback(v => {
     setSearch(v);
@@ -1459,9 +1472,14 @@ export default function HomeScreen({navigation, route}) {
   );
   const renderGridItem = useCallback(
     ({item, index}) => (
-      <MovieCard item={item} onPress={handleItemPress} hasTVPreferredFocus={IS_TV && index === 0} />
+      <MovieCard item={item} onPress={handleItemPress}
+        // [tv_perf] לא מבקשים focus התחלתי בזמן הקלדה. רשימת התוצאות
+        // מתחלפת בכל אות, הכרטיס הראשון הוא תצוגה חדשה, ובקשת focus
+        // ממנו לוקחת את הסמן מתיבת החיפוש וסוגרת את המקלדת. הצד הנייטיב
+        // חוסם את זה בכל מקרה; כאן זה נאמר במפורש גם ב-JS.
+        hasTVPreferredFocus={IS_TV && index === 0 && !searchTyping} />
     ),
-    [handleItemPress],
+    [handleItemPress, searchTyping],
   );
 
   // ── First-launch sign-in screen ──
@@ -1513,7 +1531,19 @@ export default function HomeScreen({navigation, route}) {
   // השידורים החיים מוצגים בשורות ז'אנר ולא ברשת — ולכן גם הם לא צריכים
   // gridItems. בלי התנאי הזה הרשימה הייתה מחושבת ונזרקת בכל רינדור.
   const isLiveMode = category === 'שידורים חיים';
-  const gridItems = isNetflixMode || isLiveMode ? [] : getItemsForCategory(category);
+  // [tv_perf] ‎useMemo‎ ולא חישוב בגוף הרינדור.
+  //
+  // נמדד על הקטלוג האמיתי (18,078 פריטים): סריקה אחת של הרשימה עם בניית
+  // האובייקטים לוקחת 3.3ms במכונת פיתוח, כלומר כ-26ms בקופסת טלוויזיה.
+  // בגוף הרינדור זה נגבה **בכל** רינדור מחדש — כל הקלדה, כל פתיחת מודאל,
+  // כל אנימציה — גם כשהקטגוריה והחיפוש לא השתנו כלל.
+  //
+  // ‎getItemsForCategory‎ הוא ‎useCallback‎ שתלוי ב-movies, favIds, history,
+  // downloads, qTokens, seriesMap ו-liveChannels, ולכן הזהות שלו היא כבר
+  // מפתח שלם: כשמשהו מהם משתנה החישוב חוזר, וכשלא — לא.
+  const gridItems = useMemo(
+    () => (isNetflixMode || isLiveMode ? [] : getItemsForCategory(category)),
+    [isNetflixMode, isLiveMode, category, getItemsForCategory]);
 
   const TopBar = (
     <View style={styles.topBar}>
@@ -1532,7 +1562,18 @@ export default function HomeScreen({navigation, route}) {
             style={styles.searchInput}
             placeholder="חיפוש..."
             placeholderTextColor="rgba(255,255,255,0.3)"
-            value={search}
+            // [tv_perf] בטלוויזיה **לא מבוקרת**, ובטלפון כן.
+            //
+            // ‎value={search}‎ אומר: בכל תו, RN מחזיר את הטקסט הנייטיב למה
+            // ש-JS מחזיק. כשה-thread של JS עסוק — ובטלוויזיה הוא עסוק,
+            // כי כל הקלדה מפעילה סינון של הקטלוג ורינדור מחדש — הערך
+            // שחוזר הוא הערך הישן, והאות שהוקלדה בינתיים נמחקת.
+            // דווח מהשטח: "רק אות אחת".
+            //
+            // עם ‎defaultValue‎ הטקסט הנייטיב הוא מקור האמת בזמן הקלדה,
+            // ו-JS רק מאזין. ניקוי מ-JS עובר דרך ‎clearSearch‎, שקורא
+            // ל-‎clear()‎ על התיבה עצמה.
+            {...(IS_TV ? {defaultValue: ''} : {value: search})}
             onChangeText={handleSearchChange}
             onFocus={onSearchFocus}
             // [tv_keyboard] מצב ההקלדה **אינו** נכבה כאן.
@@ -1599,7 +1640,7 @@ export default function HomeScreen({navigation, route}) {
     <View style={styles.catsRow}>
       {category !== 'הכל' && (
         <TvFocusable
-          onPress={() => { setCategory('הכל'); setSearch(''); }}
+          onPress={() => { setCategory('הכל'); clearSearch(); }}
           style={styles.activeCatChip}>
           <Text style={styles.activeCatChipTxt}>✕  {category}</Text>
         </TvFocusable>
@@ -1626,7 +1667,7 @@ export default function HomeScreen({navigation, route}) {
           {allCategories.map(c => (
             <TvFocusable
               key={c}
-              onPress={() => { setCategory(c); setSearch(''); setShowCatModal(false); }}
+              onPress={() => { setCategory(c); clearSearch(); setShowCatModal(false); }}
               style={styles.catOverlayItem}
               activeOpacity={0.65}>
               <Text style={[styles.catOverlayText, category === c && styles.catOverlayTextActive]}>
@@ -1678,7 +1719,7 @@ export default function HomeScreen({navigation, route}) {
           <TvFocusable
             hasFocus={showUserMenu}
             style={styles.menuItem}
-            onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); setSearch(''); }}>
+            onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); clearSearch(); }}>
             <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
           </TvFocusable>
           <TvFocusable
@@ -1751,7 +1792,7 @@ export default function HomeScreen({navigation, route}) {
           // מעבר לקצה — די והותר כדי שלחץ למטה יהיה לאן לרדת.
           initialNumToRender={IS_TV ? 3 : 3}
           maxToRenderPerBatch={2}
-          updateCellsBatchingPeriod={IS_TV ? 80 : 50}
+          updateCellsBatchingPeriod={IS_TV ? 30 : 50}
           windowSize={IS_TV ? 3 : 5}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
@@ -1766,7 +1807,7 @@ export default function HomeScreen({navigation, route}) {
             contentContainerStyle={styles.grid}
             initialNumToRender={IS_TV ? 12 : 9}
             maxToRenderPerBatch={IS_TV ? 6 : 9}
-            updateCellsBatchingPeriod={IS_TV ? 80 : 50}
+            updateCellsBatchingPeriod={IS_TV ? 30 : 50}
             windowSize={IS_TV ? 3 : 5}
             removeClippedSubviews={!IS_TV}
             refreshControl={

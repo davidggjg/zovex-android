@@ -159,7 +159,29 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
     private var focusTries = 0
     private var focusWanted = false
 
+    /** האם הבקשה ההתחלתית כבר מולאה **עבור התצוגה הזאת**.
+     *
+     *  ‎hasFocus‎ פירושו "התחל כאן", ולא "החזר אליי focus בכל הזדמנות".
+     *  בלי הדגל הזה כל הרכבה מחדש של הכרטיס הראשון — וזה קורה כל הזמן,
+     *  כי ‎FlatList‎ ממחזר תאים כשגוללים — הריצה שוב את הבקשה **וגנבה את
+     *  ה-focus** מהמקום שבו המשתמש עמד.
+     *
+     *  זה בדיוק מה שדווח מהשטח: "לוחץ, לא מגיב, ואז קופץ את שתי הלחיצות
+     *  — אבל אז צריך שוב לנווט למקום הנכון". החלק האחרון אינו איטיות
+     *  אלא focus שנלקח.
+     */
+    private var initialFocusDone = false
+
     fun requestFocusWhenReady() {
+        if (initialFocusDone) return
+        initialFocusDone = true
+        focusWanted = true
+        focusTries = 0
+        tryFocusSoon()
+    }
+
+    /** ליציאה ממצב הקלדה: שם הבקשה היא כן "תחזיר אליי", ולכן היא מפורשת. */
+    fun requestFocusBack() {
         focusWanted = true
         focusTries = 0
         tryFocusSoon()
@@ -177,6 +199,22 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
             //
             // requestFocus כבר מחזיר false בעצמו כשאי אפשר, ולכן ערך החזרה
             // שלו הוא הבדיקה הנכונה היחידה — ומנסים שוב עד שהוא מצליח.
+            // ── "התחל כאן" אינו "קח ממי שמחזיק" ────────────────────────
+            //
+            // הבקשה הזאת באה מ-‎hasTVPreferredFocus‎, שפירושו focus
+            // **התחלתי**. אם משהו אחר בחלון כבר ממוקד — המשתמש נמצא שם.
+            //
+            // מה שקרה בלעדיה: בכל הקלדה בחיפוש רשימת התוצאות מתחלפת,
+            // הכרטיס הראשון הוא **תצוגה חדשה** עם הבקשה הזאת, והוא לקח
+            // את ה-focus מתיבת הטקסט. אנדרואיד סוגר את המקלדת ברגע
+            // שהתיבה מאבדת focus — ולכן נכנסה אות אחת בדיוק, וזה מה
+            // שדווח מהשטח. אותו דבר קרה בניווט: כל אצווה חדשה החזירה את
+            // הסמן לכרטיס הראשון, ו"היה צריך שוב לנווט למקום הנכון".
+            val someoneElseHasIt = (rootView?.findFocus() != null) && findFocus() == null
+            if (someoneElseHasIt) {
+                focusWanted = false
+                return@post
+            }
             if (isAttachedToWindow && requestFocus()) {
                 focusWanted = false
                 return@post
@@ -244,7 +282,7 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
         val had = view.findFocus() != null
         view.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
         if (had && !view.isFocused) {
-            view.requestFocusWhenReady()
+            view.requestFocusBack()
         }
     }
 
