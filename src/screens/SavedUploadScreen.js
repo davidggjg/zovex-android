@@ -40,6 +40,12 @@ export default function SavedUploadScreen({route, navigation}) {
   // שנועדה להידחות.
   const maxSize = route?.params?.maxSize || 0;
   const freeDisk = route?.params?.freeDisk || 0;
+  // השרת יודע כבר ברגע הקוד אם יש חשבון טלגרם שאפשר לשלוח אליו, והחזיר
+  // את זה תמיד — אבל אף אחד לא הסתכל. התוצאה: בוחרים קובץ, ממתינים
+  // להעלאה שלמה, ורק אז מקבלים 503. עכשיו זה נאמר למעלה, לפני הבחירה,
+  // עם הסיבה שהשרת נתן ולא "לא מחובר" סתם.
+  const ready = route?.params?.ready !== false;
+  const notReady = route?.params?.reason || '';
 
   const [file, setFile] = useState(null);
   const [caption, setCaption] = useState('');
@@ -193,7 +199,7 @@ export default function SavedUploadScreen({route, navigation}) {
   // שהוא כבר עבר במלואו על רשת סלולרית.
   const tooBig = !!(file && maxSize && file.size > maxSize);
   const noRoom = !!(file && freeDisk && file.size + 536870912 > freeDisk);
-  const blocked = tooBig || noRoom;
+  const blocked = tooBig || noRoom || !ready;
   const upPct = total ? (100 * sent) / total : 0;
   // חלון של 12 שניות. נופלים לממוצע מתחילת ההעלאה רק בשניות הראשונות,
   // כשעוד אין מספיק דגימות לחלון.
@@ -353,7 +359,16 @@ export default function SavedUploadScreen({route, navigation}) {
           </View>
         )}
 
-        {blocked && !busy && (
+        {!ready && (
+          <View style={[styles.card, styles.errCard]}>
+            <Text style={styles.errTxt}>
+              אין חשבון טלגרם שאפשר לשלוח אליו.
+            </Text>
+            {!!notReady && <Text style={styles.meta}>{notReady}</Text>}
+          </View>
+        )}
+
+        {blocked && ready && !busy && (
           <View style={[styles.card, styles.errCard]}>
             <Text style={styles.errTxt}>
               {tooBig

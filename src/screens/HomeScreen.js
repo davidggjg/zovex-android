@@ -1421,6 +1421,11 @@ export default function HomeScreen({navigation, route}) {
         navigation.navigate('SavedUpload', {
           code: c, account: d.account,
           maxSize: d.max_size || 0, freeDisk: d.free_disk || 0,
+          // השרת מחזיר ready ו-reason מאז ומתמיד, ואנחנו התעלמנו מהם:
+          // הפאנל נפתח כרגיל, המשתמש בחר קובץ וחיכה, ורק אז קיבל 503.
+          // עכשיו המסך אומר את זה לפני הבחירה. reason חדש בשרת, ולכן
+          // ברירת המחדל היא ready — שרת ישן אינו נחסם.
+          ready: d.ready !== false, reason: d.reason || '',
         });
       } catch (_) {
         // קוד שגוי — בשקט ובכוונה. הודעת שגיאה הייתה מסגירה שיש כאן פאנל.
