@@ -94,6 +94,25 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         private const val PROBE_MS = 12_000L    // כל כמה זמן בודקים אם לעלות
         private const val RATE_WINDOW_MS = 10_000L
 
+        // ── התאוששות: החלקים שכבר הגיעו נשארים בשרת ──────────────────────
+        // חלק שנכשל היה מפיל את כל המשימה, והמשתמש התחיל מאפס — גם אחרי
+        // שתשעים אחוז מהקובץ כבר נשלחו. השרת מצדו כותב כל חלק להיסט שלו
+        // בקובץ אחד, זוכר אילו חלקים הגיעו, ויודע לענות על
+        // ‎GET /panel/saved-upload/parts‎ בדיוק מה חסר — כלומר הצד השרתי
+        // של ההתאוששות היה בנוי מההתחלה, ואף אחד לא שאל אותו.
+        //
+        // עכשיו כישלון אינו סוף המשימה: שואלים מה חסר, ושולחים רק את זה.
+        // לכן מעבר בין WiFi לסלולר, מנהרה, או קליטה שנחלשת לרגע — עולים
+        // בעלות של החלקים שהיו באוויר, ולא של הקובץ.
+        private const val RESUME_TOTAL_MS = 30 * 60_000L
+        private const val RESUME_MAX_ROUNDS = 40
+        // שלושה סבבים ברצף בלי שאף חלק נוסף הגיע — הרשת אינה "חלשה", היא
+        // אינה שם. ממשיכים לנסות ללא הגבלה זה בזבוז סוללה ונתונים.
+        private const val RESUME_STUCK_ROUNDS = 3
+        // פתיחת משימה שנכשלת ברשת רגעית הפילה אותנו למסלול הישן של בקשה
+        // אחת — זה שאינו ניתן להתאוששות כלל. שווה לנסות שוב לפני שנופלים.
+        private const val BEGIN_GIVE_UP_MS = 60_000L
+
         // ── פוסטר שבחרת ──────────────────────────────────────────────────
         // מוקטן בטלפון לפני השליחה: תמונה ערוכה יכולה לשקול 10MB, וב-WiFi
         // גרוע זה עוד חלק שלם של המתנה. 2000 פיקסלים זה גם מה שהשרת שומר,
@@ -213,15 +232,8 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         try {
             var begun: JSONObject? = null
             if (total > 0) {
-                begun = try {
-                    begin(base, code, name, caption, total, duration, width, height)
-                } catch (e: ServerRefusal) {
-                    // השרת אמר לא מסיבה אמיתית (קובץ גדול מדי, אין מקום).
-                    // אין טעם לנסות במסלול אחר.
-                    throw e
-                } catch (_: Exception) {
-                    null      // שרת שאינו מכיר את המסלול — נופלים לבקשה אחת
-                }
+                begun = beginWithRetry(
+                    base, code, name, caption, total, duration, width, height)
             }
 
             if (begun != null) {
@@ -236,9 +248,9 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                 // הפוסטר לפני הסרט: הוא קטן, והשרת מקבל אותו רק עד finish.
                 // כישלון שלו לא עוצר את ההעלאה — הסרט חשוב ממנו.
                 if (posterUri != null) sendPoster(base, code, job, posterUri)
-                uploadParts(uri, base, code, partSize, nParts, want)
+                uploadWithResume(uri, base, code, partSize, nParts, want)
                 if (cancelRequested) throw IOException("ההעלאה בוטלה")
-                finish(base, code, job)
+                finishWithRetry(base, code, job)
             } else {
                 mode = "single"
                 // המסלול הישן אינו מכיר פוסטר — ואומרים את זה במקום לשתוק
@@ -260,6 +272,16 @@ class UploadModule(private val ctx: ReactApplicationContext) :
 
     /** שגיאה שהשרת הסביר — לא מנסים מסלול אחר אחריה. */
     private class ServerRefusal(msg: String) : IOException(msg)
+
+    /** השרת אינו מכיר את מסלול החלקים — גרסה ישנה, ולא תקלת רשת.
+     *
+     *  טיפוס נפרד ולא השוואת מחרוזת הודעה: ההבחנה בין "שרת ישן" ל"רשת
+     *  נפלה" קובעת אם לנסות שוב או לרדת למסלול הבקשה האחת, ובדיקה לפי
+     *  טקסט הודעה נשברת בשקט ברגע שמישהו מנסח אותה מחדש. */
+    private class NoSuchRoute : IOException("המסלול אינו קיים בשרת")
+
+    /** תשובת ‎/parts‎: מה חסר, וכמה השרת באמת קיבל. */
+    private class Progress(val missing: IntArray, val received: Long)
 
     // ── שלב 1: פתיחת משימה ───────────────────────────────────────────────────
 
@@ -283,9 +305,131 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         val status = c.responseCode
         val body = readBody(c, status)
         c.disconnect()
-        if (status == 404 || status == 405) throw IOException("המסלול אינו קיים בשרת")
+        if (status == 404 || status == 405) throw NoSuchRoute()
         if (status != 200) throw ServerRefusal(detail(body) ?: "השרת החזיר $status")
         return JSONObject(body)
+    }
+
+    /**
+     * פתיחת משימה, עם ניסיונות חוזרים על תקלת רשת.
+     *
+     * קודם ניסיון אחד שנכשל הפיל אותנו אל מסלול הבקשה האחת — זה **שאינו
+     * ניתן להתאוששות בכלל**. כלומר רגע אחד של קליטה חלשה בשנייה הראשונה
+     * קבע שכל שאר ההעלאה תהיה שברירית, בלי שאיש ידע. שרת ישן (404/405)
+     * וסירוב אמיתי (קובץ גדול מדי) ממשיכים להיות מיידיים כמו קודם.
+     *
+     * מחזיר ‎null‎ רק כשבאמת צריך לרדת למסלול הישן.
+     */
+    private fun beginWithRetry(
+        base: String, code: String, name: String, caption: String,
+        size: Long, duration: Long, width: Int, height: Int
+    ): JSONObject? {
+        val deadline = System.currentTimeMillis() + BEGIN_GIVE_UP_MS
+        var attempt = 0
+        while (true) {
+            try {
+                return begin(base, code, name, caption, size, duration, width, height)
+            } catch (e: ServerRefusal) {
+                throw e
+            } catch (_: NoSuchRoute) {
+                return null
+            } catch (_: Exception) {
+                if (cancelRequested) return null
+                if (System.currentTimeMillis() > deadline) return null
+                attempt++
+                sleepUnlessCancelled(
+                    minOf(8_000L, 1000L * (1L shl minOf(attempt - 1, 3))))
+            }
+        }
+    }
+
+    /** אילו חלקים חסרים בשרת, וכמה הוא קיבל. ‎null‎ = אי אפשר לדעת. */
+    private fun missingParts(base: String, code: String): Progress? = try {
+        val c = (URL("$base/panel/saved-upload/parts?job=" + enc(job))
+            .openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            useCaches = false
+            connectTimeout = 20_000
+            readTimeout = 30_000
+            setRequestProperty("x-upload-code", code)
+        }
+        val status = c.responseCode
+        val body = readBody(c, status)
+        c.disconnect()
+        if (status != 200) null
+        else {
+            val o = JSONObject(body)
+            val arr = o.optJSONArray("missing")
+            if (arr == null) null
+            else Progress(IntArray(arr.length()) { arr.getInt(it) },
+                          o.optLong("received", -1L))
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * ההעלאה, כשכישלון אינו סוף המשימה.
+     *
+     * החלקים שכבר הגיעו יושבים בשרת — הוא כותב כל אחד להיסט שלו בקובץ
+     * אחד וזוכר אילו הגיעו. לכן אחרי כישלון שואלים אותו מה חסר ושולחים
+     * רק את זה, במקום להתחיל מאפס. זה מה שהופך מעבר בין WiFi לסלולר
+     * מ"תתחיל את שלושת הג'יגה מחדש" ל"עוד כמה חלקים".
+     *
+     * שלושה תנאי עצירה, וכל אחד מהם נחוץ:
+     *   · סירוב מפורש של השרת — אין טעם לנסות שוב
+     *   · חצי שעה, או ארבעים סבבים — תקרה מוחלטת
+     *   · שלושה סבבים ברצף שבהם **אף חלק לא נוסף** — הרשת אינה שם,
+     *     והמשך ניסיונות הוא בזבוז סוללה ונתונים בלבד
+     */
+    private fun uploadWithResume(
+        uri: Uri, base: String, code: String, partSize: Long, nParts: Int,
+        want: Int
+    ) {
+        var pending = IntArray(nParts) { it }
+        val deadline = System.currentTimeMillis() + RESUME_TOTAL_MS
+        var round = 0
+        var stuck = 0
+        var lastMissing = -1
+        while (true) {
+            try {
+                uploadParts(uri, base, code, partSize, want, pending)
+                return
+            } catch (e: ServerRefusal) {
+                throw e
+            } catch (e: Exception) {
+                if (cancelRequested) throw e
+                if (round >= RESUME_MAX_ROUNDS ||
+                    System.currentTimeMillis() > deadline) throw e
+
+                stage = "resuming"
+                lastError = e.message ?: ""
+                tick()
+                sleepUnlessCancelled(
+                    minOf(BACKOFF_CAP_MS, 2000L * (1L shl minOf(round, 4))))
+                if (cancelRequested) throw e
+
+                val p = missingParts(base, code) ?: throw e
+                if (p.missing.isEmpty()) {
+                    stage = "sending"
+                    return                      // הכול הגיע בכל זאת
+                }
+                // המונה מציג מעכשיו את מה שהשרת **קיבל**, ולא את מה
+                // ששלחנו: בייטים שיצאו ולא הגיעו הם התקדמות מדומה, והם
+                // הסיבה שסרגל ההתקדמות "קפץ אחורה" אחרי תקלה.
+                if (p.received >= 0) sentBytes.set(p.received)
+
+                if (lastMissing in 0..p.missing.size) stuck++ else stuck = 0
+                if (stuck >= RESUME_STUCK_ROUNDS) throw e
+                lastMissing = p.missing.size
+
+                pending = p.missing
+                round++
+                stage = "sending"
+                lastError = ""
+                tick()
+            }
+        }
     }
 
     // ── שלב 2: החלקים, במקביל ────────────────────────────────────────────────
@@ -304,21 +448,29 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         return if (dt > 500) db * 1000.0 / dt else 0.0
     }
 
+    /**
+     * שולח את החלקים שב-‎pending‎ בלבד.
+     *
+     * קודם הלולאה ספרה ‎0..nParts‎, ולכן לא הייתה דרך לשלוח "רק את מה
+     * שחסר" — כל ניסיון חוזר היה הקובץ כולו. הרשימה נמסרת מבחוץ, ובסבב
+     * הראשון היא פשוט כל החלקים.
+     */
     private fun uploadParts(
-        uri: Uri, base: String, code: String, partSize: Long, nParts: Int,
-        wanted: Int
+        uri: Uri, base: String, code: String, partSize: Long,
+        wanted: Int, pending: IntArray
     ) {
         val next = AtomicInteger(0)
         val failure = AtomicReference<Exception?>(null)
-        val start = minOf(wanted, nParts)
+        val start = minOf(wanted, pending.size)
         activeWorkers = start
         val threads = java.util.Collections.synchronizedList(ArrayList<Thread>())
 
         fun spawn(w: Int) {
             val t = Thread(Runnable {
                 while (failure.get() == null && !cancelRequested) {
-                    val i = next.getAndIncrement()
-                    if (i >= nParts) break
+                    val slot = next.getAndIncrement()
+                    if (slot >= pending.size) break
+                    val i = pending[slot]
                     val offset = i * partSize
                     val len = minOf(partSize, total - offset)
                     if (len <= 0) continue
@@ -353,7 +505,7 @@ class UploadModule(private val ctx: ReactApplicationContext) :
             var cooldownUntil = 0L
             while (failure.get() == null && !cancelRequested) {
                 try { Thread.sleep(PROBE_MS) } catch (_: InterruptedException) { break }
-                if (next.get() >= nParts) break          // נגמרו החלקים
+                if (next.get() >= pending.size) break    // נגמרו החלקים
                 val rate = currentRate()
                 if (rate <= 0.0) continue
                 val errs = recentErrors.getAndSet(0)
@@ -368,7 +520,7 @@ class UploadModule(private val ctx: ReactApplicationContext) :
                 } else if (rate >= best * 0.97) {
                     best = maxOf(best, rate)
                     if (activeWorkers < MAX_PARALLEL &&
-                        nParts - next.get() > activeWorkers) {
+                        pending.size - next.get() > activeWorkers) {
                         spawn(activeWorkers)
                         activeWorkers += 1
                     }
@@ -633,6 +785,52 @@ class UploadModule(private val ctx: ReactApplicationContext) :
         val body = readBody(c, status)
         c.disconnect()
         if (status != 200) throw ServerRefusal(detail(body) ?: "השרת החזיר $status")
+    }
+
+    /** מצב המשימה בשרת, או ‎null‎ אם אי אפשר לדעת. */
+    private fun jobStage(base: String, jobId: String): String? = try {
+        val c = (URL("$base/panel/saved-upload/status?job=" + enc(jobId))
+            .openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"; useCaches = false
+            connectTimeout = 20_000; readTimeout = 30_000
+        }
+        val status = c.responseCode
+        val body = readBody(c, status)
+        c.disconnect()
+        if (status == 200) JSONObject(body).optString("stage", "") else null
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * סגירת המשימה, עם ניסיונות חוזרים — ובלי לסגור אותה פעמיים.
+     *
+     * כל הבייטים כבר בשרת, וקריאה אחת שנופלת ברשת הפילה את כל ההעלאה
+     * בשנייה האחרונה שלה. אבל ‎finish‎ **אינו** אידמפוטנטי: הוא מפעיל את
+     * השליחה לטלגרם, וקריאה שנייה הייתה שולחת פעמיים. לכן לפני כל ניסיון
+     * חוזר בודקים את מצב המשימה: יצאה מ-‎receiving‎ פירושו שהקריאה
+     * הקודמת **כן** הגיעה, גם אם התשובה עליה לא — וזו הצלחה.
+     */
+    private fun finishWithRetry(base: String, code: String, jobId: String) {
+        val deadline = System.currentTimeMillis() + BEGIN_GIVE_UP_MS
+        var attempt = 0
+        while (true) {
+            try {
+                finish(base, code, jobId)
+                return
+            } catch (e: ServerRefusal) {
+                throw e
+            } catch (e: Exception) {
+                if (cancelRequested) throw e
+                // האם היא בכל זאת נקלטה?
+                val st = jobStage(base, jobId)
+                if (st != null && st != "receiving") return
+                if (System.currentTimeMillis() > deadline) throw e
+                attempt++
+                sleepUnlessCancelled(
+                    minOf(8_000L, 1000L * (1L shl minOf(attempt - 1, 3))))
+            }
+        }
     }
 
     // ── מסלול הנפילה לאחור: בקשה אחת, כמו קודם ───────────────────────────────

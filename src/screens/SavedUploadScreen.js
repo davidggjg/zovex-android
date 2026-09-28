@@ -66,6 +66,10 @@ export default function SavedUploadScreen({route, navigation}) {
   // כמה חלקים ממתינים עכשיו לרשת. כשה-WiFi נופל ההעלאה לא נכשלת אלא
   // מחכה שהוא יחזור, ובלי השורה הזו זה נראה בדיוק כמו תקיעה.
   const [waiting, setWaiting] = useState(0);
+  // הצד הנייטיבי מדווח stage='resuming' בזמן שהוא שואל את השרת מה חסר
+  // וממתין לפני הסבב הבא. בלי זה המסך נראה תקוע: המונה לא זז, אין הודעה,
+  // והמשתמש מניח שנפל — וזו בדיוק הנקודה שבה הוא היה מתחיל מחדש בלי צורך.
+  const [resuming, setResuming] = useState(false);
   const [tg, setTg] = useState(null);             // מצב מהשרת
   const [error, setError] = useState('');
   const pollRef = useRef(null);
@@ -145,6 +149,7 @@ export default function SavedUploadScreen({route, navigation}) {
       if (e.total > 0) setTotal(e.total);
       if (e.mode) setLink({mode: e.mode, workers: e.workers || 0});
       if (typeof e.waiting === 'number') setWaiting(e.waiting);
+      if (typeof e.stage === 'string') setResuming(e.stage === 'resuming');
       if (typeof e.poster === 'string') setPosterState(e.poster);
       if (typeof e.posterError === 'string') setPosterError(e.posterError);
       if (e.type === 'done') {
@@ -179,6 +184,7 @@ export default function SavedUploadScreen({route, navigation}) {
     if (!file || phase === 'sending' || phase === 'telegram') return;
     setPhase('sending'); setSent(0); setTotal(file.size || 0); setTg(null); setError('');
     setLink({mode: '', workers: 0});
+    setResuming(false);
     setPosterState(poster ? 'sending' : ''); setPosterError('');
     startedRef.current = Date.now();
     try {
@@ -321,7 +327,12 @@ export default function SavedUploadScreen({route, navigation}) {
                 השרת עוד לא מכיר פוסטר משלך — הסרטון עולה בלעדיו
               </Text>
             )}
-            {phase === 'sending' && waiting > 0 && (
+            {phase === 'sending' && resuming && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                מתחבר מחדש — בודק מול השרת מה כבר הגיע וממשיך רק את החסר
+              </Text>
+            )}
+            {phase === 'sending' && !resuming && waiting > 0 && (
               <Text style={[styles.meta, {color: '#f0b429'}]}>
                 הרשת נפלה — ממתין שתחזור וממשיך מאותה נקודה, לא מההתחלה
               </Text>
