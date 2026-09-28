@@ -67,6 +67,20 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      # שומר מסך שחור. הוק אחרי ‎return‎ מוקדם משנה את מספר ההוקים בין
+      # רינדור לרינדור, React זורק "Rendered more hooks than during the
+      # previous render", והאפליקציה נתקעת על מסך שחור לפני שהפתיח רץ.
+      # metro מקמפל ולא מריץ, ולכן הבנייה עברה בלי אזהרה אחת וזה התגלה רק
+      # על טלוויזיה של בודק. מכאן זה נופל כאן, לפני שמישהו מתקין.
+      #
+      # ‎@babel/parser‎ מגיע כתלות של react-native, אבל אם ההרמה של npm
+      # תשתנה הוא לא יהיה בשורש — ולכן מוודאים במפורש במקום לגלות בכישלון.
+      - name: Check React hook order (black-screen guard)
+        run: |
+          node -e "require.resolve('@babel/parser')" 2>/dev/null \
+            || npm install --no-save @babel/parser
+          node scripts/check-hooks.js src
+
       # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
       # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)

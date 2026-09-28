@@ -1482,6 +1482,35 @@ export default function HomeScreen({navigation, route}) {
     [handleItemPress, searchTyping],
   );
 
+  // ── מצב התצוגה ו-gridItems ──────────────────────────────────────────────
+  //
+  // כאן, ו**לפני** היציאות המוקדמות שמתחת, כי ‎gridItems‎ הוא ‎useMemo‎.
+  //
+  // הבאג שזה תיקן, ושאני גרמתי לו: קודם זה היה חישוב רגיל אחרי
+  // ‎if (loading) return‎, וזה חוקי לגמרי. ברגע שהפכתי אותו ל-‎useMemo‎ הוא
+  // הפך להוק שרץ **רק כשהטעינה נגמרה** — כלומר מספר ההוקים השתנה בין
+  // רינדור לרינדור, React זרק "Rendered more hooks than during the
+  // previous render", והאפליקציה נתקעה על מסך שחור לפני שהפתיח בכלל רץ.
+  //
+  // הכלל: הוק לעולם לא אחרי ‎return‎ מוקדם.
+  const isNetflixMode = category === 'הכל' && !query;
+  // השידורים החיים מוצגים בשורות ז'אנר ולא ברשת — ולכן גם הם לא צריכים
+  // gridItems. בלי התנאי הזה הרשימה הייתה מחושבת ונזרקת בכל רינדור.
+  const isLiveMode = category === 'שידורים חיים';
+  // [tv_perf] ‎useMemo‎ ולא חישוב בגוף הרינדור.
+  //
+  // נמדד על הקטלוג האמיתי (18,078 פריטים): סריקה אחת של הרשימה עם בניית
+  // האובייקטים לוקחת 3.3ms במכונת פיתוח, כלומר כ-26ms בקופסת טלוויזיה.
+  // בגוף הרינדור זה נגבה **בכל** רינדור מחדש — כל הקלדה, כל פתיחת מודאל,
+  // כל אנימציה — גם כשהקטגוריה והחיפוש לא השתנו כלל.
+  //
+  // ‎getItemsForCategory‎ הוא ‎useCallback‎ שתלוי ב-movies, favIds, history,
+  // downloads, qTokens, seriesMap ו-liveChannels, ולכן הזהות שלו היא כבר
+  // מפתח שלם: כשמשהו מהם משתנה החישוב חוזר, וכשלא — לא.
+  const gridItems = useMemo(
+    () => (isNetflixMode || isLiveMode ? [] : getItemsForCategory(category)),
+    [isNetflixMode, isLiveMode, category, getItemsForCategory]);
+
   // ── First-launch sign-in screen ──
   if (!loading && showSignIn) {
     return (
@@ -1526,24 +1555,6 @@ export default function HomeScreen({navigation, route}) {
       </View>
     );
   }
-
-  const isNetflixMode = category === 'הכל' && !query;
-  // השידורים החיים מוצגים בשורות ז'אנר ולא ברשת — ולכן גם הם לא צריכים
-  // gridItems. בלי התנאי הזה הרשימה הייתה מחושבת ונזרקת בכל רינדור.
-  const isLiveMode = category === 'שידורים חיים';
-  // [tv_perf] ‎useMemo‎ ולא חישוב בגוף הרינדור.
-  //
-  // נמדד על הקטלוג האמיתי (18,078 פריטים): סריקה אחת של הרשימה עם בניית
-  // האובייקטים לוקחת 3.3ms במכונת פיתוח, כלומר כ-26ms בקופסת טלוויזיה.
-  // בגוף הרינדור זה נגבה **בכל** רינדור מחדש — כל הקלדה, כל פתיחת מודאל,
-  // כל אנימציה — גם כשהקטגוריה והחיפוש לא השתנו כלל.
-  //
-  // ‎getItemsForCategory‎ הוא ‎useCallback‎ שתלוי ב-movies, favIds, history,
-  // downloads, qTokens, seriesMap ו-liveChannels, ולכן הזהות שלו היא כבר
-  // מפתח שלם: כשמשהו מהם משתנה החישוב חוזר, וכשלא — לא.
-  const gridItems = useMemo(
-    () => (isNetflixMode || isLiveMode ? [] : getItemsForCategory(category)),
-    [isNetflixMode, isLiveMode, category, getItemsForCategory]);
 
   const TopBar = (
     <View style={styles.topBar}>
