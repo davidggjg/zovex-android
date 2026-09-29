@@ -58,6 +58,14 @@ const he = {
   'settings.restartNeeded': 'כדי להשלים את המעבר, סגור את האפליקציה ופתח אותה מחדש.',
   'settings.about': 'אודות',
   'settings.version': 'גרסה {v}',
+  // יש מי שלוקח את האפליקציה ואת האתר וגובה עליהם כסף. מי ששילם אינו
+  // חושד בכך מעצמו — הוא הרי "קנה את זובקס" — ולכן זה נאמר במקום שהוא
+  // עובר בו, ולא רק בדף משפטי שאיש אינו פותח.
+  'free.title': 'ZOVEX חינמי לגמרי',
+  'free.body': 'אין מנוי, אין תשלום ואין גרסה בתשלום — לא באפליקציה ולא באתר.',
+  'free.paid': 'מישהו גבה ממך כסף על ZOVEX? זה לא אנחנו.',
+  'free.cta': 'כתוב לנו בתמיכה',
+  'free.footer': 'ZOVEX · חינמי לגמרי, ללא מטרות רווח. אם שילמת למישהו — זה לא אנחנו.',
 
   // רשת
 
@@ -147,6 +155,11 @@ const en = {
   'settings.restartNeeded': 'To finish switching, close the app and open it again.',
   'settings.about': 'About',
   'settings.version': 'Version {v}',
+  'free.title': 'ZOVEX is completely free',
+  'free.body': 'No subscription, no payment and no paid tier — not in the app, not on the site.',
+  'free.paid': 'Someone charged you for ZOVEX? That was not us.',
+  'free.cta': 'Message support',
+  'free.footer': 'ZOVEX · completely free, non-profit. If you paid someone — that was not us.',
 
 
   'support.kind.support': 'Support 💬',

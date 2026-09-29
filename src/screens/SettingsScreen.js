@@ -51,6 +51,19 @@ export default function SettingsScreen({navigation}) {
             <Text style={s.rowTxt}>ZOVEX</Text>
             <Text style={s.dim}>{t('settings.version', {v: APP_VERSION})}</Text>
           </View>
+          {/* יש מי שמוכר את האפליקציה ואת האתר שלנו. מי ששילם אינו חושד
+              בכך מעצמו — מבחינתו הוא קנה מוצר — ולכן ההודעה יושבת כאן,
+              במקום שאליו הוא מגיע כשהוא מחפש "מי עומד מאחורי זה", ולא
+              רק בכותרת התחתונה שעוברים עליה במהירות. */}
+          <View style={s.free}>
+            <Text style={s.freeTtl}>{t('free.title')}</Text>
+            <Text style={s.freeTxt}>{t('free.body')}</Text>
+            <Text style={s.freeTxt}>{t('free.paid')}</Text>
+            <TvFocusable style={s.freeBtn}
+              onPress={() => navigation.navigate('Home', {openSupport: true})}>
+              <Text style={s.freeBtnTxt}>{t('free.cta')}</Text>
+            </TvFocusable>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -76,4 +89,12 @@ const s = StyleSheet.create({
   check: {color: '#8db4ff', fontSize: 16, fontWeight: '700'},
   dim: {color: '#7c8288', fontSize: 14},
   hint: {color: '#7c8288', fontSize: 12.5, lineHeight: 18, marginTop: 10, marginHorizontal: 4},
+  free: {borderTopWidth: StyleSheet.hairlineWidth,
+         borderTopColor: 'rgba(255,255,255,0.08)',
+         paddingVertical: 14, paddingHorizontal: 16},
+  freeTtl: {color: '#7ee2a0', fontSize: 14, fontWeight: '700', marginBottom: 6},
+  freeTxt: {color: '#9aa0a6', fontSize: 13, lineHeight: 19, marginBottom: 4},
+  freeBtn: {alignSelf: 'flex-start', marginTop: 8, paddingVertical: 8,
+            paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#e50914'},
+  freeBtnTxt: {color: '#fff', fontSize: 13, fontWeight: '700'},
 });

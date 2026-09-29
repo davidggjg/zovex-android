@@ -580,7 +580,10 @@ function HomeFooter({navigation}) {
         <TvFocusable onPress={open(DISCORD_URL)}><Text style={[ftStyles.link, {color: '#7c85f5'}]}>דיסקורד</Text></TvFocusable>
         <TvFocusable onPress={open(TELEGRAM_URL)}><Text style={[ftStyles.link, {color: '#5b9bd5'}]}>טלגרם</Text></TvFocusable>
       </View>
-      <Text style={ftStyles.note}>ZOVEX · שירות חינמי, ללא מטרות רווח</Text>
+      {/* מי שקנה את ZOVEX ממישהו לא יחשוד בכך מעצמו — הוא שילם, אז
+          מבחינתו זה מוצר בתשלום. לכן זה נאמר בכותרת התחתונה, שנראית
+          תמיד ואינה חוסמת כלום, ולא רק בדף משפטי שאיש אינו פותח. */}
+      <Text style={ftStyles.note}>{t('free.footer')}</Text>
     </View>
   );
 }
@@ -1355,6 +1358,15 @@ export default function HomeScreen({navigation, route}) {
     const epMatch = movies.find(m => m.series_name && m.custom_slug === cleanSlug);
     if (epMatch) { handleItemPress(seriesMap[epMatch.series_name]); return; }
   }, [route?.params?.deepPath, movies, seriesMap, handleItemPress]);
+
+  // מסך ההגדרות שולח לכאן openSupport אחרי שהמשתמש קרא שהאפליקציה
+  // חינמית ורוצה לומר שגבו ממנו כסף. הפרמטר מנוקה מיד אחרי השימוש,
+  // אחרת חזרה למסך הבית הייתה פותחת את התמיכה שוב ושוב.
+  useEffect(() => {
+    if (!route?.params?.openSupport) return;
+    setShowSupport(true);
+    navigation.setParams({openSupport: undefined});
+  }, [route?.params?.openSupport, navigation]);
 
   const handlePlayDirect = useCallback(item => {
     const userId = user?.id || null;
