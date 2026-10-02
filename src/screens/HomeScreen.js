@@ -595,6 +595,74 @@ const ftStyles = StyleSheet.create({
   note: {color: '#555', fontSize: 11, textAlign: 'center', marginTop: 4},
 });
 
+// ── FreeBar ───────────────────────────────────────────────────────────────────
+
+// הכותרת התחתונה אומרת את זה, אבל היא נמצאת אחרי כל הקטלוג — כלומר מי
+// שנכנס, מצא סרט ולחץ עליו לא הגיע אליה מעולם. מי שקנה את ZOVEX ממישהו
+// **אינו מחפש** את ההודעה הזאת: מבחינתו הוא שילם על מוצר תקין, ואין לו
+// סיבה לחשוד. לכן זה עולה למעלה, מעל התוכן, במקום שאי אפשר לפספס.
+//
+// הסרגל יושב מתחת לסרגל העליון ולא גולל איתו, ולכן הוא נראה בכל כניסה
+// למסך הבית ובכל מצב — רגיל, קטגוריה, חיפוש ושידורים חיים.
+const FREE_BAR_KEY = 'zovex_free_bar_until';
+// אותם 30 יום כמו באתר. אפשר לסגור אותו — סרגל שאי אפשר לסגור נקרא
+// כרעש ולא כהודעה, והוא חוזר לבד אחרי חודש, כך שגם מי שסגר יראה שוב.
+const FREE_BAR_MS = 30 * 24 * 60 * 60 * 1000;
+
+const FreeBar = memo(function FreeBar({onSupport}) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    let live = true;
+    AsyncStorage.getItem(FREE_BAR_KEY)
+      // ערך פגום או ריק ⇒ מציגים. ברירת המחדל של הודעה כזאת היא להיראות.
+      .then(v => { if (live) setShow(!(Number(v) > Date.now())); })
+      .catch(() => { if (live) setShow(true); });
+    return () => { live = false; };
+  }, []);
+
+  const dismiss = useCallback(() => {
+    setShow(false);
+    AsyncStorage.setItem(FREE_BAR_KEY, String(Date.now() + FREE_BAR_MS))
+      .catch(() => {});
+  }, []);
+
+  if (!show) return null;
+  return (
+    <View style={[fbStyles.wrap, {flexDirection: isRTL() ? 'row-reverse' : 'row'}]}>
+      <TvFocusable style={fbStyles.main} onPress={onSupport}>
+        <Text style={[fbStyles.txt, {textAlign: isRTL() ? 'right' : 'left'}]}
+              numberOfLines={2}>
+          <Text style={fbStyles.strong}>{t('free.title')}</Text>
+          {'  '}
+          {t('free.paid')}{' '}
+          <Text style={fbStyles.cta}>{t('free.cta')} ›</Text>
+        </Text>
+      </TvFocusable>
+      {/* TvFocusable ולא Pressable: בטלוויזיה סרגל שאי אפשר לסגור מהשלט
+          הוא סרגל שנשאר על המסך לנצח. */}
+      <TvFocusable style={fbStyles.x} onPress={dismiss}>
+        <Text style={fbStyles.xTxt}>✕</Text>
+      </TvFocusable>
+    </View>
+  );
+});
+
+const fbStyles = StyleSheet.create({
+  wrap: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(229,9,20,0.10)',
+    borderTopWidth: 1, borderBottomWidth: 1,
+    borderColor: 'rgba(229,9,20,0.35)',
+    paddingHorizontal: 12, paddingVertical: 7,
+  },
+  main: {flex: 1, paddingVertical: 2, paddingHorizontal: 4},
+  txt: {color: '#e8e8e8', fontSize: 12, lineHeight: 17},
+  strong: {color: '#ff5a63', fontWeight: '900'},
+  cta: {color: '#8ab4f8', fontWeight: '700'},
+  x: {paddingHorizontal: 8, paddingVertical: 4},
+  xTxt: {color: '#888', fontSize: 14, fontWeight: '700'},
+});
+
 // memo: הבאנר מחזיק טיימר ואנימציה משלו, ובלי memo הוא צויר מחדש בכל רינדור
 // של מסך הבית — כלומר בכל לחיצה, בכל מעבר focus ובכל שינוי חיפוש.
 const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
@@ -1258,6 +1326,10 @@ export default function HomeScreen({navigation, route}) {
     return () => sub.remove();
   }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, searchTyping, category, showExit]);
 
+  // יציב, כי FreeBar עטוף ב-memo: פונקציה חדשה בכל רינדור הייתה מבטלת
+  // את ה-memo ומצייר את הסרגל מחדש בכל לחיצה ובכל שינוי חיפוש.
+  const openSupport = useCallback(() => setShowSupport(true), []);
+
   const showDonationModal = useCallback(cb => {
     donationCallback.current = cb;
     setShowDonation(true);
@@ -1786,6 +1858,9 @@ export default function HomeScreen({navigation, route}) {
           כמה שניות, ואנדרואיד הורג את האפליקציה. זו החתימה של ANR. */}
       {!IS_TV && <AmbientGlow />}
       {TopBar}
+      {/* מעל התוכן ומחוץ לרשימה — כלומר לא גולל ולא תלוי במצב. מי שנכנס
+          למסך הבית רואה אותו, גם אם ילחץ על הסרט הראשון ולא יגלול לעולם. */}
+      <FreeBar onSupport={openSupport} />
       {CatsButton}
       {isNetflixMode || isLiveMode ? (
         // A plain ScrollView mounted every category row (and its images) at
