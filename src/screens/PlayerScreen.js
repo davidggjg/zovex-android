@@ -1012,13 +1012,23 @@ export default function PlayerScreen({route, navigation}) {
     const save = progressToSave(pos, dur);
     const finished = save === 0;
     if (!finished && pos <= 5) return;
+    // [resume] וגם: לא דורסים מיקום שמור לפני שהדילוג אליו קרה.
+    //
+    // ‎pos <= 5‎ לבדו הגן רק על הטיקים הראשונים. אם הדילוג מתעכב —
+    // רשת איטית, מניפסט שנבנה, המרה שמתחילה — הטיק של שנייה 10 או 26
+    // כבר עובר אותו ושומר **במקום** המיקום האמיתי. נמדד ב-progress.json
+    // שבשרת: מיקומים שמורים של 10, 14, 17, 21 ו-26 שניות על סרטים
+    // באורך שעתיים.
+    //
+    // כל עוד יש יעד חזרה ולא הגענו אליו, הטיק הזה הוא מלפני הדילוג.
+    if (!finished && startTime > 1 && pos < startTime - 10) return;
     const now = Date.now();
     // המעבר ל"נצפה" נשמר מיד — אם יוצאים בדיוק עכשיו, הוא לא יאבד
     const justFinished = finished && !lastSaveRef.current.finished;
     if (!justFinished && now - lastSaveRef.current.at < SAVE_EVERY_MS) return;
     lastSaveRef.current = {at: now, finished};
     saveProgress(movie.id, Math.floor(save), Math.floor(dur), userId);
-  }, [movie.id, userId]);
+  }, [movie.id, userId, startTime]);
   const seriesEpisodesRef = useRef(seriesEpisodes);
   const isLive = !!movie.is_live;
   const isTv = Platform.isTV; // טלוויזיה חכמה (Android TV) — WebView חלש יותר
