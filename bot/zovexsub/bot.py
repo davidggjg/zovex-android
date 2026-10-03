@@ -18,11 +18,13 @@ from telethon.tl.types import DocumentAttributeFilename
 
 from . import allowlist, config, pipeline
 
-logging.basicConfig(
-    level=getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO),
-    format="%(asctime)s %(levelname)s %(name)s | %(message)s",
-)
+LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
+logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
+# Telethon ב-DEBUG מציף את הלוג; משאירים רק את שלנו מפורט
+logging.getLogger("telethon").setLevel(max(LEVEL, logging.INFO))
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("zovexsub")
+log.setLevel(LEVEL)
 
 T = config.TRIGGER
 
