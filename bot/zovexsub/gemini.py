@@ -195,19 +195,28 @@ async def ask_json(system: str, user: str, *, schema: dict | None = None,
 async def research(system: str, user: str) -> str:
     """מעבר חקר מחובר לחיפוש Google — לשמות, מונחים, ציטוטים ומושגים.
 
-    חיפוש ו-JSON מובנה לא יכולים לעבוד יחד באותה קריאה, לכן כאן התשובה טקסט.
+    לחיפוש יש מכסה חינמית נפרדת וקטנה. כשהיא נגמרת אנחנו חוזרים על אותה
+    שאלה בלי החיפוש: אימות עובדתי של שמות אובד, אבל מיפוי הדוברים
+    והמגדרים — החלק שמחזיק את כל דיוק התרגום — עדיין נוצר.
     """
-    body = {
+    base = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
-        "tools": [{"google_search": {}}],
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8192},
     }
     try:
-        payload = await _call(config.GEMINI_MODEL, body)
-        return _text_of(payload)
+        payload = await _call(config.GEMINI_MODEL, {**base, "tools": [{"google_search": {}}]})
+        text = _text_of(payload)
+        if text:
+            return text
+        log.warning("החקר עם חיפוש חזר ריק — מנסה בלי חיפוש")
     except GeminiError as exc:
-        log.warning("מעבר החקר נכשל, ממשיכים בלעדיו: %s", exc)
+        log.warning("החקר עם חיפוש נכשל (%s) — מנסה בלי חיפוש", exc)
+
+    try:
+        return _text_of(await _call(config.GEMINI_MODEL, base))
+    except GeminiError as exc:
+        log.warning("גם החקר בלי חיפוש נכשל, ממשיכים בלעדיו: %s", exc)
         return ""
 
 
