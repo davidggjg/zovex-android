@@ -119,11 +119,32 @@ SUB_STYLE = (
 )
 
 
-async def burn(video: Path, srt: Path, dst: Path) -> Path:
-    """צריבה 'חלשה ומהירה' — preset מהיר, CRF גבוה, thread אחד, הקטנת רזולוציה.
+RLM = "\u200f"  # Right-to-Left Mark
 
-    libass מטפל ב-RTL של העברית דרך fribidi, לכן אין צורך בסימוני כיווניות.
+
+def rtl_copy(srt: Path) -> Path:
+    """עותק לצריבה עם סימון כיווניות בתחילת כל שורת טקסט.
+
+    בלי זה libass מחליט על כיוון השורה לפי התו הראשון, ושורה שמתחילה
+    בספרה או באות לטינית גוררת את סימני הפיסוק לצד הלא נכון.
+    הקובץ שנשלח למשתמש נשאר נקי — הסימון רק בעותק הזה.
     """
+    out = []
+    for line in srt.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        is_meta = (not stripped) or stripped.isdigit() or "-->" in stripped
+        if is_meta:
+            out.append(line)
+        else:
+            out.append(RLM + line.lstrip(RLM))
+    dst = srt.with_name(srt.stem + ".rtl.srt")
+    dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return dst
+
+
+async def burn(video: Path, srt: Path, dst: Path) -> Path:
+    """צריבה 'חלשה ומהירה' — preset מהיר, CRF גבוה, thread אחד, הקטנת רזולוציה."""
+    srt = rtl_copy(srt)
     escaped = str(srt).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
     vf = (
         f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=fast_bilinear,"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -119,10 +120,19 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None) -> Transcr
                     if w.get("start") is not None
                     and start - chunk.offset - 0.01 <= float(w["start"]) <= end - chunk.offset + 0.01
                 ]
+                if words:
+                    # חותמות המילים מדויקות בהרבה מגבולות הסגמנט, שנוטים
+                    # להקדים את תחילת הדיבור ולהימשך לתוך השקט שאחריו
+                    first, last = words[0].start, words[-1].end
+                    if start - 2.0 <= first <= end:
+                        start = first
+                    if start <= last <= end + 2.0:
+                        end = last
+
                 segments.append(Segment(
                     index=len(segments),
                     start=start,
-                    end=end,
+                    end=max(end, start + 0.2),
                     text=text,
                     words=words,
                     no_speech=float(seg.get("no_speech_prob") or 0.0),
@@ -136,6 +146,8 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None) -> Transcr
         seg.index = i
     return Transcript(language=language or "unknown", segments=segments)
 
+
+_URL = re.compile(r"(https?://|www\.|\.(com|net|org|tv|ru|ir|co\.il)\b)", re.I)
 
 _JUNK = {
     "תרגום וכתוביות", "כתוביות", "סוף", "תודה רבה", "thank you", "thanks for watching",
@@ -151,6 +163,9 @@ def _drop_hallucinations(segments: list[Segment]) -> list[Segment]:
         if seg.no_speech > 0.75 and len(low) < 40:
             continue
         if any(j in low for j in _JUNK) and len(low) < 45:
+            continue
+        # כתובת אתר או סימן מים — כמעט תמיד המצאה של המודל, לא דיבור
+        if _URL.search(low) and len(low) < 60:
             continue
         # שכפול זהה רצוף
         if clean and clean[-1].text.strip() == seg.text.strip() and seg.end - seg.start < 1.5:
