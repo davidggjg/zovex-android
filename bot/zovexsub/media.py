@@ -138,13 +138,29 @@ async def speech_spans(audio: Path, min_silence: float = 0.25) -> list[tuple[flo
 
     סף קבוע לא עובד: בסדרה עם מוזיקת רקע שום דבר לא יורד מתחת ל-32dB-,
     ואז "לא נמצא שקט" ושום כתובית לא זזה. לכן הסף נגזר מעוצמת הקול
-    הממוצעת של הקובץ עצמו, ולפניו מסנן תדרים שמשאיר את טווח הדיבור
-    ומחליש מוזיקה ורעש חדר.
+    הממוצעת של הקובץ, ולפניו מסנן תדרים שמשאיר את טווח הדיבור ומחליש
+    מוזיקה ורעש חדר. אם גם הסף הזה לא מפריד בין דיבור לרקע, מנסים ספים
+    גבוהים יותר במקום לוותר בשקט.
     """
     average = await mean_volume(audio)
-    threshold = max(-50.0, min(-20.0, average - 6.0))
-    log.info("ממוצע עוצמה %.1fdB, סף שקט %.1fdB", average, threshold)
+    total = await duration_seconds(audio)
 
+    # מנסים כמה ספים: אם הראשון לא מוצא שקט ממשי, מעלים אותו ומנסים שוב
+    for offset in (6.0, 3.0, 0.0, -3.0):
+        threshold = max(-50.0, min(-18.0, average - offset))
+        spans = await _detect(audio, threshold, min_silence, total)
+        covered = sum(b - a for a, b in spans)
+        log.info("סף %.1fdB: %d קטעי דיבור, %.0f מתוך %.0f שניות",
+                 threshold, len(spans), covered, total)
+        if spans and covered < 0.95 * total:
+            return spans
+
+    log.info("לא זוהה שקט ממשי באף סף — מדלגים על ההצמדה")
+    return []
+
+
+async def _detect(audio: Path, threshold: float, min_silence: float,
+                  total: float) -> list[tuple[float, float]]:
     cmd = ["ffmpeg", "-nostdin", "-i", str(audio), "-af",
            f"highpass=f=180,lowpass=f=3600,"
            f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
@@ -165,7 +181,6 @@ async def speech_spans(audio: Path, min_silence: float = 0.25) -> list[tuple[flo
             silences.append((start, value))
             start = None
 
-    total = await duration_seconds(audio)
     if start is not None:
         silences.append((start, total))
 
@@ -176,12 +191,6 @@ async def speech_spans(audio: Path, min_silence: float = 0.25) -> list[tuple[flo
         cursor = max(cursor, finish)
     if total - cursor > 0.05:
         spans.append((cursor, total))
-    covered = sum(b - a for a, b in spans)
-    log.info("זוהו %d קטעי דיבור, %.0f מתוך %.0f שניות", len(spans), covered, total)
-    # אם כמעט הכל "דיבור", הזיהוי לא אמין ועדיף לא להזיז כלום
-    if total and covered > 0.97 * total:
-        log.info("לא זוהה שקט ממשי — מדלגים על ההצמדה")
-        return []
     return spans
 
 

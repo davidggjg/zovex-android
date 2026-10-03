@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -75,9 +76,28 @@ class Offer:
     expires: float
 
 
+# שני תורים נפרדים: צריבה של שעתיים לא תחסום בקשת כתוביות של דקה
 queue: asyncio.Queue[Job] = asyncio.Queue()
+burn_queue: asyncio.Queue[Job] = asyncio.Queue()
 offers: dict[int, Offer] = {}      # לפי מזהה הודעת ההצעה
 me_id: int = 0
+
+
+def free_gigabytes() -> float:
+    try:
+        return shutil.disk_usage(config.WORK_DIR).free / 1024 ** 3
+    except OSError:
+        return 0.0
+
+
+def ensure_space(needed_bytes: int) -> None:
+    """צריבה צורכת מקום פי כמה מהמקור. עדיף לסרב מראש מאשר למלא דיסק."""
+    needed = needed_bytes / 1024 ** 3 * config.DISK_FACTOR + config.DISK_RESERVE_GB
+    free = free_gigabytes()
+    if free < needed:
+        raise RuntimeError(
+            f"אין מספיק מקום בדיסק: פנויים {free:.1f}GB, נדרשים {needed:.1f}GB."
+        )
 
 
 def _who(message) -> int:
@@ -230,32 +250,41 @@ async def on_yes(event: events.NewMessage.Event, text: str) -> None:
         return
 
     offers.pop(event.reply_to_msg_id, None)
-    status = await event.reply("🔥 בתור לצריבה…" if queue.qsize() else "🔥 צורב…")
-    await queue.put(Job(event, offer.message, status,
-                        srt_path=offer.srt_path, work=offer.work))
+    status = await event.reply("🔥 בתור לצריבה…" if burn_queue.qsize() else "🔥 צורב…")
+    await burn_queue.put(Job(event, offer.message, status,
+                             srt_path=offer.srt_path, work=offer.work))
     log.info("אושרה צריבה על ידי %s", sender)
 
 
 async def worker() -> None:
+    """מטפל בבקשות כתוביות — קצרות יחסית, לא נחסמות על ידי צריבה."""
     while True:
         job = await queue.get()
-        burn_job = job.srt_path is not None
-        work = job.work if burn_job else config.WORK_DIR / uuid.uuid4().hex[:10]
+        work = config.WORK_DIR / uuid.uuid4().hex[:10]
         try:
-            if burn_job:
-                await _burn(job, work)
-            else:
-                await _subtitle(job, work)
+            await _subtitle(job, work)
         except Exception as exc:  # noqa: BLE001 — מדווחים לצ'אט ולא מפילים את הבוט
-            log.exception("העבודה נכשלה")
+            log.exception("עבודת הכתוביות נכשלה")
             await _safe_edit(job.status, f"❌ {exc}")
-            if burn_job:
-                pipeline.cleanup(work)
         finally:
-            # בעבודת תמלול התיקייה נשמרת רק אם יש הצעת צריבה פתוחה
-            if not burn_job and not any(o.work == work for o in offers.values()):
+            # התיקייה נשמרת רק אם נותרה הצעת צריבה פתוחה עליה
+            if not any(o.work == work for o in offers.values()):
                 pipeline.cleanup(work)
             queue.task_done()
+
+
+async def burn_worker() -> None:
+    """תור נפרד לצריבה, שיכולה לרוץ שעות על קובץ ארוך."""
+    while True:
+        job = await burn_queue.get()
+        try:
+            await _burn(job, job.work)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("הצריבה נכשלה")
+            await _safe_edit(job.status, f"❌ {exc}")
+        finally:
+            pipeline.cleanup(job.work)
+            burn_queue.task_done()
 
 
 async def _subtitle(job: Job, work: Path) -> None:
@@ -272,6 +301,7 @@ async def _subtitle(job: Job, work: Path) -> None:
         last = time.monotonic()
         await _safe_edit(job.status, f"📥 מוריד… {received * 100 // total}%")
 
+    ensure_space(int(getattr(getattr(job.message, "file", None), "size", 0) or 0))
     await job.message.download_media(file=str(source), progress_callback=on_download)
     log.info("הורד: %s (%.1f MB)", source.name, source.stat().st_size / 1048576)
 
@@ -307,6 +337,7 @@ async def _subtitle(job: Job, work: Path) -> None:
 
 async def _burn(job: Job, work: Path) -> None:
     source = next(work.glob("source.*"))
+    ensure_space(source.stat().st_size)
     burned = await pipeline.burn(source, job.srt_path, work)
     await _safe_edit(job.status, "📤 מעלה את הוידאו הצרוב…")
     await job.event.reply("🔥 וידאו עם כתוביות צרובות",
@@ -363,6 +394,7 @@ async def main() -> None:
              T, config.ALLOWLIST_FILE, config.WORK_DIR)
 
     asyncio.create_task(worker())
+    asyncio.create_task(burn_worker())
     asyncio.create_task(expire_offers())
     await client.run_until_disconnected()
 

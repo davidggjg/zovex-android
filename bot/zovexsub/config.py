@@ -49,6 +49,9 @@ FFMPEG_THREADS = _int("FFMPEG_THREADS", 1)
 # תקרה קשיחה לצריבה. תוכן גרעיני מקודד לאט מזמן אמת, ובלי תקרה קובץ
 # חריג יכול לרוץ שעה על שרת עמוס
 BURN_TIMEOUT = _int("BURN_TIMEOUT", 1800)
+# בדיקת מקום בדיסק לפני הורדה וצריבה: פי כמה מגודל המקור, ועוד רזרבה
+DISK_FACTOR = float(os.getenv("DISK_FACTOR") or 2.5)
+DISK_RESERVE_GB = float(os.getenv("DISK_RESERVE_GB") or 3.0)
 NICE = _int("NICE", 15)
 
 WORK_DIR = Path(os.getenv("WORK_DIR") or "/tmp/zovexsub")
