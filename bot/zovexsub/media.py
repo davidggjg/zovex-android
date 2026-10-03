@@ -238,10 +238,10 @@ async def burn(video: Path, srt: Path, dst: Path) -> Path:
         f"subtitles='{escaped}':force_style='{SUB_STYLE}'"
     )
     await _run([
-        "ffmpeg", "-nostdin", "-y", "-threads", str(config.FFMPEG_THREADS),
+        "ffmpeg", "-nostdin", "-y", "-threads", str(config.BURN_THREADS),
         "-i", str(video), "-vf", vf,
         "-c:v", "libx264", "-preset", config.BURN_PRESET, "-crf", str(config.BURN_CRF),
-        "-x264-params", f"threads={config.FFMPEG_THREADS}",
+        "-x264-params", f"threads={config.BURN_THREADS}",
         "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
         str(dst),
     ], timeout=config.BURN_TIMEOUT)
