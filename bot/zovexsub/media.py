@@ -113,15 +113,33 @@ async def split_audio(audio: Path, out_dir: Path, total: float) -> list[Chunk]:
     return chunks
 
 
-async def speech_spans(audio: Path, noise: str = "-32dB",
-                       min_silence: float = 0.25) -> list[tuple[float, float]]:
-    """מאתר באודיו את הקטעים שבהם באמת מדברים, לפי זיהוי שקט של ffmpeg.
+async def mean_volume(audio: Path) -> float:
+    """עוצמת הקול הממוצעת בדציבלים — בסיס לסף שמסתגל לתוכן."""
+    proc = await asyncio.create_subprocess_exec(
+        *(_nice_prefix() + ["ffmpeg", "-nostdin", "-i", str(audio),
+                            "-af", "volumedetect", "-f", "null", "-"]),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    match = re.search(r"mean_volume: *(-?[\d.]+) dB", err.decode("utf-8", "replace"))
+    return float(match.group(1)) if match else -30.0
 
-    זה לא תלוי במה שמודל התמלול החזיר, ולכן מתקן גם סגמנטים שחזרו בלי
-    חותמות מילים ונמתחו על פני שקט שלם.
+
+async def speech_spans(audio: Path, min_silence: float = 0.25) -> list[tuple[float, float]]:
+    """מאתר את הקטעים שבהם באמת מדברים.
+
+    סף קבוע לא עובד: בסדרה עם מוזיקת רקע שום דבר לא יורד מתחת ל-32dB-,
+    ואז "לא נמצא שקט" ושום כתובית לא זזה. לכן הסף נגזר מעוצמת הקול
+    הממוצעת של הקובץ עצמו, ולפניו מסנן תדרים שמשאיר את טווח הדיבור
+    ומחליש מוזיקה ורעש חדר.
     """
+    average = await mean_volume(audio)
+    threshold = max(-50.0, min(-20.0, average - 6.0))
+    log.info("ממוצע עוצמה %.1fdB, סף שקט %.1fdB", average, threshold)
+
     cmd = ["ffmpeg", "-nostdin", "-i", str(audio), "-af",
-           f"silencedetect=noise={noise}:d={min_silence}", "-f", "null", "-"]
+           f"highpass=f=180,lowpass=f=3600,"
+           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
     proc = await asyncio.create_subprocess_exec(
         *(_nice_prefix() + cmd),
         stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
@@ -150,7 +168,12 @@ async def speech_spans(audio: Path, noise: str = "-32dB",
         cursor = max(cursor, finish)
     if total - cursor > 0.05:
         spans.append((cursor, total))
-    log.info("זוהו %d קטעי דיבור מתוך %.0f שניות", len(spans), total)
+    covered = sum(b - a for a, b in spans)
+    log.info("זוהו %d קטעי דיבור, %.0f מתוך %.0f שניות", len(spans), covered, total)
+    # אם כמעט הכל "דיבור", הזיהוי לא אמין ועדיף לא להזיז כלום
+    if total and covered > 0.97 * total:
+        log.info("לא זוהה שקט ממשי — מדלגים על ההצמדה")
+        return []
     return spans
 
 
