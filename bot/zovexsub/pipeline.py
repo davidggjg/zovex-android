@@ -58,7 +58,8 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     await progress(f"🔎 חוקר את התוכן (שפת מקור: {transcript.language})…")
     lines, notes = await hebrew.build_hebrew(transcript.segments, transcript.language)
 
-    cues = srt.build_cues(transcript.segments, lines)
+    speech = await media.speech_spans(audio)
+    cues = srt.build_cues(transcript.segments, lines, speech=speech)
     if not cues:
         raise RuntimeError("התרגום חזר ריק.")
     srt_path = work / f"{source.stem}.he.srt"

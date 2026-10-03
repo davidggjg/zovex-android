@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -112,6 +113,47 @@ async def split_audio(audio: Path, out_dir: Path, total: float) -> list[Chunk]:
     return chunks
 
 
+async def speech_spans(audio: Path, noise: str = "-32dB",
+                       min_silence: float = 0.25) -> list[tuple[float, float]]:
+    """מאתר באודיו את הקטעים שבהם באמת מדברים, לפי זיהוי שקט של ffmpeg.
+
+    זה לא תלוי במה שמודל התמלול החזיר, ולכן מתקן גם סגמנטים שחזרו בלי
+    חותמות מילים ונמתחו על פני שקט שלם.
+    """
+    cmd = ["ffmpeg", "-nostdin", "-i", str(audio), "-af",
+           f"silencedetect=noise={noise}:d={min_silence}", "-f", "null", "-"]
+    proc = await asyncio.create_subprocess_exec(
+        *(_nice_prefix() + cmd),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    text = err.decode("utf-8", "replace")
+
+    silences: list[tuple[float, float]] = []
+    start: float | None = None
+    for match in re.finditer(r"silence_(start|end): *(-?[\d.]+)", text):
+        kind, value = match.group(1), float(match.group(2))
+        if kind == "start":
+            start = value
+        elif start is not None:
+            silences.append((start, value))
+            start = None
+
+    total = await duration_seconds(audio)
+    if start is not None:
+        silences.append((start, total))
+
+    spans, cursor = [], 0.0
+    for begin, finish in silences:
+        if begin - cursor > 0.05:
+            spans.append((cursor, begin))
+        cursor = max(cursor, finish)
+    if total - cursor > 0.05:
+        spans.append((cursor, total))
+    log.info("זוהו %d קטעי דיבור מתוך %.0f שניות", len(spans), total)
+    return spans
+
+
 SUB_STYLE = (
     "FontName=Noto Sans Hebrew,FontSize=20,PrimaryColour=&H00FFFFFF,"
     "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,"
@@ -119,15 +161,20 @@ SUB_STYLE = (
 )
 
 
-RLM = "\u200f"  # Right-to-Left Mark
+RLE = "\u202b"  # Right-to-Left Embedding — פותח קטע שכיוונו מימין לשמאל
+PDF = "\u202c"  # Pop Directional Formatting — סוגר אותו
+_MARKS = "\u200e\u200f\u202a\u202b\u202c"
 
 
 def rtl_copy(srt: Path) -> Path:
-    """עותק לצריבה עם סימון כיווניות בתחילת כל שורת טקסט.
+    """עותק לצריבה שבו כל שורת טקסט עטופה בהטבעה דו-כיוונית.
 
-    בלי זה libass מחליט על כיוון השורה לפי התו הראשון, ושורה שמתחילה
-    בספרה או באות לטינית גוררת את סימני הפיסוק לצד הלא נכון.
-    הקובץ שנשלח למשתמש נשאר נקי — הסימון רק בעותק הזה.
+    libass קובע את כיוון השורה לפי התו הראשון שלה. שורה שמתחילה בספרה,
+    באות לטינית או בסימן פיסוק נקראת כאילו היא משמאל לימין, והפיסוק
+    הסופי קופץ לצד הלא נכון. העטיפה הזו היא הפתרון המקובל לעברית,
+    ערבית ופרסית — היא קובעת את הכיוון במפורש במקום לנחש אותו.
+
+    הקובץ שנשלח למשתמש נשאר נקי — העטיפה רק בעותק הזה.
     """
     out = []
     for line in srt.read_text(encoding="utf-8").splitlines():
@@ -136,7 +183,7 @@ def rtl_copy(srt: Path) -> Path:
         if is_meta:
             out.append(line)
         else:
-            out.append(RLM + line.lstrip(RLM))
+            out.append(RLE + line.strip(_MARKS) + PDF)
     dst = srt.with_name(srt.stem + ".rtl.srt")
     dst.write_text("\n".join(out) + "\n", encoding="utf-8")
     return dst

@@ -1,10 +1,13 @@
 """בניית קובץ SRT: תזמונים נקיים ופיצול שורות קריא בעברית."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from . import config
 from .stt import Segment
+
+log = logging.getLogger(__name__)
 
 # מילים שעדיף לא להשאיר בסוף שורה — הן פותחות את ההמשך
 _OPENERS = {
@@ -22,7 +25,12 @@ class Cue:
     text: str
 
 
-def build_cues(segments: list[Segment], lines: list[str]) -> list[Cue]:
+# כמה מותר להזיז כתובית כדי להצמיד אותה לדיבור שזוהה
+MAX_SNAP = 8.0
+
+
+def build_cues(segments: list[Segment], lines: list[str],
+               speech: list[tuple[float, float]] | None = None) -> list[Cue]:
     cues: list[Cue] = []
     for seg, hebrew in zip(segments, lines):
         text = (hebrew or "").strip()
@@ -30,10 +38,36 @@ def build_cues(segments: list[Segment], lines: list[str]) -> list[Cue]:
             continue
         cues.append(Cue(0, seg.start, max(seg.end, seg.start + 0.3), text))
 
+    if speech:
+        cues = _snap_to_speech(cues, speech)
     cues = _fix_timing(cues)
     for i, cue in enumerate(cues, 1):
         cue.index = i
         cue.text = wrap(cue.text)
+    return cues
+
+
+def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]]) -> list[Cue]:
+    """מצמיד כל כתובית לדיבור שבאמת נשמע בתוכה.
+
+    כתובית שמתחילה באמצע שקט נדחפת קדימה לרגע שבו הדיבור מתחיל, וסופה
+    נמשך אחורה לרגע שבו הדיבור נגמר. בלי זה כתובית שהמודל מתח על פני
+    שקט מופיעה שניות לפני שמישהו פותח את הפה.
+    """
+    moved = 0
+    for cue in cues:
+        inside = [(a, b) for a, b in speech if b > cue.start + 0.05 and a < cue.end - 0.05]
+        if not inside:
+            continue
+        first, last = inside[0][0], inside[-1][1]
+
+        if 0 < first - cue.start <= MAX_SNAP and first < cue.end - 0.3:
+            cue.start = first
+            moved += 1
+        if 0 < cue.end - last <= MAX_SNAP and last > cue.start + 0.3:
+            cue.end = last + 0.15
+
+    log.info("הוצמדו %d כתוביות לדיבור שזוהה", moved)
     return cues
 
 
