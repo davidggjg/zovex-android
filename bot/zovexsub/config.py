@@ -23,8 +23,12 @@ TG_API_ID = _int("TG_API_ID", 0)
 TG_API_HASH = os.getenv("TG_API_HASH", "")
 TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
 
-ALLOWED_USERS = [u.strip().lstrip("@") for u in (os.getenv("ALLOWED_USERS") or "").split(",") if u.strip()]
 TRIGGER = os.getenv("TRIGGER", ".srt")
+
+# רשימת המורשים נשמרת כאן ומנוהלת מתוך טלגרם (.allow / .deny / .users)
+ALLOWLIST_FILE = os.getenv(
+    "ALLOWLIST_FILE", str(Path(__file__).resolve().parent.parent / "allowlist.json")
+)
 
 GROQ_API_KEYS = _keys("GROQ_API_KEYS")
 GEMINI_API_KEYS = _keys("GEMINI_API_KEYS")

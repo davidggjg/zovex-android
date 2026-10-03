@@ -1,4 +1,4 @@
-"""userbot בטלגרם: שולחים סרטון, מקבלים SRT בעברית (ואופציונלית וידאו צרוב).
+"""userbot בטלגרם: מגיבים לסרטון עם פקודה, ומקבלים SRT בעברית.
 
 רץ על חשבון יוזר רגיל (עם Premium מקבלים קבצים עד 4GB).
 עבודה אחת בכל רגע — תור, כדי לא להעמיס את השרת.
@@ -15,7 +15,7 @@ from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import config, pipeline
+from . import allowlist, config, pipeline
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,14 +23,25 @@ logging.basicConfig(
 )
 log = logging.getLogger("zovexsub")
 
+T = config.TRIGGER
+
 HELP = f"""**בוט כתוביות — זובקס**
 
-שולחים סרטון או קובץ אודיו עם כיתוב:
-• `{config.TRIGGER}` — קובץ SRT בעברית
-• `{config.TRIGGER} צריבה` — גם וידאו עם כתוביות צרובות (עד {config.BURN_MAX_MINUTES} דקות)
+שולחים סרטון, ואז **מגיבים להודעה של הסרטון** עם:
+• `{T}` — קובץ SRT בעברית
+• `{T} צריבה` — גם וידאו עם כתוביות צרובות (רק עד {config.BURN_MAX_MINUTES} דקות)
 
-אפשר גם להשיב `{config.TRIGGER}` להודעה עם סרטון.
-תמלול עד {config.MAX_INPUT_MINUTES} דקות, כל שפה — הפלט תמיד עברית."""
+סרטון בלי תגובה עם פקודה — לא קורה כלום.
+תמלול עד {config.MAX_INPUT_MINUTES} דקות, כל שפה, הפלט תמיד עברית."""
+
+OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
+
+• `{T} id` בתגובה להודעה — מראה את ה-ID של מי ששלח אותה
+• `{T} הוסף` בתגובה להודעה — מאשר את מי ששלח אותה
+• `{T} הוסף 123456789` — מאשר לפי ID
+• `{T} הסר 123456789` / `{T} הסר` בתגובה — מבטל אישור
+• `{T} רשימה` — כל המאושרים
+• `{T} עזרה` — ההוראות למשתמשים"""
 
 BURN_WORDS = {"צריבה", "צרוב", "burn", "hardsub", "לצרוב"}
 
@@ -44,14 +55,12 @@ class Job:
 
 
 queue: asyncio.Queue[Job] = asyncio.Queue()
-me_id: int | None = None
+me_id: int = 0
 
 
-def _authorized(sender_id: int, username: str | None) -> bool:
-    if not config.ALLOWED_USERS:
-        return sender_id == me_id
-    allowed = {u.lower() for u in config.ALLOWED_USERS}
-    return str(sender_id) in allowed or (username or "").lower() in allowed
+def _who(message) -> int:
+    """מזהה המשתמש ששלח הודעה (גם בערוצים/קבוצות)."""
+    return int(getattr(message, "sender_id", 0) or 0)
 
 
 def _filename(message) -> str:
@@ -61,32 +70,97 @@ def _filename(message) -> str:
     return "video.mp4"
 
 
-async def on_trigger(event: events.NewMessage.Event) -> None:
-    sender = await event.get_sender()
-    if not _authorized(event.sender_id, getattr(sender, "username", None)):
-        return
+def _arg_id(text: str, replied) -> int | None:
+    """מוציא ID מהפקודה עצמה, ואם אין — מההודעה שהגיבו אליה."""
+    for token in text.split():
+        if token.isdigit():
+            return int(token)
+    return _who(replied) if replied else None
 
-    text = (event.raw_text or "")
-    if text.strip() in (f"{config.TRIGGER} עזרה", f"{config.TRIGGER} help"):
-        await event.reply(HELP)
-        return
 
-    media_message = event.message
-    if not media_message.media:
-        replied = await event.get_reply_message()
-        if replied and replied.media:
-            media_message = replied
-        else:
+async def on_command(event: events.NewMessage.Event) -> None:
+    text = (event.raw_text or "").strip()
+    body = text[len(T):].strip()
+    sender = _who(event.message)
+    is_owner = sender == me_id
+    replied = await event.get_reply_message()
+
+    # ---- פקודות ניהול ----
+    if is_owner:
+        if body in ("ניהול", "admin"):
+            await event.reply(OWNER_HELP)
+            return
+        if body.startswith(("id", "איידי", "מזהה")):
+            if not replied:
+                await event.reply(f"צריך להגיב להודעה של מישהו עם `{T} id`.")
+                return
+            target = _who(replied)
+            name = await _describe(event.client, target)
+            mark = "✅ מאושר" if allowlist.is_allowed(target) else "🚫 לא מאושר"
+            await event.reply(f"👤 {name}\n`{target}`\n{mark}\n\nלאישור: `{T} הוסף {target}`")
+            return
+        if body.startswith(("הוסף", "אשר", "allow", "add")):
+            target = _arg_id(body, replied)
+            if not target:
+                await event.reply(f"שימוש: `{T} הוסף 123456789` או `{T} הוסף` בתגובה להודעה.")
+                return
+            name = await _describe(event.client, target)
+            added = allowlist.add(target, name)
             await event.reply(
-                f"צריך לשלוח סרטון עם הכיתוב `{config.TRIGGER}`, "
-                f"או להשיב `{config.TRIGGER}` להודעה עם סרטון."
+                f"{'✅ אושר' if added else 'ℹ️ כבר היה מאושר'}: {name} — `{target}`"
             )
             return
+        if body.startswith(("הסר", "בטל", "deny", "remove", "block")):
+            target = _arg_id(body, replied)
+            if not target:
+                await event.reply(f"שימוש: `{T} הסר 123456789` או `{T} הסר` בתגובה להודעה.")
+                return
+            removed = allowlist.remove(target)
+            await event.reply(
+                f"{'🗑 הוסר' if removed else 'ℹ️ לא היה ברשימה'}: `{target}`"
+            )
+            return
+        if body.startswith(("רשימה", "users", "list")):
+            users = allowlist.listing()
+            if not users:
+                await event.reply("הרשימה ריקה — רק אתה יכול להפעיל.")
+                return
+            rows = "\n".join(f"• `{uid}` {label}".rstrip() for uid, label in users)
+            await event.reply(f"**{len(users)} מאושרים:**\n{rows}")
+            return
 
-    burn = any(word in text for word in BURN_WORDS)
+    if body in ("עזרה", "help"):
+        if is_owner or allowlist.is_allowed(sender):
+            await event.reply(HELP + ("\n\n" + OWNER_HELP if is_owner else ""))
+        return
+
+    # ---- בקשת תמלול ----
+    if not (is_owner or allowlist.is_allowed(sender)):
+        log.info("נדחה: משתמש לא מאושר %s", sender)
+        return
+
+    # חובה להגיב להודעה שמכילה את הסרטון — סרטון לבד לא מפעיל כלום
+    if not replied or not replied.media:
+        await event.reply(
+            f"צריך **להגיב** עם `{T}` להודעה שמכילה את הסרטון."
+        )
+        return
+
+    burn = any(word in body for word in BURN_WORDS)
     status = await event.reply("📥 בתור…" if queue.qsize() else "📥 מוריד את הקובץ…")
-    await queue.put(Job(event, media_message, burn, status))
-    log.info("עבודה נוספה לתור (בתור: %d)", queue.qsize())
+    await queue.put(Job(event, replied, burn, status))
+    log.info("עבודה נוספה לתור ממשתמש %s (בתור: %d)", sender, queue.qsize())
+
+
+async def _describe(client: TelegramClient, user_id: int) -> str:
+    try:
+        entity = await client.get_entity(user_id)
+    except Exception:  # noqa: BLE001 — אין גישה לישות, לא נורא
+        return ""
+    name = " ".join(filter(None, [getattr(entity, "first_name", ""),
+                                  getattr(entity, "last_name", "")])).strip()
+    username = getattr(entity, "username", "")
+    return f"{name} (@{username})" if username else name
 
 
 async def worker() -> None:
@@ -162,16 +236,18 @@ async def main() -> None:
     config.WORK_DIR.mkdir(parents=True, exist_ok=True)
     client = TelegramClient(config.TG_SESSION, config.TG_API_ID, config.TG_API_HASH)
     client.add_event_handler(
-        on_trigger, events.NewMessage(pattern=rf"^\{config.TRIGGER}")
+        on_command,
+        events.NewMessage(pattern=rf"^\{T}(\s|$)", incoming=True, outgoing=True),
     )
     await client.start()
+
     global me_id
     me = await client.get_me()
     me_id = me.id
-    log.info("מחובר כ-%s (id=%s) · %d מפתחות Groq · %d מפתחות Gemini",
-             me.username or me.first_name, me.id,
+    log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
+             me.username or me.first_name, me.id, len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
-    log.info("טריגר: %s", config.TRIGGER)
+    log.info("טריגר: %s · רשימת מורשים: %s", T, config.ALLOWLIST_FILE)
 
     asyncio.create_task(worker())
     await client.run_until_disconnected()
