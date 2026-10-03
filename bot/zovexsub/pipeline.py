@@ -19,16 +19,19 @@ Progress = Callable[[str], Awaitable[None]]
 @dataclass
 class Result:
     srt_path: Path
-    burned_path: Path | None
     duration: float
     cues: int
     language: str
     notes: str
     elapsed: float
-    burn_skipped: str | None = None
+
+    @property
+    def burnable(self) -> bool:
+        """צריבה מוצעת רק לסרטונים קצרים — כדי לא להעמיס את השרת."""
+        return self.duration <= config.BURN_MAX_MINUTES * 60
 
 
-async def run(source: Path, work: Path, *, burn: bool, progress: Progress) -> Result:
+async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     started = time.monotonic()
     work.mkdir(parents=True, exist_ok=True)
 
@@ -62,23 +65,22 @@ async def run(source: Path, work: Path, *, burn: bool, progress: Progress) -> Re
     srt_path.write_text(srt.render(cues), encoding="utf-8")
     (work / "notes.md").write_text(notes, encoding="utf-8")
 
-    burned: Path | None = None
-    skipped: str | None = None
-    if burn:
-        if duration > config.BURN_MAX_MINUTES * 60:
-            skipped = (
-                f"צריבה מתבצעת רק עד {config.BURN_MAX_MINUTES} דקות "
-                f"(הקובץ הזה {duration / 60:.0f} דקות) — שולח SRT בלבד."
-            )
-        else:
-            await progress("🔥 צורב כתוביות…")
-            burned = await media.burn(source, srt_path, work / f"{source.stem}.he.mp4")
-
     return Result(
-        srt_path=srt_path, burned_path=burned, duration=duration, cues=len(cues),
+        srt_path=srt_path, duration=duration, cues=len(cues),
         language=transcript.language, notes=notes,
-        elapsed=time.monotonic() - started, burn_skipped=skipped,
+        elapsed=time.monotonic() - started,
     )
+
+
+async def burn(source: Path, srt_path: Path, work: Path) -> Path:
+    """צריבה בפני עצמה — נקראת רק אחרי שהמשתמש אישר במפורש."""
+    duration = await media.duration_seconds(source)
+    if duration > config.BURN_MAX_MINUTES * 60:
+        raise RuntimeError(
+            f"צריבה מתבצעת רק עד {config.BURN_MAX_MINUTES} דקות "
+            f"(הקובץ הזה {duration / 60:.0f} דקות)."
+        )
+    return await media.burn(source, srt_path, work / f"{source.stem}.he.mp4")
 
 
 def cleanup(work: Path) -> None:

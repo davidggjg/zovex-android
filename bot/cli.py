@@ -38,14 +38,19 @@ async def main() -> int:
         print(text, flush=True)
 
     try:
-        result = await pipeline.run(args.source, work, burn=args.burn, progress=progress)
+        result = await pipeline.run(args.source, work, progress=progress)
         args.out.mkdir(parents=True, exist_ok=True)
-        for produced in (result.srt_path, result.burned_path):
-            if produced:
-                shutil.copy2(produced, args.out / produced.name)
-                print(f"נשמר: {args.out / produced.name}")
-        if result.burn_skipped:
-            print(f"הערה: {result.burn_skipped}")
+        produced = [result.srt_path]
+        if args.burn:
+            if result.burnable:
+                print("🔥 צורב…")
+                produced.append(await pipeline.burn(args.source, result.srt_path, work))
+            else:
+                print(f"הערה: צריבה מתבצעת רק עד {config.BURN_MAX_MINUTES} דקות "
+                      f"(הקובץ הזה {result.duration / 60:.0f} דקות).")
+        for path in produced:
+            shutil.copy2(path, args.out / path.name)
+            print(f"נשמר: {args.out / path.name}")
         print(f"{result.cues} כתוביות · שפת מקור {result.language} · "
               f"{result.elapsed / 60:.1f} דקות עיבוד")
         return 0

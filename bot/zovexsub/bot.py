@@ -27,11 +27,13 @@ T = config.TRIGGER
 
 HELP = f"""**בוט כתוביות — זובקס**
 
-שולחים סרטון, ואז **מגיבים להודעה של הסרטון** עם:
-• `{T}` — קובץ SRT בעברית
-• `{T} צריבה` — גם וידאו עם כתוביות צרובות (רק עד {config.BURN_MAX_MINUTES} דקות)
+שולחים סרטון, ואז **מגיבים להודעה של הסרטון** עם `{T}`.
+סרטון בלי תגובה עם הפקודה — לא קורה כלום.
 
-סרטון בלי תגובה עם פקודה — לא קורה כלום.
+כשהכתוביות מוכנות אני שולח את קובץ ה-SRT. אם הסרטון קצר
+מ-{config.BURN_MAX_MINUTES} דקות, אציע לצרוב אותן על הסרטון —
+עונים `כן` בתגובה להצעה, ורק אז הצריבה מתחילה.
+
 תמלול עד {config.MAX_INPUT_MINUTES} דקות, כל שפה, הפלט תמיד עברית."""
 
 OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
@@ -43,18 +45,32 @@ OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
 • `{T} רשימה` — כל המאושרים
 • `{T} עזרה` — ההוראות למשתמשים"""
 
-BURN_WORDS = {"צריבה", "צרוב", "burn", "hardsub", "לצרוב"}
+YES_WORDS = {"כן", "כן!", "yes", "y", "לצרוב", "צרוב", "צריבה", "כן בבקשה", "✅", "👍"}
+OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז הקבצים נמחקים
 
 
 @dataclass
 class Job:
     event: events.NewMessage.Event
+    message: object           # ההודעה שמכילה את הסרטון
+    status: object            # הודעת ההתקדמות
+    srt_path: Path | None = None   # אם מוגדר — זו עבודת צריבה בלבד
+    work: Path | None = None
+
+
+@dataclass
+class Offer:
+    """הצעת צריבה שממתינה ל"כן" של המשתמש."""
+    work: Path
+    source: Path
+    srt_path: Path
     message: object
-    burn: bool
-    status: object
+    user_id: int
+    expires: float
 
 
 queue: asyncio.Queue[Job] = asyncio.Queue()
+offers: dict[int, Offer] = {}      # לפי מזהה הודעת ההצעה
 me_id: int = 0
 
 
@@ -146,9 +162,8 @@ async def on_command(event: events.NewMessage.Event) -> None:
         )
         return
 
-    burn = any(word in body for word in BURN_WORDS)
     status = await event.reply("📥 בתור…" if queue.qsize() else "📥 מוריד את הקובץ…")
-    await queue.put(Job(event, replied, burn, status))
+    await queue.put(Job(event, replied, status))
     log.info("עבודה נוספה לתור ממשתמש %s (בתור: %d)", sender, queue.qsize())
 
 
@@ -163,21 +178,49 @@ async def _describe(client: TelegramClient, user_id: int) -> str:
     return f"{name} (@{username})" if username else name
 
 
+async def on_yes(event: events.NewMessage.Event) -> None:
+    """תשובה "כן" בתגובה להצעת הצריבה — רק אז מתחילים לצרוב."""
+    if not event.is_reply:
+        return
+    offer = offers.get(event.reply_to_msg_id)
+    if offer is None:
+        return
+    if (event.raw_text or "").strip().strip(".!") not in YES_WORDS:
+        return
+    sender = _who(event.message)
+    if sender != offer.user_id and sender != me_id:
+        return
+
+    offers.pop(event.reply_to_msg_id, None)
+    status = await event.reply("🔥 בתור לצריבה…" if queue.qsize() else "🔥 צורב…")
+    await queue.put(Job(event, offer.message, status,
+                        srt_path=offer.srt_path, work=offer.work))
+    log.info("אושרה צריבה על ידי %s", sender)
+
+
 async def worker() -> None:
     while True:
         job = await queue.get()
-        work = config.WORK_DIR / uuid.uuid4().hex[:10]
+        burn_job = job.srt_path is not None
+        work = job.work if burn_job else config.WORK_DIR / uuid.uuid4().hex[:10]
         try:
-            await _handle(job, work)
+            if burn_job:
+                await _burn(job, work)
+            else:
+                await _subtitle(job, work)
         except Exception as exc:  # noqa: BLE001 — מדווחים לצ'אט ולא מפילים את הבוט
             log.exception("העבודה נכשלה")
             await _safe_edit(job.status, f"❌ {exc}")
+            if burn_job:
+                pipeline.cleanup(work)
         finally:
-            pipeline.cleanup(work)
+            # בעבודת תמלול התיקייה נשמרת רק אם יש הצעת צריבה פתוחה
+            if not burn_job and not any(o.work == work for o in offers.values()):
+                pipeline.cleanup(work)
             queue.task_done()
 
 
-async def _handle(job: Job, work: Path) -> None:
+async def _subtitle(job: Job, work: Path) -> None:
     work.mkdir(parents=True, exist_ok=True)
     name = _filename(job.message)
     source = work / f"source{Path(name).suffix or '.mp4'}"
@@ -197,21 +240,53 @@ async def _handle(job: Job, work: Path) -> None:
     async def progress(text: str) -> None:
         await _safe_edit(job.status, text)
 
-    result = await pipeline.run(source, work, burn=job.burn, progress=progress)
+    result = await pipeline.run(source, work, progress=progress)
 
-    summary = (
+    await job.event.reply(
         f"✅ **{result.cues} כתוביות** · {result.duration / 60:.1f} דק׳ · "
-        f"שפת מקור: `{result.language}` · {result.elapsed / 60:.1f} דק׳ עיבוד"
+        f"שפת מקור: `{result.language}` · {result.elapsed / 60:.1f} דק׳ עיבוד",
+        file=str(result.srt_path),
     )
-    if result.burn_skipped:
-        summary += f"\n⚠️ {result.burn_skipped}"
-
-    await job.event.reply(summary, file=str(result.srt_path))
-    if result.burned_path:
-        await _safe_edit(job.status, "📤 מעלה את הוידאו הצרוב…")
-        await job.event.reply("🔥 וידאו עם כתוביות צרובות",
-                              file=str(result.burned_path), supports_streaming=True)
     await _safe_delete(job.status)
+
+    if result.burnable:
+        offer_message = await job.event.reply(
+            "רוצה שאצרוב את הכתוביות על הסרטון?\n"
+            "**תשלח `כן` בתגובה להודעה הזו.**"
+        )
+        offers[offer_message.id] = Offer(
+            work=work, source=source, srt_path=result.srt_path,
+            message=job.message, user_id=_who(job.event.message),
+            expires=time.monotonic() + OFFER_TTL,
+        )
+        log.info("הצעת צריבה פתוחה (הודעה %s)", offer_message.id)
+    else:
+        await job.event.reply(
+            f"ℹ️ הסרטון באורך {result.duration / 60:.0f} דקות, "
+            f"וצריבה מתבצעת רק עד {config.BURN_MAX_MINUTES} דקות."
+        )
+
+
+async def _burn(job: Job, work: Path) -> None:
+    source = next(work.glob("source.*"))
+    burned = await pipeline.burn(source, job.srt_path, work)
+    await _safe_edit(job.status, "📤 מעלה את הוידאו הצרוב…")
+    await job.event.reply("🔥 וידאו עם כתוביות צרובות",
+                          file=str(burned), supports_streaming=True)
+    await _safe_delete(job.status)
+    pipeline.cleanup(work)
+
+
+async def expire_offers() -> None:
+    """מנקה הצעות צריבה שלא נענו, ואיתן את הקבצים הזמניים."""
+    while True:
+        await asyncio.sleep(120)
+        now = time.monotonic()
+        for message_id, offer in list(offers.items()):
+            if offer.expires <= now:
+                offers.pop(message_id, None)
+                pipeline.cleanup(offer.work)
+                log.info("הצעת צריבה %s פגה, הקבצים נמחקו", message_id)
 
 
 async def _safe_edit(status, text: str) -> None:
@@ -239,6 +314,7 @@ async def main() -> None:
         on_command,
         events.NewMessage(pattern=rf"^\{T}(\s|$)", incoming=True, outgoing=True),
     )
+    client.add_event_handler(on_yes, events.NewMessage(incoming=True, outgoing=True))
     await client.start()
 
     global me_id
@@ -250,6 +326,7 @@ async def main() -> None:
     log.info("טריגר: %s · רשימת מורשים: %s", T, config.ALLOWLIST_FILE)
 
     asyncio.create_task(worker())
+    asyncio.create_task(expire_offers())
     await client.run_until_disconnected()
 
 
