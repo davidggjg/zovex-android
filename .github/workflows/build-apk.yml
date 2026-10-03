@@ -293,11 +293,24 @@ jobs:
           # מסרב להתקין אחד מעל השני, ווריאנט לא מתאים קורס. בהפצה ידנית
           # קובץ אחד שעובד בכל מקום שווה יותר מ-30MB.
           cp android/app/build/outputs/apk/release/app-universal-release.apk base.apk
+          # ‎--prerelease‎ חובה, מאותו נימוק בדיוק כמו בערוץ הבודקים:
+          # גיטהאב מחשב ‎releases/latest‎ לפי ה-release הלא-prerelease
+          # החדש ביותר. Tv פורסם בלעדיו ב-17/09 וחטף את התואר מ-latest,
+          # ולכן ‎releases/latest/download/zovex.apk‎ הפנה אל תגית Tv —
+          # שבה יושב base.apk ולא zovex.apk, כלומר **404**.
+          #
+          # זה שבר את כפתור ההורדה באתר ואת ‎/app/apk‎ בשרת למשך שבועיים,
+          # בלי שאף בנייה נכשלה.
+          #
+          # ‎gh release edit‎ גם בענף הקיים: הדגל נקבע ביצירה בלבד, ולכן
+          # release שכבר קיים היה נשאר לא-prerelease לנצח.
           if gh release view Tv --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload Tv base.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit Tv --repo "$GITHUB_REPOSITORY" --prerelease
           else
             gh release create Tv base.apk \
               --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
               --title "ZOVEX - גרסת טלוויזיה" \
               --notes "APK לבדיקה על Android TV. מתעדכן בכל בנייה עם publish_tv."
           fi
