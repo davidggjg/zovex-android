@@ -28,12 +28,20 @@ def _nice_prefix() -> list[str]:
     return prefix
 
 
-async def _run(cmd: list[str], *, nice: bool = True) -> str:
+async def _run(cmd: list[str], *, nice: bool = True,
+               timeout: float | None = None) -> str:
     full = (_nice_prefix() if nice else []) + cmd
     proc = await asyncio.create_subprocess_exec(
         *full, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
-    out, err = await proc.communicate()
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise FFmpegError(
+            f"ffmpeg עבר את תקרת הזמן ({timeout:.0f} שניות) ונעצר"
+        ) from None
     if proc.returncode != 0:
         tail = err.decode("utf-8", "replace").strip().splitlines()[-12:]
         raise FFmpegError("\n".join(tail) or f"exit {proc.returncode}")
@@ -227,5 +235,5 @@ async def burn(video: Path, srt: Path, dst: Path) -> Path:
         "-x264-params", f"threads={config.FFMPEG_THREADS}",
         "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
         str(dst),
-    ])
+    ], timeout=config.BURN_TIMEOUT)
     return dst

@@ -46,6 +46,9 @@ BURN_PRESET = os.getenv("BURN_PRESET", "veryfast")
 BURN_CRF = _int("BURN_CRF", 28)
 BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 720)
 FFMPEG_THREADS = _int("FFMPEG_THREADS", 1)
+# תקרה קשיחה לצריבה. תוכן גרעיני מקודד לאט מזמן אמת, ובלי תקרה קובץ
+# חריג יכול לרוץ שעה על שרת עמוס
+BURN_TIMEOUT = _int("BURN_TIMEOUT", 1800)
 NICE = _int("NICE", 15)
 
 WORK_DIR = Path(os.getenv("WORK_DIR") or "/tmp/zovexsub")
