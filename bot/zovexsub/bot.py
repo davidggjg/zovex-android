@@ -48,6 +48,9 @@ OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
 • `{T} רשימה` — כל המאושרים
 • `{T} עזרה` — ההוראות למשתמשים"""
 
+# צורות מקובלות לפקודה — כדי לא להיתקע על נקודה חסרה או מקלדת עברית
+ALIASES = {T, T.lstrip("."), "כתוביות", ".כתוביות", "תמלל", ".תמלל"}
+
 YES_WORDS = {"כן", "כן!", "yes", "y", "לצרוב", "צרוב", "צריבה", "כן בבקשה", "✅", "👍"}
 OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז הקבצים נמחקים
 
@@ -110,17 +113,18 @@ async def on_message(event: events.NewMessage.Event) -> None:
     text = clean(event.raw_text)
     log.debug("הודעה מ-%s בצ'אט %s: %r (תגובה: %s)",
               _who(event.message), event.chat_id, text[:60], event.reply_to_msg_id)
+    head = text.split(maxsplit=1)[0].lower() if text else ""
     try:
-        if text == T or text.startswith(T + " "):
-            await on_command(event, text)
+        if head in ALIASES:
+            await on_command(event, text[len(head):].strip())
         elif event.is_reply:
             await on_yes(event, text)
+            await _hint_if_lost(event, text)
     except Exception:  # noqa: BLE001 — האנדלר לעולם לא מפיל את הבוט
         log.exception("שגיאה בטיפול בהודעה")
 
 
-async def on_command(event: events.NewMessage.Event, text: str) -> None:
-    body = text[len(T):].strip()
+async def on_command(event: events.NewMessage.Event, body: str) -> None:
     sender = _who(event.message)
     is_owner = sender == me_id
     replied = await event.get_reply_message()
@@ -189,6 +193,18 @@ async def on_command(event: events.NewMessage.Event, text: str) -> None:
     status = await event.reply("📥 בתור…" if queue.qsize() else "📥 מוריד את הקובץ…")
     await queue.put(Job(event, replied, status))
     log.info("עבודה נוספה לתור ממשתמש %s (בתור: %d)", sender, queue.qsize())
+
+
+async def _hint_if_lost(event: events.NewMessage.Event, text: str) -> None:
+    """מגיבים לסרטון עם משהו אחר — מזכירים מה הפקודה, פעם אחת."""
+    if not text or len(text) > 20 or text in YES_WORDS:
+        return
+    sender = _who(event.message)
+    if not (sender == me_id or allowlist.is_allowed(sender)):
+        return
+    replied = await event.get_reply_message()
+    if replied and replied.media:
+        await event.reply(f"כדי להפיק כתוביות לסרטון הזה, השב לו עם `{T}`.")
 
 
 async def _describe(client: TelegramClient, user_id: int) -> str:

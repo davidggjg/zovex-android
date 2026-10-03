@@ -34,8 +34,9 @@ GROQ_API_KEYS = _keys("GROQ_API_KEYS")
 GEMINI_API_KEYS = _keys("GEMINI_API_KEYS")
 
 GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
-GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-pro-latest")
+GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-latest")
+GEMINI_LAST_RESORT_MODEL = os.getenv("GEMINI_LAST_RESORT_MODEL", "gemini-flash-lite-latest")
 
 MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 180)
 BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 10)
