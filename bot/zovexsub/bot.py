@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ from telethon.tl.types import DocumentAttributeFilename
 from . import allowlist, config, pipeline
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s | %(message)s",
 )
 log = logging.getLogger("zovexsub")
@@ -94,8 +95,29 @@ def _arg_id(text: str, replied) -> int | None:
     return _who(replied) if replied else None
 
 
-async def on_command(event: events.NewMessage.Event) -> None:
-    text = (event.raw_text or "").strip()
+# סימני כיווניות שמקלדת עברית/אנדרואיד מוסיפה בלי שרואים אותם
+INVISIBLE = "\u200e\u200f\u202a\u202b\u202c\u2066\u2067\u2068\u2069\ufeff"
+
+
+def clean(text: str) -> str:
+    return (text or "").translate({ord(ch): None for ch in INVISIBLE}).strip()
+
+
+async def on_message(event: events.NewMessage.Event) -> None:
+    """נקודת כניסה יחידה — מנתב לפי התוכן, כדי שלא יהיה סינון סמוי שמפספס."""
+    text = clean(event.raw_text)
+    log.debug("הודעה מ-%s בצ'אט %s: %r (תגובה: %s)",
+              _who(event.message), event.chat_id, text[:60], event.reply_to_msg_id)
+    try:
+        if text == T or text.startswith(T + " "):
+            await on_command(event, text)
+        elif event.is_reply:
+            await on_yes(event, text)
+    except Exception:  # noqa: BLE001 — האנדלר לעולם לא מפיל את הבוט
+        log.exception("שגיאה בטיפול בהודעה")
+
+
+async def on_command(event: events.NewMessage.Event, text: str) -> None:
     body = text[len(T):].strip()
     sender = _who(event.message)
     is_owner = sender == me_id
@@ -178,14 +200,12 @@ async def _describe(client: TelegramClient, user_id: int) -> str:
     return f"{name} (@{username})" if username else name
 
 
-async def on_yes(event: events.NewMessage.Event) -> None:
+async def on_yes(event: events.NewMessage.Event, text: str) -> None:
     """תשובה "כן" בתגובה להצעת הצריבה — רק אז מתחילים לצרוב."""
-    if not event.is_reply:
-        return
     offer = offers.get(event.reply_to_msg_id)
     if offer is None:
         return
-    if (event.raw_text or "").strip().strip(".!") not in YES_WORDS:
+    if text.strip(".!") not in YES_WORDS:
         return
     sender = _who(event.message)
     if sender != offer.user_id and sender != me_id:
@@ -308,13 +328,11 @@ async def main() -> None:
     if problems:
         raise SystemExit("שגיאות הגדרה ב-.env:\n- " + "\n- ".join(problems))
 
+    # ניקוי שאריות מהרצה קודמת — לא משאירים סרטונים על השרת
+    pipeline.cleanup(config.WORK_DIR)
     config.WORK_DIR.mkdir(parents=True, exist_ok=True)
     client = TelegramClient(config.TG_SESSION, config.TG_API_ID, config.TG_API_HASH)
-    client.add_event_handler(
-        on_command,
-        events.NewMessage(pattern=rf"^\{T}(\s|$)", incoming=True, outgoing=True),
-    )
-    client.add_event_handler(on_yes, events.NewMessage(incoming=True, outgoing=True))
+    client.add_event_handler(on_message, events.NewMessage())
     await client.start()
 
     global me_id
@@ -323,7 +341,8 @@ async def main() -> None:
     log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
              me.username or me.first_name, me.id, len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
-    log.info("טריגר: %s · רשימת מורשים: %s", T, config.ALLOWLIST_FILE)
+    log.info("טריגר: %s · רשימת מורשים: %s · תיקיית עבודה: %s",
+             T, config.ALLOWLIST_FILE, config.WORK_DIR)
 
     asyncio.create_task(worker())
     asyncio.create_task(expire_offers())
