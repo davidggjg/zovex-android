@@ -25,8 +25,10 @@ userbot בטלגרם שמקבל סרטון בכל שפה ומחזיר **קובץ
 ```bash
 # 1. תלויות מערכת (ffmpeg + פונט עברי לצריבה)
 sudo apt update
-sudo apt install -y ffmpeg python3-venv python3-pip fonts-noto-core fonts-noto-hebrew
+sudo apt install -y ffmpeg python3-venv python3-pip fonts-noto-core
+sudo apt install -y fonts-noto-hebrew || true   # לא קיים בכל ההפצות; fonts-noto-core מספיק
 fc-cache -f
+fc-list | grep -i hebrew | head -3              # לוודא שיש פונט עברי לצריבה
 
 # 2. הקוד
 sudo mkdir -p /opt/zovexsub && sudo chown "$USER" /opt/zovexsub
