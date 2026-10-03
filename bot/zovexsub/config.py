@@ -37,6 +37,8 @@ GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-pro-latest")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-latest")
 GEMINI_LAST_RESORT_MODEL = os.getenv("GEMINI_LAST_RESORT_MODEL", "gemini-flash-lite-latest")
+# מעבר החקר לא קריטי — אחריו ממשיכים בלעדיו במקום להחזיק את התור
+RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 180)
 
 MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 180)
 BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 10)

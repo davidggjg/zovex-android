@@ -204,20 +204,23 @@ async def research(system: str, user: str) -> str:
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8192},
     }
-    try:
-        payload = await _call(config.GEMINI_MODEL, {**base, "tools": [{"google_search": {}}]})
-        text = _text_of(payload)
-        if text:
-            return text
-        log.warning("החקר עם חיפוש חזר ריק — מנסה בלי חיפוש")
-    except GeminiError as exc:
-        log.warning("החקר עם חיפוש נכשל (%s) — מנסה בלי חיפוש", exc)
+    grounded = {**base, "tools": [{"google_search": {}}]}
 
-    try:
-        return _text_of(await _call(config.GEMINI_MODEL, base))
-    except GeminiError as exc:
-        log.warning("גם החקר בלי חיפוש נכשל, ממשיכים בלעדיו: %s", exc)
-        return ""
+    # המעבר הזה לא קריטי לתרגום, ולכן הוא לא מחזיק את התור יותר מדי זמן
+    for body, label in ((grounded, "עם חיפוש"), (base, "בלי חיפוש")):
+        try:
+            text = _text_of(await asyncio.wait_for(
+                _call(config.GEMINI_MODEL, body), timeout=config.RESEARCH_TIMEOUT))
+            if text:
+                return text
+            log.warning("החקר %s חזר ריק", label)
+        except asyncio.TimeoutError:
+            log.warning("החקר %s עבר את תקרת הזמן (%ds)", label, config.RESEARCH_TIMEOUT)
+        except GeminiError as exc:
+            log.warning("החקר %s נכשל: %s", label, exc)
+
+    log.warning("ממשיכים בלי מסמך הנחיות")
+    return ""
 
 
 def _loose_json(raw: str):
