@@ -17,7 +17,7 @@ from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import allowlist, config, pipeline
+from . import allowlist, config, diagnose, pipeline
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -47,6 +47,7 @@ OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
 • `{T} הוסף 123456789` — מאשר לפי ID
 • `{T} הסר 123456789` / `{T} הסר` בתגובה — מבטל אישור
 • `{T} רשימה` — כל המאושרים
+• `{T} בדיקה` בתגובה לסרטון — דוח תזמונים לאבחון סנכרון
 • `{T} עזרה` — ההוראות למשתמשים"""
 
 # צורות מקובלות לפקודה — כדי לא להיתקע על נקודה חסרה או מקלדת עברית
@@ -63,6 +64,7 @@ class Job:
     status: object            # הודעת ההתקדמות
     srt_path: Path | None = None   # אם מוגדר — זו עבודת צריבה בלבד
     work: Path | None = None
+    diagnose: bool = False    # מפיק דוח תזמונים במקום כתוביות
 
 
 @dataclass
@@ -210,8 +212,9 @@ async def on_command(event: events.NewMessage.Event, body: str) -> None:
         )
         return
 
+    wants_report = body.startswith(("בדיקה", "אבחון", "debug", "diag"))
     status = await event.reply("📥 בתור…" if queue.qsize() else "📥 מוריד את הקובץ…")
-    await queue.put(Job(event, replied, status))
+    await queue.put(Job(event, replied, status, diagnose=wants_report))
     log.info("עבודה נוספה לתור ממשתמש %s (בתור: %d)", sender, queue.qsize())
 
 
@@ -307,6 +310,13 @@ async def _subtitle(job: Job, work: Path) -> None:
 
     async def progress(text: str) -> None:
         await _safe_edit(job.status, text)
+
+    if job.diagnose:
+        await progress("🔬 מפיק דוח תזמונים…")
+        report = await diagnose.report(source, work)
+        await job.event.reply("🔬 דוח אבחון תזמונים", file=str(report))
+        await _safe_delete(job.status)
+        return
 
     result = await pipeline.run(source, work, progress=progress)
 
