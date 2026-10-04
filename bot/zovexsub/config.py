@@ -42,8 +42,41 @@ RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 180)
 
 MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 180)
 BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 10)
-BURN_PRESET = os.getenv("BURN_PRESET", "veryfast")
-BURN_CRF = _int("BURN_CRF", 28)
+# פרופילי צריבה. CRF הוא קידוד לפי איכות ולא לפי bitrate — הוא מוציא
+# ביטים בסצנות מורכבות וחוסך בפשוטות, כלומר מקטין בדיוק היכן שהעין
+# לא שמה לב.
+#
+# נמדד על מקור גרעיני 1080p לפלט 720p, 60 שניות, ארבע ליבות:
+#   H.264 veryfast crf28   24s   7564KB
+#   H.265 veryfast crf30   32s   4164KB   (45% פחות)
+#   H.265 medium   crf30   63s   3796KB   (עוד 9% פחות, פי שניים זמן)
+#   H.265 10bit            38s   4216KB   (לא הקטין כאן)
+#   H.265 tune grain       74s   9144KB   (משמר גרעיניות - מגדיל פי 2.4)
+#   AV1 svt preset 8       50s  10580KB   (איטי וגדול יותר)
+PROFILES = {
+    # H.264 — נתמך בכל מקום, הקובץ הגדול ביותר
+    "fast": {"codec": "libx264", "preset": "veryfast", "crf": 28,
+             "pix_fmt": "yuv420p", "tune": ""},
+    # H.265 — כמחצית הגודל, נתמך בטלגרם וברוב המכשירים המודרניים
+    "balanced": {"codec": "libx265", "preset": "veryfast", "crf": 30,
+                 "pix_fmt": "yuv420p", "tune": ""},
+    # H.265 עם preset איטי יותר — אותה איכות, קובץ קטן יותר, פי שניים מעבד
+    "small": {"codec": "libx265", "preset": "medium", "crf": 30,
+              "pix_fmt": "yuv420p", "tune": ""},
+}
+
+BURN_PROFILE = (os.getenv("BURN_PROFILE") or "balanced").strip().lower()
+_profile = PROFILES.get(BURN_PROFILE, PROFILES["balanced"])
+
+# כל ערך בפרופיל ניתן לדריסה נקודתית ב-.env
+BURN_CODEC = os.getenv("BURN_CODEC") or _profile["codec"]
+BURN_PRESET = os.getenv("BURN_PRESET") or _profile["preset"]
+BURN_CRF = _int("BURN_CRF", _profile["crf"])
+BURN_PIX_FMT = os.getenv("BURN_PIX_FMT") or _profile["pix_fmt"]
+BURN_TUNE = os.getenv("BURN_TUNE", _profile["tune"])
+
+# תקרת גודל להעלאה. טלגרם פרימיום מאפשר 4GB; משאירים שוליים
+UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 3800)
 BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 720)
 FFMPEG_THREADS = _int("FFMPEG_THREADS", 1)
 # לצריבה כדאי יותר מ-thread אחד: הצוואר הוא פענוח המקור, ושתי ליבות

@@ -230,19 +230,47 @@ def rtl_copy(srt: Path) -> Path:
 
 
 async def burn(video: Path, srt: Path, dst: Path) -> Path:
-    """צריבה 'חלשה ומהירה' — preset מהיר, CRF גבוה, thread אחד, הקטנת רזולוציה."""
+    """צריבה לפי פרופיל האיכות, עם תקרת bitrate שמבטיחה שהקובץ ניתן להעלאה."""
     srt = rtl_copy(srt)
+    duration = await duration_seconds(video)
     escaped = str(srt).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
     vf = (
         f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=fast_bilinear,"
         f"subtitles='{escaped}':force_style='{SUB_STYLE}'"
     )
-    await _run([
+    cmd = [
         "ffmpeg", "-nostdin", "-y", "-threads", str(config.BURN_THREADS),
         "-i", str(video), "-vf", vf,
-        "-c:v", "libx264", "-preset", config.BURN_PRESET, "-crf", str(config.BURN_CRF),
-        "-x264-params", f"threads={config.BURN_THREADS}",
-        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart",
-        str(dst),
-    ], timeout=config.BURN_TIMEOUT)
+        "-c:v", config.BURN_CODEC,
+        "-preset", config.BURN_PRESET,
+        "-crf", str(config.BURN_CRF),
+        "-pix_fmt", config.BURN_PIX_FMT,
+    ]
+    if config.BURN_TUNE:
+        cmd += ["-tune", config.BURN_TUNE]
+    if config.BURN_CODEC == "libx265":
+        # תג שמאפשר ניגון בנגנים של אפל ובטלגרם
+        cmd += ["-tag:v", "hvc1"]
+
+    # CRF בלבד לא מבטיח גודל. תקרת bitrate עם חוצץ ("capped CRF") שומרת
+    # על האיכות המשתנה ובכל זאת מבטיחה שהקובץ ייכנס במגבלת ההעלאה.
+    cap = _bitrate_cap(duration)
+    if cap:
+        cmd += ["-maxrate", f"{cap}k", "-bufsize", f"{cap * 2}k"]
+        log.info("תקרת bitrate: %dkbps כדי להישאר מתחת ל-%dMB",
+                 cap, config.UPLOAD_LIMIT_MB)
+
+    cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
+    await _run(cmd, timeout=config.BURN_TIMEOUT)
+
+    size_mb = dst.stat().st_size / 1024 ** 2
+    log.info("הצריבה הסתיימה: %.0fMB", size_mb)
     return dst
+
+
+def _bitrate_cap(duration: float) -> int:
+    """כמה kbps מותר לווידאו כדי שהקובץ כולו ייכנס במגבלת ההעלאה."""
+    if duration <= 0:
+        return 0
+    budget_bits = config.UPLOAD_LIMIT_MB * 1024 ** 2 * 8 * 0.90  # שוליים לאודיו ולמכולה
+    return max(300, int(budget_bits / duration / 1000))
