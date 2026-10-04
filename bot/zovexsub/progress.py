@@ -108,11 +108,15 @@ class Stage:
     async def show(self, fraction: float, *, done_bytes: int = 0,
                    note: str = "", force: bool = False) -> None:
         async with self._lock:
-            # ההתקדמות לא חוזרת אחורה, גם כשעדכונים מגיעים לא בסדר
+            # ההתקדמות לא חוזרת אחורה כשעדכונים מגיעים לא בסדר — אבל force
+            # כן מאפס אותה, כי הוא מסמן שהעבודה באמת התחילה מחדש. בלי זה
+            # max היה מקפיא את הפס על האחוז שהניסיון שנפל הספיק להגיע אליו
             if fraction > self.fraction or force:
                 if fraction != self.fraction:
                     self.step_started = time.monotonic()
-                self.fraction = max(self.fraction, fraction)
+                self.fraction = fraction if force else max(self.fraction, fraction)
+                if force:
+                    self.started = time.monotonic()   # גם הזמן המשוער מתאפס
             if done_bytes:
                 self.done_bytes = max(self.done_bytes, done_bytes)
             if note:

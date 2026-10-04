@@ -542,6 +542,8 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
             return await _burn_parallel(video, srt, dst, duration, segments, on_progress)
         except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
             log.warning("הצריבה המקבילית נכשלה (%s), עוברים לצריבה רגילה", exc)
+            if on_progress:
+                await on_progress(0.0, "מתחיל מחדש בתהליך יחיד")
 
     return await _burn_single(video, srt, dst, duration, on_progress)
 

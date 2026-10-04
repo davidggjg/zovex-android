@@ -534,7 +534,12 @@ async def _burn(job: Job, work: Path) -> None:
     stage.pulse()
 
     async def on_burn(fraction: float, speed: str) -> None:
-        await stage.show(fraction, note=f"קצב {speed}" if speed else "")
+        # ירידה גדולה פירושה שהצריבה התחילה מחדש (נפילה מהמסלול המקביל
+        # לתהליך יחיד), ואז הפס חייב להתאפס. בלי זה המונוטוניות הקפיאה
+        # אותו על האחוז הגבוה שהניסיון הקודם הספיק להגיע אליו
+        restarted = fraction + 0.05 < stage.fraction
+        await stage.show(fraction, note=f"קצב {speed}" if speed else "",
+                         force=restarted)
 
     try:
         burned = await pipeline.burn(source, job.srt_path, work, on_progress=on_burn)
