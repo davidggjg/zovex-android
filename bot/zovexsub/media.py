@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -491,6 +492,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
     done = [0.0] * segments
     lock = asyncio.Lock()
+    started = time.monotonic()
 
     async def one(index: int) -> Path:
         begin = index * span
@@ -512,8 +514,15 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         async def progress(fraction: float, speed: str) -> None:
             async with lock:
                 done[index] = fraction * length
-                if on_progress:
-                    await on_progress(min(1.0, sum(done) / duration), speed)
+                if not on_progress:
+                    return
+                # הקצב שffmpeg מדווח הוא של תהליך בודד. בצריבה מקבילית
+                # מעניין הקצב המצרפי, ולכן הוא נמדד מול שעון הקיר: כמה
+                # שניות וידאו נצרבו בסך הכל חלקי הזמן שעבר באמת.
+                elapsed = time.monotonic() - started
+                rate = sum(done) / elapsed if elapsed > 1 else 0.0
+                await on_progress(min(1.0, sum(done) / duration),
+                                  f"{rate:.1f}x" if rate else speed)
 
         await _run_progress(cmd, length, progress, timeout=limit)
         log.info("קטע %d/%d הסתיים", index + 1, segments)

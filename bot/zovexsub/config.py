@@ -177,9 +177,18 @@ BURN_TIMEOUT_FLOOR = _int("BURN_TIMEOUT_FLOOR", 1800)
 # צריבה מקבילית. מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד
 # לא מצליח להעסיק מכונה עם הרבה ליבות. חיתוך הווידאו לקטעים והרצת
 # תהליך לכל קטע נותנת צינור רינדור נפרד לכל אחד.
+#
+# כמה חוטים לתת לכל קטע? נמדד על מקור גרעיני 1080p, תהליך אחד, אותן
+# הגדרות קידוד שבפרודקשן:
+#   חוט אחד   0.17x   (0.170 לליבה)
+#   שני חוטים 0.35x   (0.175 לליבה)  ← היעיל ביותר
+#   שלושה     0.47x   (0.157 לליבה)
+#   ארבעה     0.58x   (0.145 לליבה)
+# התשואה לכל ליבה יורדת כבר מהחוט השלישי, ולכן עדיף יותר תהליכים עם
+# פחות חוטים: 9 קטעים של שני חוטים מוציאים כ-12% יותר מ-6 של שלושה.
 BURN_SEGMENTS = _int("BURN_SEGMENTS", 0)          # 0 = לפי מספר הליבות
-BURN_SEGMENT_THREADS = _int("BURN_SEGMENT_THREADS", 3)
-BURN_SEGMENTS_MAX = _int("BURN_SEGMENTS_MAX", 8)
+BURN_SEGMENT_THREADS = _int("BURN_SEGMENT_THREADS", 2)
+BURN_SEGMENTS_MAX = _int("BURN_SEGMENTS_MAX", 12)
 # וידאו קצר לא מרוויח מהפיצול, ורק מסבך
 BURN_PARALLEL_MIN_MINUTES = _int("BURN_PARALLEL_MIN_MINUTES", 3)
 
