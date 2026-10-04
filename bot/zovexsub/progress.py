@@ -10,7 +10,11 @@ Edit = Callable[[str], Awaitable[None]]
 FULL, EMPTY = "▓", "░"
 WIDTH = 12
 MIN_INTERVAL = 5.0  # טלגרם חוסם עריכות תכופות מדי
-HEARTBEAT = 20.0    # כל כמה שניות להראות שהעבודה עדיין רצה
+HEARTBEAT = 5.0     # כל כמה שניות לרענן, גם כשהאחוז לא זז
+# מאיזה רגע להציג את שעון השלב. זה גם מה שמבטיח שהטקסט באמת משתנה בכל
+# רענון — טלגרם מחזיר שגיאה על עריכה לטקסט זהה, ובלי זה שלב שהאחוז בו
+# עומד היה נראה קפוא גם כשהוא עובד
+STEP_CLOCK_FROM = 10.0
 # מתחת לאחוז הזה ההערכה מבוססת על מדגם זעיר ויוצאת מופרכת. שלב שמתחיל
 # באחוז סמלי, כמו החקר שלפני התרגום, היה מייצר ממנה זמן דמיוני שרק גדל
 ETA_FROM = 0.08
@@ -83,7 +87,7 @@ class Stage:
         if self.note:
             parts.append(self.note)
         waiting = time.monotonic() - self.step_started
-        if waiting > HEARTBEAT:
+        if waiting > STEP_CLOCK_FROM:
             parts.append(clock(waiting))
         remaining = self.eta()
         if remaining > 1:
