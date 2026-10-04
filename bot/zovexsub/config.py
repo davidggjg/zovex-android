@@ -102,6 +102,13 @@ NICE = _int("NICE", 15)
 
 WORK_DIR = Path(os.getenv("WORK_DIR") or "/tmp/zovexsub")
 
+# הורדה מקישור. ברירת המחדל מעדיפה 1080p ומטה, כדי לא לגרור 4K מיותר
+FETCH_FORMAT = os.getenv(
+    "FETCH_FORMAT",
+    "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+)
+FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 4)
+
 # מגבלת גודל לקובץ שנשלח ל-Groq (25MB בתוכנית החינמית). נשאיר שולי ביטחון.
 STT_CHUNK_BYTES = 20 * 1024 * 1024
 # אודיו FLAC 16kHz מונו ~ 100KB לשנייה במקרה הגרוע; נחתוך לפי זמן כגיבוי

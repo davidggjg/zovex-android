@@ -17,7 +17,7 @@ from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import allowlist, config, diagnose, pipeline, progress as prog
+from . import allowlist, config, diagnose, fetch, pipeline, progress as prog
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -33,6 +33,8 @@ HELP = f"""**בוט כתוביות — זובקס**
 
 שולחים סרטון, ואז **מגיבים להודעה של הסרטון** עם `{T}`.
 סרטון בלי תגובה עם הפקודה — לא קורה כלום.
+
+אפשר גם קישור: `{T} https://...` — אני אוריד את הווידאו בעצמי.
 
 כשהכתוביות מוכנות אני שולח את קובץ ה-SRT. אם הסרטון קצר
 מ-{config.BURN_MAX_MINUTES} דקות, אציע לצרוב אותן על הסרטון —
@@ -60,11 +62,12 @@ OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז ה�
 @dataclass
 class Job:
     event: events.NewMessage.Event
-    message: object           # ההודעה שמכילה את הסרטון
+    message: object           # ההודעה שמכילה את הסרטון (או None כשיש קישור)
     status: object            # הודעת ההתקדמות
     srt_path: Path | None = None   # אם מוגדר — זו עבודת צריבה בלבד
     work: Path | None = None
     diagnose: bool = False    # מפיק דוח תזמונים במקום כתוביות
+    url: str = ""             # אם מוגדר — מורידים מהקישור במקום מטלגרם
 
 
 @dataclass
@@ -205,16 +208,25 @@ async def on_command(event: events.NewMessage.Event, body: str) -> None:
         log.info("נדחה: משתמש לא מאושר %s", sender)
         return
 
-    # חובה להגיב להודעה שמכילה את הסרטון — סרטון לבד לא מפעיל כלום
-    if not replied or not replied.media:
+    # אפשר קישור בפקודה עצמה, או תגובה להודעה עם סרטון או עם קישור
+    url = fetch.find_url(body) or (fetch.find_url(getattr(replied, "raw_text", "")) if replied else None)
+    has_media = bool(replied and replied.media)
+    if not url and not has_media:
         await event.reply(
-            f"צריך **להגיב** עם `{T}` להודעה שמכילה את הסרטון."
+            f"צריך **להגיב** עם `{T}` להודעה שמכילה סרטון, "
+            f"או לשלוח `{T} <קישור>`."
         )
+        return
+    if url and not fetch.available():
+        await event.reply("yt-dlp לא מותקן על השרת. התקנה:\n`pip install yt-dlp`")
         return
 
     wants_report = body.startswith(("בדיקה", "אבחון", "debug", "diag"))
-    status = await event.reply("📥 בתור…" if queue.qsize() else "📥 מוריד את הקובץ…")
-    await queue.put(Job(event, replied, status, diagnose=wants_report))
+    first = "📥 בתור…" if queue.qsize() else (
+        "🔗 מוריד מהקישור…" if url else "📥 מוריד את הקובץ…")
+    status = await event.reply(first)
+    await queue.put(Job(event, replied if has_media else None, status,
+                        diagnose=wants_report, url=url or ""))
     log.info("עבודה נוספה לתור ממשתמש %s (בתור: %d)", sender, queue.qsize())
 
 
@@ -292,23 +304,33 @@ async def burn_worker() -> None:
 
 async def _subtitle(job: Job, work: Path) -> None:
     work.mkdir(parents=True, exist_ok=True)
-    name = _filename(job.message)
-    source = work / f"source{Path(name).suffix or '.mp4'}"
-
-    total_bytes = int(getattr(getattr(job.message, "file", None), "size", 0) or 0)
-    ensure_space(total_bytes)
 
     async def edit(text: str) -> None:
         await _safe_edit(job.status, text)
 
-    download = prog.Stage(edit, "📥 מוריד", total_bytes=total_bytes)
+    if job.url:
+        ensure_space(0)
+        download = prog.Stage(edit, "🔗 מוריד מהקישור")
 
-    async def on_download(received: int, total: int) -> None:
-        await download.show(received / total if total else 0, done_bytes=received)
+        async def on_fetch(done: float, total: float) -> None:
+            download.total_bytes = int(total)
+            await download.show(done / total if total else 0, done_bytes=int(done))
 
-    await job.message.download_media(file=str(source), progress_callback=on_download)
-    await download.finish()
-    log.info("הורד: %s (%.1f MB)", source.name, source.stat().st_size / 1048576)
+        source = await fetch.download(job.url, work, on_progress=on_fetch)
+        await download.finish()
+    else:
+        name = _filename(job.message)
+        source = work / f"source{Path(name).suffix or '.mp4'}"
+        total_bytes = int(getattr(getattr(job.message, "file", None), "size", 0) or 0)
+        ensure_space(total_bytes)
+        download = prog.Stage(edit, "📥 מוריד", total_bytes=total_bytes)
+
+        async def on_download(received: int, total: int) -> None:
+            await download.show(received / total if total else 0, done_bytes=received)
+
+        await job.message.download_media(file=str(source), progress_callback=on_download)
+        await download.finish()
+    log.info("מקור מוכן: %s (%.1f MB)", source.name, source.stat().st_size / 1048576)
 
     progress = edit
 
