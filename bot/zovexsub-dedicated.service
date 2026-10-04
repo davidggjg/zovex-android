@@ -1,0 +1,24 @@
+[Unit]
+Description=Zovex Hebrew subtitle userbot (dedicated server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/zovexsub/bot
+ExecStart=/opt/zovexsub/venv/bin/python -m zovexsub.bot
+Restart=always
+RestartSec=10
+
+# שרת ייעודי: אין למי לפנות מקום, אז בלי הנמכת עדיפות ובלי חניקת מעבד
+Nice=0
+MemoryMax=80%
+TasksMax=4096
+LimitNOFILE=65535
+
+StandardOutput=append:/var/log/zovexsub.log
+StandardError=append:/var/log/zovexsub.log
+
+[Install]
+WantedBy=multi-user.target
