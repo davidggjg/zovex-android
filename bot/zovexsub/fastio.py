@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import importlib.util
+import math
 import logging
 import os
 from pathlib import Path
@@ -40,7 +41,7 @@ def crypto_ready() -> bool:
 async def download(client, message, dst: Path, on_progress=None) -> Path:
     """מוריד בכמה בקשות במקביל, עם נפילה חזרה להורדה הרגילה."""
     size = int(getattr(getattr(message, "file", None), "size", 0) or 0)
-    workers = max(1, config.TG_CONNECTIONS)
+    workers = _connections(size, max(1, config.TG_CONNECTIONS))
 
     if size < 8 * 1024 * 1024 or workers == 1:
         await message.download_media(file=str(dst), progress_callback=on_progress)
@@ -57,42 +58,58 @@ async def download(client, message, dst: Path, on_progress=None) -> Path:
         return dst
 
 
+def _parts(size: int) -> int:
+    """גודל חלק שטלגרם מקבל, לפי גודל הקובץ.
+
+    טלתון יודע לגזור אותו: 128KB לקובץ קטן, 512KB לקובץ גדול. קודם
+    השתמשתי ב-1MB קבוע, וזה חרג ממה שהשרת מוכן לתת — הבקשה הראשונה
+    עברה והשאר פשוט לא נענו.
+    """
+    return utils.get_appropriated_part_size(size) * 1024
+
+
+def _connections(size: int, ceiling: int) -> int:
+    """כמה חיבורים לפתוח. קובץ קטן לא מצדיק עשרים חיבורים."""
+    scaled = math.ceil(size / (100 * 1024 * 1024) * ceiling)
+    return max(1, min(ceiling, scaled))
+
+
 async def _open_senders(client, dc_id: int, count: int) -> list:
-    """פותח count חיבורים נפרדים ומלאים ל-DC של טלגרם.
+    """פותח count חיבורים נפרדים ל-DC של טלגרם.
 
-    זה הלב של העניין. טלתון מחזיק חיבור אחד לכל DC: קובץ שיושב ב-DC
-    הביתי עובר דרך self._sender, וקובץ מרוחק דרך חיבור מושאל אחד שנשמר
-    במטמון לפי מספר ה-DC. כלומר כל הבקשות ה"מקביליות" נדחסו לאותו חיבור,
-    וטלגרם מגביל קצב לכל חיבור בנפרד — אז ארבעה עובדים נתנו בדיוק את
-    המהירות של אחד.
+    טלתון מחזיק חיבור אחד לכל DC — קובץ ב-DC הביתי עובר דרך
+    self._sender, וקובץ מרוחק דרך חיבור מושאל יחיד שנשמר במטמון לפי
+    מספר ה-DC. טלגרם מגביל קצב לכל חיבור בנפרד, ולכן חיבור נפרד לכל
+    עובד הוא מה שבאמת מכפיל את הקצב.
 
-    חיבור נפרד לכל עובד הוא מה שבאמת מכפיל את הקצב.
+    ב-DC הביתי משתמשים באותו מפתח הצפנה ולא שולחים שום בקשת אתחול —
+    זה מה שהמימוש המוכר עושה, וזה מה שחסר לי קודם.
     """
     dc = await client._get_dc(dc_id)
+    home = client.session.dc_id == dc_id
     senders = []
     try:
-        for index in range(count):
-            if client.session.dc_id == dc_id:
-                # אותו DC: אפשר להשתמש באותו מפתח הצפנה, בלי ייצוא הרשאה
-                sender = MTProtoSender(client.session.auth_key, loggers=client._log)
-                await sender.connect(client._connection(
-                    dc.ip_address, dc.port, dc.id,
-                    loggers=client._log, proxy=client._proxy,
-                ))
-                # עותק משלנו של בקשת האתחול, עם query מפורש. הבקשה של
-                # הלקוח היא אובייקט אחד משותף שטלתון דורס את ה-query שלו
-                # לפני כל שליחה, ולכן שליחה שלו כמו שהוא מעבירה טוקן
-                # הרשאה ישן שכבר נוצל — והחיבור נתקע בלי תשובה ובלי שגיאה
+        for _ in range(count):
+            sender = MTProtoSender(client.session.auth_key if home else None,
+                                   loggers=client._log)
+            await sender.connect(client._connection(
+                dc.ip_address, dc.port, dc.id,
+                loggers=client._log, proxy=client._proxy,
+            ))
+            if not home:
+                # DC אחר מחייב ייצוא הרשאה. נעשה סדרתית בכוונה: הראשון
+                # מייצא, והשאר כבר מקבלים מפתח מוכן
+                auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
                 init = copy.copy(client._init_request)
-                init.query = functions.help.GetConfigRequest()
+                init.query = functions.auth.ImportAuthorizationRequest(
+                    id=auth.id, bytes=auth.bytes)
                 await sender.send(functions.InvokeWithLayerRequest(LAYER, init))
-            else:
-                sender = await client._create_exported_sender(dc_id)
             senders.append(sender)
     except Exception:
         await _close_senders(senders)
         raise
-    log.info("נפתחו %d חיבורים נפרדים ל-DC %d", len(senders), dc_id)
+    log.info("נפתחו %d חיבורים נפרדים ל-DC %d%s",
+             len(senders), dc_id, "" if home else " (עם ייצוא הרשאה)")
     return senders
 
 
@@ -112,13 +129,10 @@ async def _parallel_download(client, message, dst: Path, size: int,
     with dst.open("wb") as fh:
         fh.truncate(size)
 
-    # טלגרם דורש שהגודל יתחלק ב-4096 ושמגה־בייט יתחלק בו. מגה שלם עומד
-    # בשניהם, וגם הטווח של כל עובד מתחיל בכפולה שלו
-    chunk = 1024 * 1024
-    per_worker = -(-size // workers)
-    span = max(chunk, -(-per_worker // chunk) * chunk)
-    if span * workers < size:
-        raise RuntimeError("חישוב הטווחים אינו מכסה את הקובץ")
+    part = _parts(size)
+    workers = min(workers, -(-size // part))
+    total_parts = -(-size // part)
+    stride = workers * part
 
     done = 0
     lock = asyncio.Lock()
@@ -126,30 +140,34 @@ async def _parallel_download(client, message, dst: Path, size: int,
     senders = await asyncio.wait_for(
         _open_senders(client, dc_id, workers), timeout=config.TG_CONNECT_TIMEOUT)
 
-    async def worker(sender, start: int) -> None:
+    async def worker(index: int, sender) -> None:
+        """כל חיבור לוקח חלק אחד מכל workers — שזירה ולא טווח רציף."""
         nonlocal done
-        end = min(start + span, size)
-        offset = start
-        while offset < end:
-            result = await sender.send(functions.upload.GetFileRequest(
-                location, offset=offset, limit=chunk))
+        offset = index * part
+        remaining = len(range(index, total_parts, workers))
+        while remaining > 0:
+            # _call ולא sender.send: הוא מטפל ב-FloodWait, בשגיאות RPC
+            # ובניתוקים. שליחה גולמית פשוט נתקעת כשמשהו משתבש
+            result = await client._call(
+                sender, functions.upload.GetFileRequest(
+                    location, offset=offset, limit=part))
             if isinstance(result, types.upload.FileCdnRedirect):
                 raise RuntimeError("טלגרם הפנה ל-CDN, אין תמיכה במסלול המהיר")
-            block = bytes(result.bytes)[: end - offset]
+            block = bytes(result.bytes)[: max(0, size - offset)]
             if not block:
                 break
             os.pwrite(handle, block, offset)
-            offset += len(block)
             async with lock:
                 done += len(block)
                 if on_progress:
                     await on_progress(done, size)
-            if len(result.bytes) < chunk:
-                break
+            offset += stride
+            remaining -= 1
 
     try:
-        log.info("מוריד ב-%d חיבורים במקביל (%.0fMB)", workers, size / 1048576)
-        await asyncio.gather(*(worker(sender, i * span)
+        log.info("מוריד ב-%d חיבורים, חלק %dKB, %d חלקים (%.0fMB)",
+                 workers, part // 1024, total_parts, size / 1048576)
+        await asyncio.gather(*(worker(i, sender)
                                for i, sender in enumerate(senders)))
     finally:
         os.close(handle)
@@ -164,7 +182,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
 async def upload(client, path: Path, on_progress=None):
     """מעלה בכמה בקשות במקביל ומחזיר קלט מוכן לשליחה, או None לנפילה חזרה."""
     size = path.stat().st_size
-    workers = max(1, config.TG_CONNECTIONS)
+    workers = _connections(size, max(1, config.TG_CONNECTIONS))
     parts = -(-size // PART)
 
     if size < 8 * 1024 * 1024 or workers == 1 or parts > MAX_PARTS:
@@ -204,7 +222,8 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
             except asyncio.QueueEmpty:
                 return
             block = os.pread(handle, PART, index * PART)
-            await sender.send(functions.upload.SaveBigFilePartRequest(
+            # _call ולא send גולמי, מאותה סיבה כמו בהורדה
+            await client._call(sender, functions.upload.SaveBigFilePartRequest(
                 file_id=file_id, file_part=index, file_total_parts=parts, bytes=block,
             ))
             async with lock:
