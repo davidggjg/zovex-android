@@ -75,6 +75,93 @@ CHECK_SYSTEM = """אתה בקרת איכות לשונית באולפן כתוב�
 את המשמעות של המקור. מחזיר תמיד JSON בלבד."""
 
 
+ADDRESSEE_SYSTEM = """אתה עורך כתוביות שתפקידו היחיד הוא התאמת מגדר הפנייה
+בעברית. אתה מקבל את המקור ואת התרגום, ועובר שורה-שורה.
+
+לכל שורה אתה קובע שני דברים:
+  1. מי הדובר ומה המגדר שלו — משפיע על "אני עייף" מול "אני עייפה".
+  2. אל מי הוא פונה — יחיד זכר, יחידה נקבה, רבים, או אף אחד (אמירה כללית).
+
+העיקרון החשוב ביותר: **רצף**. כל עוד אותו דובר מדבר אל אותו אדם, הצורה
+חייבת להישאר זהה לאורך כל הרצף. "אתה דורך" ואחריו "תראי" באותו מונולוג
+הוא בהכרח שגיאה. החלפת נמען קורית רק כשמשהו במקור מעיד עליה.
+
+דיאלוג מתחלף: בשיחה בין שניים, הנמען של שורה אחת הוא בדרך כלל הדובר של
+השורה שלפניה.
+
+אתה מתקן רק צורות פנייה ומגדר. אסור לשנות מילים, ניסוח, פיסוק או
+משמעות. מחזיר תמיד JSON בלבד."""
+
+
+async def enforce_addressee(segments: list[Segment], lines: list[str],
+                            notes: str) -> list[str]:
+    """מעבר ייעודי אחד: קובע נמען לכל שורה ואוכף עליה את הצורה הנכונה."""
+    paired = "\n".join(
+        f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}"
+        for i in range(len(segments)) if lines[i]
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "lines": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "i": {"type": "integer"},
+                        "addressee": {"type": "string"},
+                        "he": {"type": "string"},
+                        "changed": {"type": "boolean"},
+                    },
+                    "required": ["i", "addressee", "he", "changed"],
+                },
+            }
+        },
+        "required": ["lines"],
+    }
+    prompt = f"""מסמך הנחיות:
+---
+{_cap(notes, 15_000)}
+---
+
+הכתוביות:
+{_cap(paired, 150_000)}
+
+עבור על כל השורות לפי הסדר. לכל שורה החזר:
+  i — האינדקס
+  addressee — אחד מ: "יחיד", "יחידה", "רבים", "אין"
+  he — השורה בעברית, מתוקנת אם הצורה לא תאמה את הנמען, אחרת כמו שהיא
+  changed — true רק אם שינית
+
+זכור את כלל הרצף: שורות עוקבות של אותו דובר אל אותו נמען חייבות אותה צורה.
+החזר JSON: {{"lines": [...]}}"""
+
+    try:
+        result = await gemini.ask_json(ADDRESSEE_SYSTEM, prompt, schema=schema,
+                                       temperature=0.0)
+    except gemini.GeminiError as exc:
+        log.warning("מעבר הנמענים נכשל: %s", exc)
+        return lines
+
+    items = result.get("lines") if isinstance(result, dict) else result
+    changed = 0
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item["i"])
+            text = str(item.get("he", "")).strip()
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= index < len(lines) and text and text != lines[index]:
+            log.info("מגדר [%d] (%s): %s ⇐ %s", index,
+                     item.get("addressee", "?"), text[:45], lines[index][:45])
+            lines[index] = text
+            changed += 1
+    log.info("מעבר הנמענים תיקן %d שורות", changed)
+    return lines
+
+
 async def build_hebrew(segments: list[Segment], language: str,
                        on_step=None) -> tuple[list[str], str]:
     """מחזיר את שורות העברית (באורך ובסדר של הסגמנטים) ואת מסמך ההנחיות."""
@@ -91,7 +178,10 @@ async def build_hebrew(segments: list[Segment], language: str,
 
     lines = await _translate_all(segments, language, notes, on_step)
     if on_step:
-        await on_step("בודק עקביות", 0.95)
+        await on_step("מתאים מגדר פנייה", 0.93)
+    lines = await enforce_addressee(segments, lines, notes)
+    if on_step:
+        await on_step("בודק עקביות", 0.97)
     lines = await _quality_pass(segments, lines, notes)
     return lines, notes
 
@@ -207,9 +297,14 @@ async def _quality_pass(segments: list[Segment], lines: list[str], notes: str) -
    "אתה מוחץ ומוחץ" ואחריה "ואז פתאום את רואה" — אותו מונולוג, שתי צורות.
    הכרע לפי מסמך ההנחיות ולפי רוב הקטע, ותקן את כל השורות החורגות.
 ב. דובר שמדבר על עצמו — התאמה למגדר שלו ("אני עייפה" מול "אני עייף").
-ג. עקביות מונחים ושמות לאורך כל הסרטון.
-ד. מספרים מותאמים (שלוש בנות / שלושה בנים).
-ה. משמעות שאבדה מול המקור.
+ג. **מילים שגויות**: מילה שאינה קיימת בעברית, או קיימת אך לא מתאימה
+   להקשר ונראית כמו בחירה שגויה של שורש דומה. דוגמה אמיתית: "נותרה נכה"
+   תורגם בטעות ל"נכתשה". בדוק כל מילה חריגה מול המקור.
+ד. עקביות מונחים ושמות לאורך כל הסרטון.
+ה. מספרים מותאמים (שלוש בנות / שלושה בנים).
+ו. ניסוח מסורבל שנשמע כמו תרגום מילולי. דוגמה: "מעדיף את הצד של
+   הפלילים" במקום "נוטה לגנבה". תקן לעברית טבעית בלי לשנות משמעות.
+ז. משמעות שאבדה מול המקור.
 
 לכל שגיאה החזר את השורה המתוקנת במלואה.
 אם אין שגיאות החזר מערך ריק. אל תשנה שורות תקינות ואל תשפר סגנון.
