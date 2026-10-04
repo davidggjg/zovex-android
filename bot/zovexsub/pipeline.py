@@ -55,7 +55,7 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     async def on_chunk(done: int, total: int) -> None:
         await stage.show(done / total, note=f"קטע {done}/{total}")
 
-    transcript = await transcribe(chunks, on_chunk=on_chunk)
+    transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
     await stage.finish()
     if not transcript.segments:
         raise RuntimeError("לא זוהה דיבור בקובץ.")

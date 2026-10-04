@@ -34,6 +34,11 @@ GROQ_API_KEYS = _keys("GROQ_API_KEYS")
 GEMINI_API_KEYS = _keys("GEMINI_API_KEYS")
 
 GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
+# מודל גיבוי לתמלול. turbo זול ומהיר יותר, מדויק מעט פחות, ולרוב פחות
+# עמוס — שווה לנסות אותו כששרתי המודל הראשי מחזירים 502
+GROQ_STT_FALLBACK = os.getenv("GROQ_STT_FALLBACK", "whisper-large-v3-turbo")
+# כמה סבלנות לתת לתקלה זמנית אצל הספק לפני שמנסים דרך אחרת
+STT_ATTEMPTS = _int("STT_ATTEMPTS", 10)
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-pro-latest")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-latest")
 GEMINI_LAST_RESORT_MODEL = os.getenv("GEMINI_LAST_RESORT_MODEL", "gemini-flash-lite-latest")
