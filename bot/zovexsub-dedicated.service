@@ -1,5 +1,5 @@
 [Unit]
-Description=Zovex Hebrew subtitle userbot (dedicated server)
+Description=Zovex Hebrew subtitle userbot (dedicated server, parallel burn)
 After=network-online.target
 Wants=network-online.target
 

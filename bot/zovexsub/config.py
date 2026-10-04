@@ -146,7 +146,7 @@ BURN_TUNE = os.getenv("BURN_TUNE", "")
 # מחדל. ערך גדול מאפס מפעיל אותה, למקרה שחייבים להיכנס בגודל מסוים.
 UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
 # קרדיט שמוצג בפתיחת הסרטון הצרוב. שורות מופרדות בתו |, ריק מבטל
-CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד על ידי|zovex|ומלך הדרמות הטורקיות")
+CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד על ידי|zovex|ועולם הדרמות הטורקיות")
 CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
 CREDIT_SIZE = _int("CREDIT_SIZE", 34)
 
@@ -173,6 +173,22 @@ BURN_THREADS_MAX = _int("BURN_THREADS_MAX", 0)
 BURN_TIMEOUT = os.getenv("BURN_TIMEOUT", "auto").strip().lower()
 BURN_TIMEOUT_FACTOR = float(os.getenv("BURN_TIMEOUT_FACTOR") or 4.0)
 BURN_TIMEOUT_FLOOR = _int("BURN_TIMEOUT_FLOOR", 1800)
+
+# צריבה מקבילית. מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד
+# לא מצליח להעסיק מכונה עם הרבה ליבות. חיתוך הווידאו לקטעים והרצת
+# תהליך לכל קטע נותנת צינור רינדור נפרד לכל אחד.
+BURN_SEGMENTS = _int("BURN_SEGMENTS", 0)          # 0 = לפי מספר הליבות
+BURN_SEGMENT_THREADS = _int("BURN_SEGMENT_THREADS", 3)
+BURN_SEGMENTS_MAX = _int("BURN_SEGMENTS_MAX", 8)
+# וידאו קצר לא מרוויח מהפיצול, ורק מסבך
+BURN_PARALLEL_MIN_MINUTES = _int("BURN_PARALLEL_MIN_MINUTES", 3)
+
+
+def burn_segments(cores: int) -> int:
+    """לכמה קטעים לחתוך, כך שכל הליבות יועסקו."""
+    if BURN_SEGMENTS > 0:
+        return min(BURN_SEGMENTS, BURN_SEGMENTS_MAX)
+    return max(1, min(cores // max(1, BURN_SEGMENT_THREADS), BURN_SEGMENTS_MAX))
 
 
 def burn_timeout(duration: float) -> float:

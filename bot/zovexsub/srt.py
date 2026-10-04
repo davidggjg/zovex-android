@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
+from pathlib import Path
 
 from . import config
 from .stt import Segment
@@ -149,3 +151,47 @@ def render(cues: list[Cue]) -> str:
         for cue in cues
     ]
     return "\n\n".join(blocks) + "\n"
+
+
+def parse(text: str) -> list[Cue]:
+    """קורא קובץ SRT בחזרה לרשימת כתוביות."""
+    cues: list[Cue] = []
+    for block in re.split(r"\n\s*\n", text.strip()):
+        lines = [line for line in block.splitlines() if line.strip()]
+        if len(lines) < 2:
+            continue
+        timing = next((line for line in lines if "-->" in line), "")
+        if not timing:
+            continue
+        try:
+            left, right = timing.split("-->")
+            start, end = _seconds(left), _seconds(right)
+        except (ValueError, IndexError):
+            continue
+        body = "\n".join(lines[lines.index(timing) + 1:]).strip()
+        if body:
+            cues.append(Cue(len(cues) + 1, start, end, body))
+    return cues
+
+
+def _seconds(stamp: str) -> float:
+    stamp = stamp.strip().replace(".", ",")
+    hours, minutes, rest = stamp.split(":")
+    secs, _, millis = rest.partition(",")
+    return int(hours) * 3600 + int(minutes) * 60 + int(secs) + int(millis or 0) / 1000
+
+
+def slice_file(source: Path, start: float, end: float, dst: Path) -> Path:
+    """עותק של הכתוביות לקטע אחד, מוזז כך שהקטע מתחיל בזמן אפס."""
+    kept: list[Cue] = []
+    for cue in parse(source.read_text(encoding="utf-8", errors="replace")):
+        if cue.end <= start or cue.start >= end:
+            continue
+        kept.append(Cue(
+            index=len(kept) + 1,
+            start=max(0.0, cue.start - start),
+            end=min(end, cue.end) - start,
+            text=cue.text,
+        ))
+    dst.write_text(render(kept) if kept else "", encoding="utf-8")
+    return dst

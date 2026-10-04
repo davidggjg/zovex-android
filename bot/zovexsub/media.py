@@ -373,68 +373,191 @@ def rtl_copy(srt: Path) -> Path:
     return dst
 
 
-async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
-    """צריבה לפי פרופיל האיכות, עם תקרת bitrate שמבטיחה שהקובץ ניתן להעלאה."""
-    srt = rtl_copy(srt)
-    duration = await duration_seconds(video)
-    escaped = str(srt).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+def _escape(path: Path) -> str:
+    return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+
+
+def _video_filters(srt: Path, credit: Path | None) -> str:
     filters = []
     if config.BURN_MAX_HEIGHT:
         # min() מבטיח שמקור נמוך מהתקרה נשאר כמו שהוא ולא מוגדל
         filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
-    filters.append(f"subtitles='{escaped}':force_style='{SUB_STYLE}'")
-
-    credit = credit_file(dst.parent)
+    filters.append(f"subtitles='{_escape(srt)}':force_style='{SUB_STYLE}'")
     if credit:
-        credit_path = str(credit).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-        filters.append(f"subtitles='{credit_path}'")
-    vf = ",".join(filters)
-    settings = config.profile_for(video.stat().st_size, duration)
+        filters.append(f"subtitles='{_escape(credit)}'")
+    return ",".join(filters)
+
+
+def _encoder_args(settings: dict, threads: int, duration: float) -> list[str]:
     codec = config.BURN_CODEC or settings["codec"]
     preset = config.BURN_PRESET or settings["preset"]
     crf = config.BURN_CRF or str(settings["crf"])
     pix_fmt = config.BURN_PIX_FMT or settings["pix_fmt"]
     tune = config.BURN_TUNE or settings["tune"]
-    log.info("פרופיל צריבה: %s (%s %s CRF%s) למקור של %.0fMB באורך %.0f דקות",
-             config.profile_name(settings), codec, preset, crf,
-             video.stat().st_size / 1024 ** 2, duration / 60)
 
-    threads = burn_threads()
-    cmd = [
-        "ffmpeg", "-nostdin", "-y", "-threads", str(threads),
-        "-i", str(video), "-vf", vf,
-        "-c:v", codec,
-        "-preset", preset,
-        "-crf", str(crf),
-        "-pix_fmt", pix_fmt,
-    ]
+    args = ["-c:v", codec, "-preset", preset, "-crf", str(crf), "-pix_fmt", pix_fmt]
     if tune:
-        cmd += ["-tune", tune]
+        args += ["-tune", tune]
     if codec == "libx265":
         # hvc1 מאפשר ניגון בנגנים של אפל ובטלגרם; pools מגביל את הליבות
-        cmd += ["-tag:v", "hvc1", "-x265-params", f"pools={threads}"]
+        args += ["-tag:v", "hvc1", "-x265-params", f"pools={threads}"]
     elif codec == "libx264":
-        cmd += ["-x264-params", f"threads={threads}"]
+        args += ["-x264-params", f"threads={threads}"]
 
     # CRF בלבד לא מבטיח גודל. תקרת bitrate עם חוצץ ("capped CRF") שומרת
     # על האיכות המשתנה ובכל זאת מבטיחה שהקובץ ייכנס במגבלת ההעלאה.
     cap = _bitrate_cap(duration) if config.UPLOAD_LIMIT_MB else 0
     if cap:
-        cmd += ["-maxrate", f"{cap}k", "-bufsize", f"{cap * 2}k"]
+        args += ["-maxrate", f"{cap}k", "-bufsize", f"{cap * 2}k"]
         log.info("תקרת bitrate: %dkbps כדי להישאר מתחת ל-%dMB",
                  cap, config.UPLOAD_LIMIT_MB)
+    return args
 
+
+def _describe_profile(settings: dict, video: Path, duration: float) -> None:
+    log.info("פרופיל צריבה: %s (%s %s CRF%s) למקור של %.0fMB באורך %.0f דקות",
+             config.profile_name(settings),
+             config.BURN_CODEC or settings["codec"],
+             config.BURN_PRESET or settings["preset"],
+             config.BURN_CRF or settings["crf"],
+             video.stat().st_size / 1024 ** 2, duration / 60)
+
+
+async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
+    """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
+    duration = await duration_seconds(video)
+    cores = os.cpu_count() or 2
+    segments = config.burn_segments(cores)
+
+    if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
+        try:
+            return await _burn_parallel(video, srt, dst, duration, segments, on_progress)
+        except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
+            log.warning("הצריבה המקבילית נכשלה (%s), עוברים לצריבה רגילה", exc)
+
+    return await _burn_single(video, srt, dst, duration, on_progress)
+
+
+async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
+                       on_progress=None) -> Path:
+    marked = rtl_copy(srt)
+    credit = credit_file(dst.parent)
+    settings = config.profile_for(video.stat().st_size, duration)
+    _describe_profile(settings, video, duration)
+    threads = burn_threads()
+
+    cmd = [
+        "ffmpeg", "-nostdin", "-y", "-threads", str(threads),
+        "-i", str(video), "-vf", _video_filters(marked, credit),
+    ] + _encoder_args(settings, threads, duration)
     cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
+
     limit = config.burn_timeout(duration)
-    log.info("תקרת זמן לצריבה: %.0f דקות", limit / 60)
+    log.info("צריבה בתהליך אחד, %d חוטים, תקרת זמן %.0f דקות", threads, limit / 60)
     if on_progress:
         await _run_progress(cmd, duration, on_progress, timeout=limit)
     else:
         await _run(cmd, timeout=limit)
 
-    size_mb = dst.stat().st_size / 1024 ** 2
-    log.info("הצריבה הסתיימה: %.0fMB", size_mb)
+    log.info("הצריבה הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
     return dst
+
+
+async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
+                         segments: int, on_progress=None) -> Path:
+    """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
+
+    מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
+    מכונה עם הרבה ליבות — המקודד ממתין לפריימים. תהליך לכל קטע נותן
+    צינור רינדור נפרד לכל אחד, וזה מה שמנצל את הליבות בפועל.
+
+    האודיו אינו נוגע בקידוד: הקטעים נצרבים ללא קול, ובסוף מוזג האודיו
+    המקורי כמו שהוא. כך אין סיכון להיסט קול בין הקטעים.
+    """
+    from . import srt as srt_tools
+
+    work = dst.parent / "parallel"
+    work.mkdir(parents=True, exist_ok=True)
+    marked = rtl_copy(srt)
+    credit = credit_file(work)
+    settings = config.profile_for(video.stat().st_size, duration)
+    _describe_profile(settings, video, duration)
+
+    threads = config.BURN_SEGMENT_THREADS
+    span = duration / segments
+    limit = config.burn_timeout(duration)
+    log.info("צריבה מקבילית: %d קטעים של %.1f דקות, %d חוטים לקטע, %d ליבות בסך הכל",
+             segments, span / 60, threads, segments * threads)
+
+    done = [0.0] * segments
+    lock = asyncio.Lock()
+
+    async def one(index: int) -> Path:
+        begin = index * span
+        length = min(span, duration - begin)
+        piece_srt = srt_tools.slice_file(marked, begin, begin + length,
+                                         work / f"seg{index:02d}.srt")
+        # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון
+        filters = _video_filters(piece_srt, credit if index == 0 else None)
+        piece = work / f"seg{index:02d}.mp4"
+
+        cmd = [
+            "ffmpeg", "-nostdin", "-y",
+            "-ss", f"{begin:.3f}", "-t", f"{length:.3f}",
+            "-threads", str(threads), "-i", str(video),
+            "-vf", filters,
+        ] + _encoder_args(settings, threads, duration)
+        cmd += ["-an", "-movflags", "+faststart", str(piece)]
+
+        async def progress(fraction: float, speed: str) -> None:
+            async with lock:
+                done[index] = fraction * length
+                if on_progress:
+                    await on_progress(min(1.0, sum(done) / duration), speed)
+
+        await _run_progress(cmd, length, progress, timeout=limit)
+        log.info("קטע %d/%d הסתיים", index + 1, segments)
+        return piece
+
+    pieces = await asyncio.gather(*(one(i) for i in range(segments)))
+
+    listing = work / "concat.txt"
+    listing.write_text(
+        "".join(f"file '{piece.name}'\n" for piece in pieces), encoding="utf-8"
+    )
+    silent = work / "joined.mp4"
+    await _run([
+        "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
+        "-i", str(listing), "-c", "copy", str(silent),
+    ])
+
+    # האודיו המקורי מוזג כמו שהוא, בלי קידוד מחדש
+    await _run([
+        "ffmpeg", "-nostdin", "-y", "-i", str(silent), "-i", str(video),
+        "-map", "0:v:0", "-map", "1:a:0?", "-c", "copy",
+        "-movflags", "+faststart", "-shortest", str(dst),
+    ])
+
+    await _verify(dst, duration)
+    shutil.rmtree(work, ignore_errors=True)
+    log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
+    return dst
+
+
+async def _verify(result: Path, expected: float) -> None:
+    """בלי אימות, הרכבה שבורה מגיעה למשתמש בשקט."""
+    if not result.exists() or result.stat().st_size < 1024:
+        raise FFmpegError("קובץ הפלט ריק")
+    info = await probe(result)
+    kinds = {stream.get("codec_type") for stream in info.get("streams", [])}
+    if "video" not in kinds:
+        raise FFmpegError("אין זרם וידאו בפלט")
+    actual = float(info.get("format", {}).get("duration", 0) or 0)
+    if abs(actual - expected) > max(2.0, expected * 0.01):
+        raise FFmpegError(
+            f"אורך הפלט {actual:.1f} שניות במקום {expected:.1f} — ההרכבה לא תקינה"
+        )
+    log.info("אימות ההרכבה עבר: %.1f שניות, זרמים %s", actual, ", ".join(sorted(kinds)))
 
 
 def _bitrate_cap(duration: float) -> int:
