@@ -243,7 +243,7 @@ async def ask_json(system: str, user: str, *, schema: dict | None = None,
     raise GeminiError("לא התקבל JSON תקין מ-Gemini")
 
 
-async def research(system: str, user: str) -> str:
+async def research(system: str, user: str, *, grounded: bool = True) -> str:
     """מעבר חקר מחובר לחיפוש Google — לשמות, מונחים, ציטוטים ומושגים.
 
     לחיפוש יש מכסה חינמית נפרדת וקטנה. כשהיא נגמרת אנחנו חוזרים על אותה
@@ -255,10 +255,15 @@ async def research(system: str, user: str) -> str:
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8192},
     }
-    grounded = {**base, "tools": [{"google_search": {}}]}
+    with_search = {**base, "tools": [{"google_search": {}}]}
+
+    # חיפוש מאט מאוד — המודל יוצא לרשת וממתין. חלק מהמעברים לא צריכים
+    # אותו בכלל, ואז מדלגים ישר על הניסיון האיטי
+    attempts = [(with_search, "עם חיפוש")] if grounded else []
+    attempts.append((base, "בלי חיפוש"))
 
     # המעבר הזה לא קריטי לתרגום, ולכן הוא לא מחזיק את התור יותר מדי זמן
-    for body, label in ((grounded, "עם חיפוש"), (base, "בלי חיפוש")):
+    for body, label in attempts:
         try:
             text = _text_of(await asyncio.wait_for(
                 _call(config.GEMINI_MODEL, body), timeout=config.RESEARCH_TIMEOUT))
