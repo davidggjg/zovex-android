@@ -107,15 +107,18 @@ me_id: int = 0
 
 
 async def _run_job(handler, job: "Job", work: Path) -> None:
-    """מריץ עבודה כמשימה נפרדת, כדי שאפשר יהיה לבטל אותה בלי להפיל את העובד."""
-    task = asyncio.current_task()
-    if task:
-        running[id(task)] = task
+    """מריץ עבודה כמשימה נפרדת, כדי שאפשר יהיה לבטל אותה בלי להפיל את העובד.
+
+    current_task כאן היה המשימה של העובד עצמו, לא של העבודה. ביטול היה
+    הורג את העובד — וגרוע מזה, העובד תפס את הביטול והמשיך ללולאה, כך
+    שה-gather שממתין לו בעצירה לא היה נגמר לעולם.
+    """
+    task = asyncio.create_task(handler(job, work))
+    running[id(task)] = task
     try:
-        await handler(job, work)
+        await task
     finally:
-        if task:
-            running.pop(id(task), None)
+        running.pop(id(task), None)
 
 
 def _drain(q: asyncio.Queue) -> int:
