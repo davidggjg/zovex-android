@@ -435,6 +435,11 @@ def _describe_profile(settings: dict, video: Path, duration: float) -> None:
              video.stat().st_size / 1024 ** 2, duration / 60)
 
 
+# הקטעים תופסים את רוב פס ההתקדמות, וההרכבה הסופית את השאר. בלי זה
+# הצריבה הגיעה ל-100% ואז עמדה שם בשקט לאורך כל ההרכבה
+ASSEMBLE_FROM = 0.95
+
+
 class CorePool:
     """מחלק את ליבות הצריבה בין העבודות שרצות על המכונה.
 
@@ -616,7 +621,9 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
             "-threads", str(threads), "-i", str(video),
             "-vf", filters,
         ] + _encoder_args(settings, threads, duration)
-        cmd += ["-an", "-movflags", "+faststart", str(piece)]
+        # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח
+        # סיבוב נוסף על כל הקובץ. נמדד כ-1.9 שניות מבוזבזות לכל קטע
+        cmd += ["-an", str(piece)]
 
         async def progress(fraction: float, speed: str) -> None:
             async with lock:
@@ -628,7 +635,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                 # שניות וידאו נצרבו בסך הכל חלקי הזמן שעבר באמת.
                 elapsed = time.monotonic() - started
                 rate = sum(done) / elapsed if elapsed > 1 else 0.0
-                await on_progress(min(1.0, sum(done) / duration),
+                await on_progress(min(1.0, sum(done) / duration) * ASSEMBLE_FROM,
                                   f"{rate:.1f}x" if rate else speed)
 
         # ממתין למקום פנוי במכונה. זה מה שמחלק את הליבות בין צריבות
@@ -645,19 +652,27 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     listing.write_text(
         "".join(f"file '{piece.name}'\n" for piece in pieces), encoding="utf-8"
     )
-    silent = work / "joined.mp4"
-    await _run([
-        "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(listing), "-c", "copy", str(silent),
-    ])
 
-    # האודיו המקורי מוזג כמו שהוא, בלי קידוד מחדש
-    await _run([
-        "ffmpeg", "-nostdin", "-y", "-i", str(silent), "-i", str(video),
+    # הרכבה, מיזוג האודיו המקורי ו-faststart במעבר אחד. קודם זה היו שני
+    # מעברים: קובץ מחובר ללא קול, ואז קריאה שלו וכתיבת עותק נוסף. על קובץ
+    # של גיגה־בייטים זה היה סיבוב שלם מיותר — נמדד כפול זמן, פלט זהה
+    # בייט־בייט. וזה גם מה שנראה כמו תקיעה על 99%, כי אף אחד לא דיווח
+    async def assembling(fraction: float, speed: str) -> None:
+        if on_progress:
+            await on_progress(ASSEMBLE_FROM + (1.0 - ASSEMBLE_FROM) * fraction,
+                              "מרכיב")
+
+    if on_progress:
+        await on_progress(ASSEMBLE_FROM, "מרכיב")
+    await _run_progress([
+        "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
+        "-i", str(listing), "-i", str(video),
         "-map", "0:v:0", "-map", "1:a:0?", "-c", "copy",
         "-movflags", "+faststart", "-shortest", str(dst),
-    ])
+    ], duration, assembling)
 
+    if on_progress:
+        await on_progress(1.0, "בודק")
     await _verify(dst, duration)
     shutil.rmtree(work, ignore_errors=True)
     log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)

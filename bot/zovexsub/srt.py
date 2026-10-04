@@ -193,5 +193,11 @@ def slice_file(source: Path, start: float, end: float, dst: Path) -> Path:
             end=min(end, cue.end) - start,
             text=cue.text,
         ))
-    dst.write_text(render(kept) if kept else "", encoding="utf-8")
+    # קטע בלי שום כתובית הוא מצב רגיל לגמרי — שתי דקות של שקט, מוזיקה או
+    # קרדיטים. אבל מסנן הכתוביות של ffmpeg מסרב לפתוח קובץ בגודל אפס
+    # ("Unable to open"), והקטע היה מפיל את כל הצריבה המקבילית חזרה
+    # לתהליך יחיד. כתובית ריקה בת אלפית שנייה פותרת את זה ולא נראית
+    if not kept:
+        kept = [Cue(index=1, start=0.0, end=0.001, text=" ")]
+    dst.write_text(render(kept), encoding="utf-8")
     return dst
