@@ -18,7 +18,10 @@ import logging
 import os
 from pathlib import Path
 
+from telethon import utils
+from telethon.network import MTProtoSender
 from telethon.tl import functions, types
+from telethon.tl.alltlobjects import LAYER
 
 from . import config
 
@@ -50,49 +53,97 @@ async def download(client, message, dst: Path, on_progress=None) -> Path:
         return dst
 
 
+async def _open_senders(client, dc_id: int, count: int) -> list:
+    """פותח count חיבורים נפרדים ומלאים ל-DC של טלגרם.
+
+    זה הלב של העניין. טלתון מחזיק חיבור אחד לכל DC: קובץ שיושב ב-DC
+    הביתי עובר דרך self._sender, וקובץ מרוחק דרך חיבור מושאל אחד שנשמר
+    במטמון לפי מספר ה-DC. כלומר כל הבקשות ה"מקביליות" נדחסו לאותו חיבור,
+    וטלגרם מגביל קצב לכל חיבור בנפרד — אז ארבעה עובדים נתנו בדיוק את
+    המהירות של אחד.
+
+    חיבור נפרד לכל עובד הוא מה שבאמת מכפיל את הקצב.
+    """
+    dc = await client._get_dc(dc_id)
+    senders = []
+    try:
+        for index in range(count):
+            if client.session.dc_id == dc_id:
+                # אותו DC: אפשר להשתמש באותו מפתח הצפנה, בלי ייצוא הרשאה
+                sender = MTProtoSender(client.session.auth_key, loggers=client._log)
+                await sender.connect(client._connection(
+                    dc.ip_address, dc.port, dc.id,
+                    loggers=client._log, proxy=client._proxy,
+                ))
+                await sender.send(functions.InvokeWithLayerRequest(
+                    LAYER, client._init_request))
+            else:
+                sender = await client._create_exported_sender(dc_id)
+            senders.append(sender)
+    except Exception:
+        await _close_senders(senders)
+        raise
+    log.info("נפתחו %d חיבורים נפרדים ל-DC %d", len(senders), dc_id)
+    return senders
+
+
+async def _close_senders(senders: list) -> None:
+    for sender in senders:
+        try:
+            await sender.disconnect()
+        except Exception:  # noqa: BLE001 — סגירה לא אמורה להפיל כלום
+            pass
+
+
 async def _parallel_download(client, message, dst: Path, size: int,
                              workers: int, on_progress) -> Path:
+    dc_id, location = utils.get_input_location(message.media)
+    dc_id = dc_id or client.session.dc_id
+
     with dst.open("wb") as fh:
         fh.truncate(size)
 
+    # טלגרם דורש שהגודל יתחלק ב-4096 ושמגה־בייט יתחלק בו. מגה שלם עומד
+    # בשניהם, וגם הטווח של כל עובד מתחיל בכפולה שלו
     chunk = 1024 * 1024
-    # עיגול כלפי מעלה בשני השלבים. עיגול כלפי מטה משאיר שארית לא מכוסה
-    # בסוף הקובץ, ואז בדיקת הגודל נכשלת וכל ההורדה מתחילה מחדש
     per_worker = -(-size // workers)
     span = max(chunk, -(-per_worker // chunk) * chunk)
     if span * workers < size:
         raise RuntimeError("חישוב הטווחים אינו מכסה את הקובץ")
+
     done = 0
     lock = asyncio.Lock()
     handle = os.open(dst, os.O_WRONLY)
+    senders = await _open_senders(client, dc_id, workers)
 
-    async def worker(start: int) -> None:
+    async def worker(sender, start: int) -> None:
         nonlocal done
         end = min(start + span, size)
-        if start >= end:
-            return
-        position = start
-        async for block in client.iter_download(
-            message, offset=start, request_size=chunk,
-            limit=-(-(end - start) // chunk),
-        ):
-            block = bytes(block)[: end - position]
+        offset = start
+        while offset < end:
+            result = await sender.send(functions.upload.GetFileRequest(
+                location, offset=offset, limit=chunk))
+            if isinstance(result, types.upload.FileCdnRedirect):
+                raise RuntimeError("טלגרם הפנה ל-CDN, אין תמיכה במסלול המהיר")
+            block = bytes(result.bytes)[: end - offset]
             if not block:
                 break
-            os.pwrite(handle, block, position)
-            position += len(block)
+            os.pwrite(handle, block, offset)
+            offset += len(block)
             async with lock:
                 done += len(block)
                 if on_progress:
                     await on_progress(done, size)
-            if position >= end:
+            if len(result.bytes) < chunk:
                 break
 
     try:
-        log.info("מוריד ב-%d בקשות במקביל (%.0fMB)", workers, size / 1048576)
-        await asyncio.gather(*(worker(i * span) for i in range(workers)))
+        log.info("מוריד ב-%d חיבורים במקביל (%.0fMB)", workers, size / 1048576)
+        await asyncio.gather(*(worker(sender, i * span)
+                               for i, sender in enumerate(senders)))
     finally:
         os.close(handle)
+        await _close_senders(senders)
 
     actual = dst.stat().st_size
     if actual != size:
@@ -126,8 +177,11 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
     done = 0
     lock = asyncio.Lock()
     handle = os.open(path, os.O_RDONLY)
+    # אותה בעיה בדיוק כמו בהורדה: client(...) שולח דרך החיבור הראשי
+    # היחיד, ולכן כל החלקים הסתדרו בתור על חיבור אחד
+    senders = await _open_senders(client, client.session.dc_id, workers)
 
-    async def worker() -> None:
+    async def worker(sender) -> None:
         nonlocal done
         while True:
             try:
@@ -135,7 +189,7 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
             except asyncio.QueueEmpty:
                 return
             block = os.pread(handle, PART, index * PART)
-            await client(functions.upload.SaveBigFilePartRequest(
+            await sender.send(functions.upload.SaveBigFilePartRequest(
                 file_id=file_id, file_part=index, file_total_parts=parts, bytes=block,
             ))
             async with lock:
@@ -144,11 +198,12 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
                     await on_progress(done, size)
 
     try:
-        log.info("מעלה ב-%d בקשות במקביל (%.0fMB, %d חלקים)",
+        log.info("מעלה ב-%d חיבורים במקביל (%.0fMB, %d חלקים)",
                  workers, size / 1048576, parts)
-        await asyncio.gather(*(worker() for _ in range(workers)))
+        await asyncio.gather(*(worker(sender) for sender in senders))
     finally:
         os.close(handle)
+        await _close_senders(senders)
 
     return types.InputFileBig(id=file_id, parts=parts, name=path.name)
 
