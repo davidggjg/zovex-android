@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -257,6 +258,32 @@ SUB_STYLE = (
 )
 
 
+def burn_threads() -> int:
+    """כמה ליבות לתת לצריבה עכשיו, לפי העומס בפועל.
+
+    השרת מריץ דברים נוספים. בשעה שקטה אין סיבה להשאיר ליבות בטלות,
+    ובשעת עומס אין סיבה להילחם על מעבד. nice ו-ionice ממשיכים לדאוג
+    שגם המספר שנבחר כאן נדחק מיד כשתהליך אחר צריך את המעבד.
+    """
+    total = os.cpu_count() or 2
+    setting = str(config.BURN_THREADS)
+    if setting.isdigit():
+        return max(1, min(int(setting), total))
+
+    try:
+        load = os.getloadavg()[0]
+    except (OSError, AttributeError):
+        load = 0.0
+
+    free = total - load - config.RESERVE_CORES
+    threads = int(max(1, min(total, round(free))))
+    if config.BURN_THREADS_MAX:
+        threads = min(threads, config.BURN_THREADS_MAX)
+    log.info("עומס נוכחי %.1f מתוך %d ליבות — הצריבה תקבל %d",
+             load, total, threads)
+    return threads
+
+
 RLE = "\u202b"  # Right-to-Left Embedding — פותח קטע שכיוונו מימין לשמאל
 PDF = "\u202c"  # Pop Directional Formatting — סוגר אותו
 _MARKS = "\u200e\u200f\u202a\u202b\u202c"
@@ -306,8 +333,9 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
              config.profile_name(settings), codec, preset, crf,
              video.stat().st_size / 1024 ** 2, duration / 60)
 
+    threads = burn_threads()
     cmd = [
-        "ffmpeg", "-nostdin", "-y", "-threads", str(config.BURN_THREADS),
+        "ffmpeg", "-nostdin", "-y", "-threads", str(threads),
         "-i", str(video), "-vf", vf,
         "-c:v", codec,
         "-preset", preset,
@@ -317,8 +345,10 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
     if tune:
         cmd += ["-tune", tune]
     if codec == "libx265":
-        # תג שמאפשר ניגון בנגנים של אפל ובטלגרם
-        cmd += ["-tag:v", "hvc1"]
+        # hvc1 מאפשר ניגון בנגנים של אפל ובטלגרם; pools מגביל את הליבות
+        cmd += ["-tag:v", "hvc1", "-x265-params", f"pools={threads}"]
+    elif codec == "libx264":
+        cmd += ["-x264-params", f"threads={threads}"]
 
     # CRF בלבד לא מבטיח גודל. תקרת bitrate עם חוצץ ("capped CRF") שומרת
     # על האיכות המשתנה ובכל זאת מבטיחה שהקובץ ייכנס במגבלת ההעלאה.

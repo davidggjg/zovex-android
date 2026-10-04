@@ -143,9 +143,16 @@ UPLOAD_CEILING_MB = _int("UPLOAD_CEILING_MB", 3800)
 BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 1080)
 FFMPEG_THREADS = _int("FFMPEG_THREADS", 1)
 # לצריבה כדאי יותר מ-thread אחד: הצוואר הוא פענוח המקור, ושתי ליבות
-# מכפילות את המהירות פי 2.4 בלי לשנות את גודל הפלט. חלון ההפרעה מתקצר,
-# וה-nice ממילא מוותר על המעבד לכל תהליך אחר
-BURN_THREADS = _int("BURN_THREADS", 2)
+# מכפילות את המהירות פי 2.4 בלי לשנות את גודל הפלט.
+#
+# auto קובע את המספר לפי העומס בפועל ברגע שהצריבה מתחילה: בשעה שקטה
+# הוא לוקח כמעט את כל הליבות, ובשעת עומס מצטמצם. מעבר לזה, nice ו-ionice
+# דואגים שגם כשהצריבה רצה על הרבה ליבות, כל תהליך אחר דוחק אותה מיד.
+BURN_THREADS = os.getenv("BURN_THREADS", "auto").strip().lower()
+# כמה ליבות להשאיר פנויות לשאר השרת גם כשהוא נראה ריק
+RESERVE_CORES = float(os.getenv("RESERVE_CORES") or 1.5)
+# תקרה עליונה ל-threads, 0 = עד כל הליבות
+BURN_THREADS_MAX = _int("BURN_THREADS_MAX", 0)
 # תקרה קשיחה לצריבה. תוכן גרעיני מקודד לאט מזמן אמת, ובלי תקרה קובץ
 # חריג יכול לרוץ שעה על שרת עמוס
 BURN_TIMEOUT = _int("BURN_TIMEOUT", 1800)
