@@ -48,7 +48,8 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
 
     await progress(f"🎧 מחלץ אודיו · {duration / 60:.0f} דקות וידאו")
     audio = await media.extract_audio(source, work / "audio.flac")
-    chunks = await media.split_audio(audio, work, duration)
+    workers = config.parallel(config.STT_PARALLEL, config.GROQ_API_KEYS)
+    chunks = await media.split_audio(audio, work, duration, workers=workers)
 
     stage = prog.Stage(progress, "✍️ מתמלל")
     pulse: list = [None]

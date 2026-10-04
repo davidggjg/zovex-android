@@ -135,18 +135,29 @@ class Chunk:
     offset: float  # שנייה שבה החלק מתחיל בתוך המקור
 
 
-async def split_audio(audio: Path, out_dir: Path, total: float) -> list[Chunk]:
+async def split_audio(audio: Path, out_dir: Path, total: float,
+                      workers: int = 1) -> list[Chunk]:
     """מחלק אודיו לחלקים שנכנסים במגבלת הגודל של ה-API.
 
     החלוקה היא לפי זמן, וה-offset נשמר כדי שחותמות הזמן יחזרו למקום הנכון.
+    כשיש הרבה מפתחות שווה לחתוך דק יותר: כל חלק רץ על מפתח אחר, וכך
+    כולם עובדים בו-זמנית במקום שחלקם ימתינו בתור.
     """
     size = audio.stat().st_size
-    if size <= config.STT_CHUNK_BYTES and total <= config.STT_CHUNK_SECONDS:
+    if size <= config.STT_CHUNK_BYTES and total <= config.STT_CHUNK_SECONDS and workers <= 1:
         return [Chunk(audio, 0.0)]
 
     # אורך חלק שמבטיח גם גודל וגם תקרת זמן
     by_size = total * (config.STT_CHUNK_BYTES / size) * 0.9
     chunk_len = max(60.0, min(float(config.STT_CHUNK_SECONDS), by_size))
+
+    # להעסיק את כל המפתחות: חלק לכל אחד, אבל לא קצר מהמינימום
+    if workers > 1:
+        even = total / workers
+        chunk_len = min(chunk_len, max(float(config.STT_CHUNK_MIN_SECONDS), even))
+
+    if size <= config.STT_CHUNK_BYTES and total <= chunk_len:
+        return [Chunk(audio, 0.0)]
 
     chunks: list[Chunk] = []
     start = 0.0

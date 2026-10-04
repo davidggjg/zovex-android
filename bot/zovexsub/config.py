@@ -191,6 +191,8 @@ TG_CONNECTIONS = _int("TG_CONNECTIONS", 4)
 STT_CHUNK_BYTES = 20 * 1024 * 1024
 # אודיו FLAC 16kHz מונו ~ 100KB לשנייה במקרה הגרוע; נחתוך לפי זמן כגיבוי
 STT_CHUNK_SECONDS = _int("STT_CHUNK_SECONDS", 600)
+# אורך מינימלי לחלק. חלק קצר מדי פוגע בהקשר שהמודל רואה
+STT_CHUNK_MIN_SECONDS = _int("STT_CHUNK_MIN_SECONDS", 150)
 
 # כמה כתוביות חשודות מותר לשמוע שוב בעבודה אחת. כל הקשבה חוזרת היא
 # קריאת API נוספת, קצרה וזולה, אבל בסרט ארוך זה מצטבר
@@ -203,11 +205,19 @@ SRT_MIN_DURATION = 1.0
 SRT_MAX_DURATION = 7.0
 
 
-def parallel(setting: int, keys: list[str], ceiling: int = 8) -> int:
-    """כמה בקשות במקביל: לפי ההגדרה, או לפי מספר המפתחות שיש."""
+# תקרה עליונה למקביליות, לא משנה כמה מפתחות יש
+PARALLEL_CEILING = _int("PARALLEL_CEILING", 16)
+
+
+def parallel(setting: int, keys: list[str], ceiling: int = 0) -> int:
+    """כמה בקשות במקביל: לפי ההגדרה, או לפי מספר המפתחות שיש.
+
+    כל מפתח הוא חשבון נפרד עם מכסה משלו, ולכן יותר מפתחות פירושם יותר
+    עבודה בו-זמנית ולא רק גיבוי.
+    """
     if setting > 0:
         return setting
-    return max(1, min(len(keys) or 1, ceiling))
+    return max(1, min(len(keys) or 1, ceiling or PARALLEL_CEILING))
 
 
 def validate() -> list[str]:
