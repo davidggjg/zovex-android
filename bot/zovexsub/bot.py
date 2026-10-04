@@ -55,8 +55,9 @@ OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
 • `{T} בדיקה` בתגובה לסרטון — דוח תזמונים לאבחון סנכרון
 • `{T} עזרה` — ההוראות למשתמשים"""
 
-# צורות מקובלות לפקודה — כדי לא להיתקע על נקודה חסרה או מקלדת עברית
-ALIASES = {T, T.lstrip("."), "כתוביות", ".כתוביות", "תמלל", ".תמלל"}
+# רק צורות שמתחילות בנקודה. מילה רגילה כמו "כתוביות" או "srt" מופיעה
+# בשיחות רגילות, ובוט שמגיב לה מתפרץ לשיחות שלא קשורות אליו.
+ALIASES = {T, ".כתוביות", ".תמלל"}
 
 YES_WORDS = {"כן", "כן!", "yes", "y", "לצרוב", "צרוב", "צריבה", "כן בבקשה", "✅", "👍"}
 OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז הקבצים נמחקים
@@ -159,7 +160,6 @@ async def on_message(event: events.NewMessage.Event) -> None:
         elif event.is_reply:
             await on_subtitle_file(event)
             await on_yes(event, text)
-            await _hint_if_lost(event, text)
     except Exception:  # noqa: BLE001 — האנדלר לעולם לא מפיל את הבוט
         log.exception("שגיאה בטיפול בהודעה")
 
@@ -260,18 +260,6 @@ async def on_command(event: events.NewMessage.Event, body: str) -> None:
     await queue.put(Job(event, replied if has_media else None, status,
                         diagnose=wants_report, url=url or ""))
     log.info("עבודה נוספה לתור ממשתמש %s (בתור: %d)", sender, queue.qsize())
-
-
-async def _hint_if_lost(event: events.NewMessage.Event, text: str) -> None:
-    """מגיבים לסרטון עם משהו אחר — מזכירים מה הפקודה, פעם אחת."""
-    if not text or len(text) > 20 or text in YES_WORDS:
-        return
-    sender = _who(event.message)
-    if not (sender == me_id or allowlist.is_allowed(sender)):
-        return
-    replied = await event.get_reply_message()
-    if replied and replied.media:
-        await event.reply(f"כדי להפיק כתוביות לסרטון הזה, השב לו עם `{T}`.")
 
 
 async def _describe(client: TelegramClient, user_id: int) -> str:
