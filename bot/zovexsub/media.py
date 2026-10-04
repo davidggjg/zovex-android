@@ -251,6 +251,52 @@ async def _detect(audio: Path, threshold: float, min_silence: float,
     return spans
 
 
+CREDIT_ASS = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: credit,Noto Sans Hebrew,{size},&H00FFFFFF,&H00000000,&H64000000,-1,0,1,2,1,5,20,20,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.20,{end},credit,,0,0,0,,{{\\fad(400,600)}}{text}
+"""
+
+
+def _ass_time(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    hours, rest = divmod(int(seconds), 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{int(seconds % 1 * 100):02d}"
+
+
+def credit_file(work: Path) -> Path | None:
+    """קרדיט פתיחה כקובץ ASS נפרד.
+
+    נכתב כ-ASS ולא כטקסט על הווידאו כי libass מטפל נכון בכיווניות של
+    העברית, בעוד ש-drawtext היה מציג את האותיות הפוכות.
+    """
+    if not config.CREDIT_TEXT.strip():
+        return None
+    lines = [part.strip() for part in config.CREDIT_TEXT.split("|") if part.strip()]
+    if not lines:
+        return None
+
+    body = "\\N".join(RLE + line + PDF for line in lines)
+    dst = work / "credit.ass"
+    dst.write_text(
+        CREDIT_ASS.format(size=config.CREDIT_SIZE,
+                          end=_ass_time(config.CREDIT_SECONDS), text=body),
+        encoding="utf-8",
+    )
+    return dst
+
+
 SUB_STYLE = (
     "FontName=Noto Sans Hebrew,FontSize=20,PrimaryColour=&H00FFFFFF,"
     "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,"
@@ -322,6 +368,11 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
         # min() מבטיח שמקור נמוך מהתקרה נשאר כמו שהוא ולא מוגדל
         filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
     filters.append(f"subtitles='{escaped}':force_style='{SUB_STYLE}'")
+
+    credit = credit_file(dst.parent)
+    if credit:
+        credit_path = str(credit).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+        filters.append(f"subtitles='{credit_path}'")
     vf = ",".join(filters)
     settings = config.profile_for(video.stat().st_size, duration)
     codec = config.BURN_CODEC or settings["codec"]

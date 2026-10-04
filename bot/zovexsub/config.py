@@ -136,6 +136,11 @@ BURN_TUNE = os.getenv("BURN_TUNE", "")
 # צריכה ביטים. CRF לבדו מחלק את הביטים נכון, ולכן התקרה כבויה כברירת
 # מחדל. ערך גדול מאפס מפעיל אותה, למקרה שחייבים להיכנס בגודל מסוים.
 UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
+# קרדיט שמוצג בפתיחת הסרטון הצרוב. שורות מופרדות בתו |, ריק מבטל
+CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד על ידי|zovex|ומלך הדרמות הטורקיות")
+CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
+CREDIT_SIZE = _int("CREDIT_SIZE", 34)
+
 # תקרת ההעלאה של טלגרם פרימיום, לבחירת פרופיל בלבד (לא תקרת bitrate)
 UPLOAD_CEILING_MB = _int("UPLOAD_CEILING_MB", 3800)
 # תקרת רזולוציה. המקור אף פעם לא מוגדל — רק 4K וגבוה מזה יורד ל-1080p,
