@@ -377,11 +377,15 @@ async def _burn(job: Job, work: Path) -> None:
         await _safe_edit(job.status, text)
 
     stage = prog.Stage(edit, "🔥 צורב")
+    stage.pulse()
 
     async def on_burn(fraction: float, speed: str) -> None:
         await stage.show(fraction, note=f"קצב {speed}" if speed else "")
 
-    burned = await pipeline.burn(source, job.srt_path, work, on_progress=on_burn)
+    try:
+        burned = await pipeline.burn(source, job.srt_path, work, on_progress=on_burn)
+    finally:
+        stage.stop()
     await stage.finish()
 
     upload = prog.Stage(edit, "📤 מעלה", total_bytes=burned.stat().st_size)

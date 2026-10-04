@@ -52,22 +52,15 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     chunks = await media.split_audio(audio, work, duration, workers=workers)
 
     stage = prog.Stage(progress, "✍️ מתמלל")
-    pulse: list = [None]
+    stage.pulse()
 
     async def on_chunk(done: int, total: int) -> None:
-        """נקרא כשקטע שלם הסתיים. בין קטע לקטע הדופק מראה שהעבודה חיה."""
-        if pulse[0]:
-            pulse[0].cancel()
-        await stage.show(done / total, note=f"קטע {done}/{total}", force=True)
-        if done < total:
-            pulse[0] = stage.heartbeat(done / total, f"קטע {done + 1}/{total}")
+        await stage.show(done / total, note=f"{done}/{total} קטעים")
 
-    pulse[0] = stage.heartbeat(0.0, f"קטע 1/{len(chunks)}")
     try:
         transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
     finally:
-        if pulse[0]:
-            pulse[0].cancel()
+        stage.stop()
     await stage.finish()
     if not transcript.segments:
         raise RuntimeError("לא זוהה דיבור בקובץ.")
@@ -77,30 +70,30 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     speech = await media.speech_spans(audio)
 
     stage = prog.Stage(progress, "🎯 מדייק תזמונים")
+    stage.pulse()
 
     async def on_listen(done: int, total: int) -> None:
         await stage.show(done / total, note=f"מקשיב שוב {done}/{total}")
 
-    await realign.refine(transcript.segments, audio, work, speech, on_step=on_listen)
+    try:
+        await realign.refine(transcript.segments, audio, work, speech, on_step=on_listen)
+    finally:
+        stage.stop()
 
     stage = prog.Stage(progress, "🇮🇱 מתרגם")
     await stage.show(0.02, note=f"חוקר את התוכן · מקור {transcript.language}", force=True)
 
-    beat: list = [stage.heartbeat(0.02, "חוקר את התוכן")]
+    stage.pulse()
 
     async def on_translate(note: str, fraction: float) -> None:
-        if beat[0]:
-            beat[0].cancel()
-        await stage.show(fraction, note=note, force=True)
-        beat[0] = stage.heartbeat(fraction, note)
+        await stage.show(fraction, note=note)
 
     try:
         lines, notes = await hebrew.build_hebrew(transcript.segments,
                                                  transcript.language,
                                                  on_step=on_translate)
     finally:
-        if beat[0]:
-            beat[0].cancel()
+        stage.stop()
     await stage.finish()
 
     cues = srt.build_cues(transcript.segments, lines, speech=speech)

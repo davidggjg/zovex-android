@@ -39,67 +39,104 @@ def clock(seconds: float) -> str:
 
 
 class Stage:
-    """עוקב אחרי שלב אחד ומעדכן את הודעת הסטטוס."""
+    """עוקב אחרי שלב אחד ומעדכן את הודעת הסטטוס.
+
+    המצב מוחזק כאן ולא נתפס בתוך משימות רקע. כשכמה קטעים רצים במקביל
+    הם קוראים ל-show מכיוון שונה, ודופק שזוכר אחוז ישן היה דורס את
+    החדש — ומכאן קפיצות אחורה באחוזים. לכן יש דופק אחד בלבד, והוא
+    קורא תמיד את המצב הנוכחי.
+    """
 
     def __init__(self, edit: Edit, title: str, *, total_bytes: int = 0):
         self.edit = edit
         self.title = title
         self.total_bytes = total_bytes
         self.started = time.monotonic()
+        self.fraction = 0.0
+        self.note = ""
+        self.done_bytes = 0
+        self.step_started = time.monotonic()
         self.last_edit = 0.0
         self.last_text = ""
+        self._pulse: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
 
     @property
     def elapsed(self) -> float:
         return time.monotonic() - self.started
 
-    def eta(self, fraction: float) -> float:
+    def eta(self) -> float:
         """כמה זמן נשאר, לפי הקצב שנמדד עד כה."""
-        if fraction <= 0.01:
+        if self.fraction <= 0.01:
             return 0.0
-        return self.elapsed * (1 - fraction) / fraction
+        return self.elapsed * (1 - self.fraction) / self.fraction
 
-    async def show(self, fraction: float, *, done_bytes: int = 0,
-                   note: str = "", force: bool = False) -> None:
+    def _render(self) -> str:
+        parts = [self.title, bar(self.fraction), f"{self.fraction * 100:.0f}%"]
+        if self.total_bytes:
+            parts.append(f"{size(self.done_bytes)}/{size(self.total_bytes)}")
+            if self.elapsed > 1:
+                parts.append(f"{size(self.done_bytes / self.elapsed)}/ש׳")
+        if self.note:
+            parts.append(self.note)
+        waiting = time.monotonic() - self.step_started
+        if waiting > HEARTBEAT:
+            parts.append(clock(waiting))
+        remaining = self.eta()
+        if remaining > 1:
+            parts.append(f"נותרו ~{clock(remaining)}")
+        return " · ".join(parts)
+
+    async def _flush(self, force: bool) -> None:
         now = time.monotonic()
         if not force and now - self.last_edit < MIN_INTERVAL:
             return
-
-        parts = [f"{self.title}", bar(fraction), f"{fraction * 100:.0f}%"]
-        if self.total_bytes:
-            parts.append(f"{size(done_bytes)}/{size(self.total_bytes)}")
-            if self.elapsed > 1:
-                parts.append(f"{size(done_bytes / self.elapsed)}/ש׳")
-        if note:
-            parts.append(note)
-        remaining = self.eta(fraction)
-        if remaining > 1:
-            parts.append(f"נותרו ~{clock(remaining)}")
-
-        text = " · ".join(parts)
+        text = self._render()
         if text == self.last_text:
             return
         self.last_text = text
         self.last_edit = now
         await self.edit(text)
 
-    def heartbeat(self, fraction: float, label: str) -> "asyncio.Task":
-        """מעדכן את הזמן שעבר גם כשהאחוז לא זז.
+    async def show(self, fraction: float, *, done_bytes: int = 0,
+                   note: str = "", force: bool = False) -> None:
+        async with self._lock:
+            # ההתקדמות לא חוזרת אחורה, גם כשעדכונים מגיעים לא בסדר
+            if fraction > self.fraction or force:
+                if fraction != self.fraction:
+                    self.step_started = time.monotonic()
+                self.fraction = max(self.fraction, fraction)
+            if done_bytes:
+                self.done_bytes = max(self.done_bytes, done_bytes)
+            if note:
+                self.note = note
+            await self._flush(force)
 
-        שלב שמתקדם בקפיצות — קטע תמלול שלם, חלון תרגום — נראה תקוע בין
-        קפיצה לקפיצה. הדופק הזה מראה שהעבודה חיה.
-        """
+    def pulse(self) -> None:
+        """מפעיל דופק יחיד שמראה שהעבודה חיה גם כשהאחוז עומד."""
+        if self._pulse:
+            return
+
         async def tick() -> None:
-            start = time.monotonic()
             while True:
                 await asyncio.sleep(HEARTBEAT)
-                waited = time.monotonic() - start
-                self.last_edit = 0.0
-                await self.show(fraction, note=f"{label} · {clock(waited)}")
+                async with self._lock:
+                    self.last_edit = 0.0
+                    await self._flush(force=False)
 
-        return asyncio.create_task(tick())
+        self._pulse = asyncio.create_task(tick())
+
+    def stop(self) -> None:
+        if self._pulse:
+            self._pulse.cancel()
+            self._pulse = None
 
     async def finish(self, note: str = "") -> None:
-        self.last_edit = 0.0
-        await self.show(1.0, done_bytes=self.total_bytes,
-                        note=note or f"הושלם ב-{clock(self.elapsed)}", force=True)
+        self.stop()
+        async with self._lock:
+            self.fraction = 1.0
+            self.done_bytes = self.total_bytes or self.done_bytes
+            self.note = note or f"הושלם ב-{clock(self.elapsed)}"
+            self.step_started = time.monotonic()
+            self.last_edit = 0.0
+            await self._flush(force=True)
