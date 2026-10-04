@@ -11,9 +11,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
-from . import gemini
+from . import config, gemini
 from .stt import Segment
 
 log = logging.getLogger(__name__)
@@ -188,6 +189,12 @@ async def build_hebrew(segments: list[Segment], language: str,
 
 async def _translate_all(segments: list[Segment], language: str, notes: str,
                          on_step=None) -> list[str]:
+    """מתרגם את כל החלונות במקביל.
+
+    כל חלון עומד בפני עצמו: ההקשר שלו נלקח משורות המקור שלפניו ואחריו,
+    ולא מתרגום של חלון קודם. לכן אין סיבה להריץ אותם בזה אחר זה, ומפתח
+    לכל חלון מנצל את כל המפתחות במקום אחד.
+    """
     out: list[str] = [""] * len(segments)
     schema = {
         "type": "object",
@@ -204,7 +211,14 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         "required": ["lines"],
     }
 
-    for start in range(0, len(segments), WINDOW):
+    starts = list(range(0, len(segments), WINDOW))
+    workers = config.parallel(config.TRANSLATE_PARALLEL, config.GEMINI_API_KEYS)
+    gate = asyncio.Semaphore(workers)
+    finished = 0
+    log.info("מתרגם %d חלונות, עד %d במקביל", len(starts), workers)
+
+    async def translate_window(start: int) -> None:
+        nonlocal finished
         window = segments[start:start + WINDOW]
         before = segments[max(0, start - CONTEXT):start]
         after = segments[start + WINDOW:start + WINDOW + CONTEXT]
@@ -216,7 +230,7 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
 
 שפת המקור: {language}
 
-הקשר קודם (לקריאה בלבד, כבר תורגם):
+הקשר קודם (לקריאה בלבד, אל תתרגם):
 {_numbered(before) or "(תחילת הסרטון)"}
 
 הקשר הבא (לקריאה בלבד, אל תתרגם):
@@ -228,31 +242,34 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
 החזר JSON: {{"lines": [{{"i": <אינדקס>, "he": "<עברית>"}}, ...]}}
 חובה להחזיר בדיוק {len(window)} פריטים, אינדקס לכל שורה שביקשתי."""
 
-        result = await gemini.ask_json(TRANSLATE_SYSTEM, prompt, schema=schema)
+        async with gate:
+            result = await gemini.ask_json(TRANSLATE_SYSTEM, prompt, schema=schema)
         got = _collect(result)
         for seg in window:
             out[seg.index] = (got.get(seg.index) or "").strip()
 
         missing = [s.index for s in window if not out[s.index]]
-        if missing:
-            log.warning("חסרות %d שורות בחלון %d — מנסה שוב אחת-אחת", len(missing), start)
-            for idx in missing:
-                seg = segments[idx]
+        for idx in missing:
+            seg = segments[idx]
+            async with gate:
                 retry = await gemini.ask_json(
                     TRANSLATE_SYSTEM,
                     f"מסמך הנחיות:\n{_cap(notes, 8000)}\n\n"
                     f"תרגם לעברית שורת כתובית אחת (שפת מקור {language}). "
-                    f"הקשר: \"{_window_text(segments, idx)}\"\n"
-                    f"השורה לתרגום: \"{seg.text}\"\n"
+                    f'הקשר: "{_window_text(segments, idx)}"\n'
+                    f'השורה לתרגום: "{seg.text}"\n'
                     'החזר JSON: {"lines":[{"i":%d,"he":"..."}]}' % idx,
                     schema=schema, temperature=0.3,
                 )
-                out[idx] = (_collect(retry).get(idx) or seg.text).strip()
-        done = min(start + WINDOW, len(segments))
-        log.info("תורגמו %d/%d שורות", done, len(segments))
+            out[idx] = (_collect(retry).get(idx) or seg.text).strip()
+
+        finished += len(window)
+        log.info("תורגמו %d/%d שורות", finished, len(segments))
         if on_step:
-            await on_step(f"מתרגם {done}/{len(segments)} שורות",
-                          0.05 + 0.90 * done / max(1, len(segments)))
+            await on_step(f"מתרגם {finished}/{len(segments)} שורות",
+                          0.05 + 0.85 * finished / max(1, len(segments)))
+
+    await asyncio.gather(*(translate_window(start) for start in starts))
     return out
 
 

@@ -223,6 +223,62 @@ async def research(system: str, user: str) -> str:
     return ""
 
 
+async def transcribe_audio(path, language_hint: str = "") -> dict | None:
+    """תמלול אודיו ב-Gemini, כגיבוי לכישלון של Groq.
+
+    נמדד מול אודיו עם זמנים ידועים: הסטייה כאן היא כשתי עשיריות שנייה,
+    לעומת מאית אצל Whisper. לכן זה לא המסלול הראשי אלא רשת ביטחון —
+    עדיף תמלול עם תזמון בינוני על פני חור בכתוביות. דיוק התזמונים
+    משתפר אחר כך בהקשבה החוזרת ובהצמדה לדיבור.
+    """
+    import base64
+    from pathlib import Path as _Path
+
+    data = _Path(path).read_bytes()
+    if len(data) > 18 * 1024 * 1024:
+        log.warning("הקטע גדול מדי לתמלול ב-Gemini")
+        return None
+
+    hint = f" שפת המקור היא {language_hint}." if language_hint else ""
+    body = {
+        "contents": [{"role": "user", "parts": [
+            {"inline_data": {"mime_type": "audio/flac",
+                             "data": base64.b64encode(data).decode()}},
+            {"text": "תמלל את האודיו בשפת המקור שלו, בלי לתרגם." + hint +
+                     ' החזר JSON: {"segments":[{"start":<שניות>,"end":<שניות>,'
+                     '"text":"..."}]} עם חותמות זמן מדויקות ככל האפשר, '
+                     "ובלי להמציא טקסט בקטעים שאין בהם דיבור."},
+        ]}],
+        "generationConfig": {"temperature": 0, "response_mime_type": "application/json"},
+    }
+
+    try:
+        payload = await _call(config.GEMINI_MODEL, body, timeout=600.0)
+    except GeminiError as exc:
+        log.warning("התמלול ב-Gemini נכשל: %s", exc)
+        return None
+
+    parsed = _loose_json(_text_of(payload))
+    items = parsed.get("segments") if isinstance(parsed, dict) else parsed
+    segments = []
+    for item in items or []:
+        if not isinstance(item, dict) or not str(item.get("text", "")).strip():
+            continue
+        try:
+            segments.append({
+                "start": float(item["start"]),
+                "end": float(item.get("end", item["start"])),
+                "text": str(item["text"]).strip(),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+
+    if not segments:
+        return None
+    log.info("Gemini תמלל %d סגמנטים כגיבוי", len(segments))
+    return {"segments": segments, "words": [], "language": language_hint or ""}
+
+
 def _loose_json(raw: str):
     if not raw:
         return None

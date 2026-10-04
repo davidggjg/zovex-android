@@ -129,6 +129,14 @@ async def _transcribe_chunk(client: httpx.AsyncClient, pool: KeyPool, chunk: Chu
                 log.info("הקטע תומלל במודל הגיבוי %s", model)
             return payload
 
+    # Groq לא הצליח. חמשת מפתחות Gemini יושבים בטלים — עדיף תמלול עם
+    # תזמון בינוני, שההקשבה החוזרת תדייק, על פני חור בכתוביות
+    if config.GEMINI_FALLBACK_STT and config.GEMINI_API_KEYS:
+        from . import gemini
+        payload = await gemini.transcribe_audio(chunk.path)
+        if payload is not None:
+            return payload
+
     # ייתכן שהקטע עצמו בעייתי או גדול מדי — מנסים אותו בשני חצאים
     if depth >= 2:
         return None
@@ -164,64 +172,74 @@ async def _transcribe_chunk(client: httpx.AsyncClient, pool: KeyPool, chunk: Chu
 
 async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
                      on_chunk=None, work: Path | None = None) -> Transcript:
+    """מתמלל את כל הקטעים במקביל, קטע לכל מפתח.
+
+    עד כה הקטעים תומללו בזה אחר זה, כך שמפתח אחד עבד והשאר המתינו. כל
+    קטע עומד בפני עצמו — הזמנים שלו מוסטים לפי ה-offset — ולכן אין סיבה
+    לסדר ביניהם.
+    """
     pool = KeyPool("groq", config.GROQ_API_KEYS)
+    workers = config.parallel(config.STT_PARALLEL, config.GROQ_API_KEYS)
+    gate = asyncio.Semaphore(workers)
+    done = 0
+    log.info("מתמלל %d קטעים, עד %d במקביל", len(chunks), workers)
+
+    async with httpx.AsyncClient() as client:
+        async def one(index: int, chunk: Chunk):
+            nonlocal done
+            async with gate:
+                payload = await _transcribe_chunk(
+                    client, pool, chunk, hint if index == 0 else None,
+                    work or chunk.path.parent)
+            done += 1
+            log.info("הושלם קטע %d/%d", done, len(chunks))
+            if on_chunk:
+                await on_chunk(done, len(chunks))
+            return index, payload
+
+        results = await asyncio.gather(*(one(i, c) for i, c in enumerate(chunks)))
+
     segments: list[Segment] = []
     language = ""
     failed: list[int] = []
-    carry = hint  # הטקסט מהחלק הקודם משמש כקונטקסט להמשכיות
 
-    async with httpx.AsyncClient() as client:
-        for n, chunk in enumerate(chunks, 1):
-            log.info("מתמלל חלק %d/%d", n, len(chunks))
-            payload = await _transcribe_chunk(
-                client, pool, chunk, carry, work or chunk.path.parent)
-            if payload is None:
-                # לא מאבדים את מה שכבר תומלל בגלל קטע אחד שנכשל
-                log.error("חלק %d/%d לא תומלל — ממשיכים בלעדיו", n, len(chunks))
-                failed.append(n)
-                if on_chunk:
-                    await on_chunk(n, len(chunks))
+    for index, payload in sorted(results, key=lambda pair: pair[0]):
+        chunk = chunks[index]
+        if payload is None:
+            log.error("קטע %d לא תומלל — ממשיכים בלעדיו", index + 1)
+            failed.append(index + 1)
+            continue
+
+        language = language or (payload.get("language") or "")
+        raw_segments = payload.get("segments") or []
+        raw_words = payload.get("words") or []
+
+        for seg in raw_segments:
+            text = (seg.get("text") or "").strip()
+            if not text:
                 continue
-            language = language or (payload.get("language") or "")
-            raw_segments = payload.get("segments") or []
-            raw_words = payload.get("words") or []
+            start = float(seg.get("start", 0.0)) + chunk.offset
+            end = float(seg.get("end", start)) + chunk.offset
+            words = [
+                Word(float(w["start"]) + chunk.offset, float(w["end"]) + chunk.offset,
+                     str(w.get("word", "")).strip())
+                for w in raw_words
+                if w.get("start") is not None
+                and start - chunk.offset - 0.01 <= float(w["start"]) <= end - chunk.offset + 0.01
+            ]
+            if words:
+                first, last = words[0].start, words[-1].end
+                if start - 2.0 <= first <= end:
+                    start = first
+                if start <= last <= end + 2.0:
+                    end = last
 
-            for seg in raw_segments:
-                text = (seg.get("text") or "").strip()
-                if not text:
-                    continue
-                start = float(seg.get("start", 0.0)) + chunk.offset
-                end = float(seg.get("end", start)) + chunk.offset
-                words = [
-                    Word(float(w["start"]) + chunk.offset, float(w["end"]) + chunk.offset,
-                         str(w.get("word", "")).strip())
-                    for w in raw_words
-                    if w.get("start") is not None
-                    and start - chunk.offset - 0.01 <= float(w["start"]) <= end - chunk.offset + 0.01
-                ]
-                if words:
-                    # חותמות המילים מדויקות בהרבה מגבולות הסגמנט, שנוטים
-                    # להקדים את תחילת הדיבור ולהימשך לתוך השקט שאחריו
-                    first, last = words[0].start, words[-1].end
-                    if start - 2.0 <= first <= end:
-                        start = first
-                    if start <= last <= end + 2.0:
-                        end = last
+            segments.append(Segment(
+                index=0, start=start, end=max(end, start + 0.2), text=text,
+                words=words, no_speech=float(seg.get("no_speech_prob") or 0.0),
+            ))
 
-                segments.append(Segment(
-                    index=len(segments),
-                    start=start,
-                    end=max(end, start + 0.2),
-                    text=text,
-                    words=words,
-                    no_speech=float(seg.get("no_speech_prob") or 0.0),
-                ))
-
-            if raw_segments:
-                carry = " ".join((s.get("text") or "") for s in raw_segments[-4:]).strip()
-            if on_chunk:
-                await on_chunk(n, len(chunks))
-
+    segments.sort(key=lambda s: s.start)
     if failed:
         log.error("%d מתוך %d קטעים לא תומללו: %s",
                   len(failed), len(chunks), ", ".join(map(str, failed)))
@@ -235,8 +253,6 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
         seg.index = i
     return Transcript(language=language or "unknown", segments=segments)
 
-
-_URL = re.compile(r"(https?://|www\.|\.(com|net|org|tv|ru|ir|co\.il)\b)", re.I)
 
 _JUNK = {
     "תרגום וכתוביות", "כתוביות", "סוף", "תודה רבה", "thank you", "thanks for watching",

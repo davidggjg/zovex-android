@@ -39,9 +39,18 @@ GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
 GROQ_STT_FALLBACK = os.getenv("GROQ_STT_FALLBACK", "whisper-large-v3-turbo")
 # כמה סבלנות לתת לתקלה זמנית אצל הספק לפני שמנסים דרך אחרת
 STT_ATTEMPTS = _int("STT_ATTEMPTS", 10)
+# כמה קטעים לתמלל במקביל. 0 = לפי מספר המפתחות. כל קטע תופס מפתח אחר,
+# ולכן זה מנצל את כולם במקום להשאיר ארבעה בטלים
+STT_PARALLEL = _int("STT_PARALLEL", 0)
+# כש-Groq נכשל על קטע, לתת ל-Gemini לתמלל אותו. התזמונים שלו פחות
+# מדויקים, אבל ההקשבה החוזרת וההצמדה לדיבור מתקנות אותם
+GEMINI_FALLBACK_STT = (os.getenv("GEMINI_FALLBACK_STT", "1") or "1") not in ("0", "false", "")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-pro-latest")
 GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-latest")
 GEMINI_LAST_RESORT_MODEL = os.getenv("GEMINI_LAST_RESORT_MODEL", "gemini-flash-lite-latest")
+# כמה חלונות תרגום במקביל. כל חלון עומד בפני עצמו — ההקשר שלו נלקח
+# מהמקור ולא מתרגום קודם — ולכן אפשר להריץ אותם במקביל
+TRANSLATE_PARALLEL = _int("TRANSLATE_PARALLEL", 0)
 # מעבר החקר לא קריטי — אחריו ממשיכים בלעדיו במקום להחזיק את התור
 RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 180)
 
@@ -192,6 +201,13 @@ SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
 SRT_MAX_LINES = 2
 SRT_MIN_DURATION = 1.0
 SRT_MAX_DURATION = 7.0
+
+
+def parallel(setting: int, keys: list[str], ceiling: int = 8) -> int:
+    """כמה בקשות במקביל: לפי ההגדרה, או לפי מספר המפתחות שיש."""
+    if setting > 0:
+        return setting
+    return max(1, min(len(keys) or 1, ceiling))
 
 
 def validate() -> list[str]:
