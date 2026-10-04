@@ -98,6 +98,7 @@ class Offer:
 # שני תורים נפרדים: צריבה של שעתיים לא תחסום בקשת כתוביות של דקה
 queue: asyncio.Queue[Job] = asyncio.Queue()
 burn_queue: asyncio.Queue[Job] = asyncio.Queue()
+burning = 0          # כמה צריבות רצות ברגע זה
 offers: dict[int, Offer] = {}      # לפי מזהה הודעת ההצעה
 waiting: dict[int, Pending] = {}   # בקשות שממתינות לקובץ כתוביות
 me_id: int = 0
@@ -279,7 +280,7 @@ def _is_subtitle(message) -> bool:
 
 
 async def queue_burn(event, video, srt_message) -> None:
-    status = await event.reply("🔥 בתור לצריבה…" if burn_queue.qsize() else "📥 מוריד…")
+    status = await event.reply("🔥 בתור לצריבה…" if _queued() else "📥 מוריד…")
     await burn_queue.put(Job(event, video, status, srt_message=srt_message))
     log.info("צריבה ידנית נוספה לתור")
 
@@ -315,7 +316,7 @@ async def on_yes(event: events.NewMessage.Event, text: str) -> None:
         return
 
     offers.pop(event.reply_to_msg_id, None)
-    status = await event.reply("🔥 בתור לצריבה…" if burn_queue.qsize() else "🔥 צורב…")
+    status = await event.reply("🔥 בתור לצריבה…" if _queued() else "🔥 צורב…")
     await burn_queue.put(Job(event, offer.message, status,
                              srt_path=offer.srt_path, work=offer.work))
     log.info("אושרה צריבה על ידי %s", sender)
@@ -338,17 +339,25 @@ async def worker() -> None:
             queue.task_done()
 
 
+def _queued() -> bool:
+    """האם העבודה תמתין — או כי יש תור, או כי כל הצריבות תפוסות."""
+    return bool(burn_queue.qsize()) or burning >= max(1, config.BURN_JOBS)
+
+
 async def burn_worker() -> None:
     """תור נפרד לצריבה, שיכולה לרוץ שעות על קובץ ארוך."""
     while True:
         job = await burn_queue.get()
         work = job.work or config.WORK_DIR / uuid.uuid4().hex[:10]
+        global burning
+        burning += 1
         try:
             await _burn(job, work)
         except Exception as exc:  # noqa: BLE001
             log.exception("הצריבה נכשלה")
             await _safe_edit(job.status, f"❌ {exc}")
         finally:
+            burning -= 1
             pipeline.cleanup(work)
             burn_queue.task_done()
 
@@ -543,7 +552,8 @@ async def main() -> None:
              T, config.ALLOWLIST_FILE, config.WORK_DIR)
 
     asyncio.create_task(worker())
-    asyncio.create_task(burn_worker())
+    for _ in range(max(1, config.BURN_JOBS)):
+        asyncio.create_task(burn_worker())
     asyncio.create_task(expire_offers())
     await client.run_until_disconnected()
 

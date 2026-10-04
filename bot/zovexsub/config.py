@@ -186,18 +186,34 @@ BURN_TIMEOUT_FLOOR = _int("BURN_TIMEOUT_FLOOR", 1800)
 #   ארבעה     0.58x   (0.145 לליבה)
 # התשואה לכל ליבה יורדת כבר מהחוט השלישי, ולכן עדיף יותר תהליכים עם
 # פחות חוטים: 9 קטעים של שני חוטים מוציאים כ-12% יותר מ-6 של שלושה.
-BURN_SEGMENTS = _int("BURN_SEGMENTS", 0)          # 0 = לפי מספר הליבות
+# אורך הקטע קובע את צפיפות החלוקה מחדש של הליבות. קטע ארוך מחזיק את
+# המקום שלו עד שהוא נגמר, ואז צריבה שנייה פשוט ממתינה לראשונה במקום
+# להתחלק איתה. קטעים קצרים משחררים מקום כל הזמן, וכך החלוקה אמיתית.
+# שתי דקות: פתיחת ffmpeg (כחצי שנייה) זניחה מול הקידוד עצמו
+BURN_CHUNK_SECONDS = _int("BURN_CHUNK_SECONDS", 120)
 BURN_SEGMENT_THREADS = _int("BURN_SEGMENT_THREADS", 2)
-BURN_SEGMENTS_MAX = _int("BURN_SEGMENTS_MAX", 12)
+BURN_CHUNKS_MAX = _int("BURN_CHUNKS_MAX", 200)
+
+
+def burn_chunks(duration: float) -> int:
+    """לכמה קטעים לחתוך וידאו באורך הזה."""
+    return max(1, min(BURN_CHUNKS_MAX,
+                      -(-int(duration) // max(1, BURN_CHUNK_SECONDS))))
 # וידאו קצר לא מרוויח מהפיצול, ורק מסבך
 BURN_PARALLEL_MIN_MINUTES = _int("BURN_PARALLEL_MIN_MINUTES", 3)
+# כמה צריבות מותר להריץ בו-זמנית. מעבר לזה נכנסים לתור
+BURN_JOBS = _int("BURN_JOBS", 2)
 
 
-def burn_segments(cores: int) -> int:
-    """לכמה קטעים לחתוך, כך שכל הליבות יועסקו."""
-    if BURN_SEGMENTS > 0:
-        return min(BURN_SEGMENTS, BURN_SEGMENTS_MAX)
-    return max(1, min(cores // max(1, BURN_SEGMENT_THREADS), BURN_SEGMENTS_MAX))
+def burn_slots(cores: int) -> int:
+    """כמה קטעים מותר להריץ בו-זמנית בכל המכונה, על פני כל הצריבות.
+
+    זה מה שמחלק את הליבות בין צריבות מקבילות, ובלי לשנות שום תהליך
+    שכבר רץ: הקטעים הם שמתחרים על המקומות. צריבה לבדה תופסת את כולם
+    ומקבלת את המכונה כולה; כששנייה מצטרפת הן מתחלקות מאליהן, וכשאחת
+    מסיימת השנייה מתרחבת בחזרה בלי שאיש יתערב.
+    """
+    return max(1, cores // max(1, BURN_SEGMENT_THREADS))
 
 
 def burn_timeout(duration: float) -> float:

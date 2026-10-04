@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -424,11 +425,102 @@ def _describe_profile(settings: dict, video: Path, duration: float) -> None:
              video.stat().st_size / 1024 ** 2, duration / 60)
 
 
+class CorePool:
+    """מחלק את ליבות הצריבה בין העבודות שרצות על המכונה.
+
+    סמפור לא מספיק כאן: הוא FIFO, וצריבה שנרשמה ראשונה מכניסה את כל
+    הקטעים שלה לתור לפני שהשנייה בכלל מגיעה — כלומר השנייה ממתינה
+    לראשונה במלואה במקום להתחלק איתה.
+
+    כאן לכל עבודה יש מכסה שמחושבת מחדש לפי כמה עבודות רצות ברגע זה:
+    עבודה לבדה מקבלת את כל המכונה, ושתיים מתחלקות בשווה. המכסה לא
+    מבוזבזת — אם אף עבודה שממתינה לא מתחת למכסה שלה, מי שממתין יכול
+    לקחת בכל זאת, כדי שלא יישאר מקום פנוי סתם.
+    """
+
+    def __init__(self, slots: int):
+        self.slots = slots
+        self.free = slots
+        self.held: dict[int, int] = {}
+        # ספירה ולא קבוצה: לעבודה אחת יש הרבה קטעים ממתינים, וכשאחד
+        # מהם תופס מקום השאר עדיין ממתינים. קבוצה הייתה מוחקת את העבודה
+        # מהרשימה ואז השנייה הייתה נראית כאילו אף אחד לא מחכה לה
+        self.waiting: dict[int, int] = {}
+        self.cond = asyncio.Condition()
+        self._next = 0
+
+    def share(self) -> int:
+        return max(1, self.slots // max(1, len(self.held)))
+
+    @asynccontextmanager
+    async def job(self):
+        """נרשם כעבודה, וכך משנה את המכסה של כל השאר."""
+        async with self.cond:
+            self._next += 1
+            token = self._next
+            self.held[token] = 0
+            self.cond.notify_all()
+        log.info("צריבה %d נכנסה: %d עבודות, מכסה %d קטעים (%d ליבות)",
+                 token, len(self.held), self.share(),
+                 self.share() * config.BURN_SEGMENT_THREADS)
+        try:
+            yield token
+        finally:
+            async with self.cond:
+                self.held.pop(token, None)
+                self.waiting.pop(token, None)
+                self.cond.notify_all()
+
+    @asynccontextmanager
+    async def slot(self, token: int):
+        """תופס מקום אחד, וממתין אם העבודה כבר מיצתה את המכסה שלה."""
+        def ready() -> bool:
+            if self.free <= 0 or token not in self.held:
+                return self.free > 0
+            limit = self.share()
+            return (self.held[token] < limit
+                    or not any(self.held.get(other, 0) < limit
+                               for other, pending in self.waiting.items()
+                               if pending and other != token))
+
+        async with self.cond:
+            self.waiting[token] = self.waiting.get(token, 0) + 1
+            try:
+                await self.cond.wait_for(ready)
+            finally:
+                self.waiting[token] = max(0, self.waiting.get(token, 1) - 1)
+            self.free -= 1
+            self.held[token] = self.held.get(token, 0) + 1
+        try:
+            yield
+        finally:
+            async with self.cond:
+                self.free += 1
+                if token in self.held:
+                    self.held[token] -= 1
+                self.cond.notify_all()
+
+
+# בריכת הליבות של המכונה, משותפת לכל הצריבות. נוצרת בפעם הראשונה שצריך
+# אותה, כדי שתהיה שייכת ללולאת האירועים הרצה
+_pool: CorePool | None = None
+
+
+def core_pool() -> CorePool:
+    global _pool
+    if _pool is None:
+        count = config.burn_slots(os.cpu_count() or 2)
+        _pool = CorePool(count)
+        log.info("מקומות צריבה במכונה: %d (×%d חוטים = %d ליבות)",
+                 count, config.BURN_SEGMENT_THREADS,
+                 count * config.BURN_SEGMENT_THREADS)
+    return _pool
+
+
 async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
     """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
     duration = await duration_seconds(video)
-    cores = os.cpu_count() or 2
-    segments = config.burn_segments(cores)
+    segments = config.burn_chunks(duration)
 
     if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
         try:
@@ -455,10 +547,13 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 
     limit = config.burn_timeout(duration)
     log.info("צריבה בתהליך אחד, %d חוטים, תקרת זמן %.0f דקות", threads, limit / 60)
-    if on_progress:
-        await _run_progress(cmd, duration, on_progress, timeout=limit)
-    else:
-        await _run(cmd, timeout=limit)
+    # גם תהליך יחיד נרשם כעבודה, כדי שלא יתחרה בצריבה שרצה לידו
+    pool = core_pool()
+    async with pool.job() as token, pool.slot(token):
+        if on_progress:
+            await _run_progress(cmd, duration, on_progress, timeout=limit)
+        else:
+            await _run(cmd, timeout=limit)
 
     log.info("הצריבה הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
     return dst
@@ -486,9 +581,11 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
     threads = config.BURN_SEGMENT_THREADS
     span = duration / segments
-    limit = config.burn_timeout(duration)
-    log.info("צריבה מקבילית: %d קטעים של %.1f דקות, %d חוטים לקטע, %d ליבות בסך הכל",
-             segments, span / 60, threads, segments * threads)
+    limit = config.burn_timeout(span)
+    pool = core_pool()
+    log.info("צריבה מקבילית: %d קטעים של %.1f דקות, %d חוטים לקטע, "
+             "עד %d קטעים בו-זמנית",
+             segments, span / 60, threads, config.burn_slots(os.cpu_count() or 2))
 
     done = [0.0] * segments
     lock = asyncio.Lock()
@@ -524,11 +621,15 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                 await on_progress(min(1.0, sum(done) / duration),
                                   f"{rate:.1f}x" if rate else speed)
 
-        await _run_progress(cmd, length, progress, timeout=limit)
+        # ממתין למקום פנוי במכונה. זה מה שמחלק את הליבות בין צריבות
+        # מקבילות: קטע שמחכה לא צורך כלום
+        async with pool.slot(token):
+            await _run_progress(cmd, length, progress, timeout=limit)
         log.info("קטע %d/%d הסתיים", index + 1, segments)
         return piece
 
-    pieces = await asyncio.gather(*(one(i) for i in range(segments)))
+    async with pool.job() as token:
+        pieces = await asyncio.gather(*(one(i) for i in range(segments)))
 
     listing = work / "concat.txt"
     listing.write_text(
