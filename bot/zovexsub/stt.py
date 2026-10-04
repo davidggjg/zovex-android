@@ -227,6 +227,7 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
                 if w.get("start") is not None
                 and start - chunk.offset - 0.01 <= float(w["start"]) <= end - chunk.offset + 0.01
             ]
+            words = _unstretch(words)
             if words:
                 first, last = words[0].start, words[-1].end
                 if start - 2.0 <= first <= end:
@@ -252,6 +253,35 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
     for i, seg in enumerate(segments):
         seg.index = i
     return Transcript(language=language or "unknown", segments=segments)
+
+
+def _spoken_length(text: str) -> float:
+    """כמה זמן לוקח להגות מילה כזו, בערך."""
+    return min(0.9, max(0.12, len(text.strip()) * 0.075))
+
+
+def _unstretch(words: list[Word]) -> list[Word]:
+    """מתקן מילה שנמתחה על פני שקט או מוזיקה.
+
+    כש-Whisper מאבד יישור בתחילת חלון הוא נותן למילה הראשונה את זמן
+    תחילת החלון, אבל את זמן הסיום האמיתי. כך נוצרת "מילה" באורך כמה
+    שניות — למשל האות A שנמתחה מ-30.00 עד 32.52. הסיום אמין, ולכן
+    ההתחלה מחושבת ממנו לאחור לפי אורך ההגייה הסביר.
+    """
+    fixed = []
+    for position, word in enumerate(words):
+        length = word.end - word.start
+        expected = _spoken_length(word.text)
+        if length > max(1.0, expected * 4):
+            corrected = max(word.end - expected, 0.0)
+            # לא דוחפים מילה אל תוך זו שלפניה
+            if position:
+                corrected = max(corrected, fixed[-1].end)
+            log.info("מילה מתוחה תוקנה: %r %.2f-%.2f ⇐ %.2f",
+                     word.text, corrected, word.end, word.start)
+            word = Word(corrected, word.end, word.text)
+        fixed.append(word)
+    return fixed
 
 
 # כתובת אתר או סימן מים בתוך שקט — כמעט תמיד המצאה של המודל

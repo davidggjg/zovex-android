@@ -97,6 +97,11 @@ async def refine(segments: list[Segment], audio: Path, work: Path,
         )
         if not start - 0.1 <= onset <= end:
             continue
+        # אותו ארטיפקט חוזר גם בקטע המבודד: אם המילה הראשונה מדווחת בדיוק
+        # בתחילת הקטע שחתכנו, זה לא מידע — זו תחילת החלון
+        if onset <= start + 0.2:
+            log.info("[%d] ההקשבה החוזרת החזירה את תחילת הקטע — מתעלמים", index)
+            continue
 
         shift = onset - seg.start
         if abs(shift) > 0.25:
