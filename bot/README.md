@@ -94,6 +94,15 @@ sudo journalctl -u zovexsub -f
 
 הרשימה נשמרת ב-`allowlist.json` ליד הקוד — לא צריך לערוך `.env` ולא להפעיל מחדש.
 
+### בדיקה לפני פריסה
+
+```bash
+/opt/zovexsub/venv/bin/python -m pyflakes /opt/zovexsub/bot/zovexsub/*.py
+```
+
+מחזיר פלט ריק כשהכול תקין. הבדיקה תופסת שמות לא מוגדרים — שגיאה שמתגלה
+אחרת רק כשהיא מפילה עבודה אמיתית באמצע.
+
 ### בדיקה בלי טלגרם
 
 ```bash

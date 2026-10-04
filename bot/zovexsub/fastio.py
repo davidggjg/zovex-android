@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import os
 from pathlib import Path
@@ -29,11 +30,7 @@ MAX_PARTS = 4000       # תקרת החלקים שטלגרם מקבל
 
 def crypto_ready() -> bool:
     """האם ההצפנה רצה בקוד C ולא בפייתון."""
-    try:
-        import cryptg  # noqa: F401
-        return True
-    except ImportError:
-        return False
+    return importlib.util.find_spec("cryptg") is not None
 
 
 async def download(client, message, dst: Path, on_progress=None) -> Path:

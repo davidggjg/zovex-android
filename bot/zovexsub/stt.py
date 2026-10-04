@@ -254,6 +254,9 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
     return Transcript(language=language or "unknown", segments=segments)
 
 
+# כתובת אתר או סימן מים בתוך שקט — כמעט תמיד המצאה של המודל
+_URL = re.compile(r"(https?://|www\.|\.(com|net|org|tv|ru|ir|co\.il)\b)", re.I)
+
 _JUNK = {
     "תרגום וכתוביות", "כתוביות", "סוף", "תודה רבה", "thank you", "thanks for watching",
     "subtitles by", "amara.org", "please subscribe", "משנה הבאה",

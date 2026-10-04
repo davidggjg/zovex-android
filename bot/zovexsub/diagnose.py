@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import config, media, srt
+from . import media, srt
 from .stt import Transcript, transcribe
 
 
