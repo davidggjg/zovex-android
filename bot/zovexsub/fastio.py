@@ -56,7 +56,12 @@ async def _parallel_download(client, message, dst: Path, size: int,
         fh.truncate(size)
 
     chunk = 1024 * 1024
-    span = max(chunk, -(-size // workers) // chunk * chunk)
+    # עיגול כלפי מעלה בשני השלבים. עיגול כלפי מטה משאיר שארית לא מכוסה
+    # בסוף הקובץ, ואז בדיקת הגודל נכשלת וכל ההורדה מתחילה מחדש
+    per_worker = -(-size // workers)
+    span = max(chunk, -(-per_worker // chunk) * chunk)
+    if span * workers < size:
+        raise RuntimeError("חישוב הטווחים אינו מכסה את הקובץ")
     done = 0
     lock = asyncio.Lock()
     handle = os.open(dst, os.O_WRONLY)
