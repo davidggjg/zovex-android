@@ -1,6 +1,7 @@
 """דיווח התקדמות: אחוזים, פס, קצב וזמן משוער לסיום, לכל שלב."""
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Awaitable, Callable
 
@@ -9,6 +10,7 @@ Edit = Callable[[str], Awaitable[None]]
 FULL, EMPTY = "▓", "░"
 WIDTH = 12
 MIN_INTERVAL = 5.0  # טלגרם חוסם עריכות תכופות מדי
+HEARTBEAT = 20.0    # כל כמה שניות להראות שהעבודה עדיין רצה
 
 
 def bar(fraction: float) -> str:
@@ -80,6 +82,22 @@ class Stage:
         self.last_text = text
         self.last_edit = now
         await self.edit(text)
+
+    def heartbeat(self, fraction: float, label: str) -> "asyncio.Task":
+        """מעדכן את הזמן שעבר גם כשהאחוז לא זז.
+
+        שלב שמתקדם בקפיצות — קטע תמלול שלם, חלון תרגום — נראה תקוע בין
+        קפיצה לקפיצה. הדופק הזה מראה שהעבודה חיה.
+        """
+        async def tick() -> None:
+            start = time.monotonic()
+            while True:
+                await asyncio.sleep(HEARTBEAT)
+                waited = time.monotonic() - start
+                self.last_edit = 0.0
+                await self.show(fraction, note=f"{label} · {clock(waited)}")
+
+        return asyncio.create_task(tick())
 
     async def finish(self, note: str = "") -> None:
         self.last_edit = 0.0

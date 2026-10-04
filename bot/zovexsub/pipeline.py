@@ -51,11 +51,22 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     chunks = await media.split_audio(audio, work, duration)
 
     stage = prog.Stage(progress, "✍️ מתמלל")
+    pulse: list = [None]
 
     async def on_chunk(done: int, total: int) -> None:
-        await stage.show(done / total, note=f"קטע {done}/{total}")
+        """נקרא כשקטע שלם הסתיים. בין קטע לקטע הדופק מראה שהעבודה חיה."""
+        if pulse[0]:
+            pulse[0].cancel()
+        await stage.show(done / total, note=f"קטע {done}/{total}", force=True)
+        if done < total:
+            pulse[0] = stage.heartbeat(done / total, f"קטע {done + 1}/{total}")
 
-    transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
+    pulse[0] = stage.heartbeat(0.0, f"קטע 1/{len(chunks)}")
+    try:
+        transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
+    finally:
+        if pulse[0]:
+            pulse[0].cancel()
     await stage.finish()
     if not transcript.segments:
         raise RuntimeError("לא זוהה דיבור בקובץ.")
@@ -74,11 +85,21 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     stage = prog.Stage(progress, "🇮🇱 מתרגם")
     await stage.show(0.02, note=f"חוקר את התוכן · מקור {transcript.language}", force=True)
 
-    async def on_translate(note: str, fraction: float) -> None:
-        await stage.show(fraction, note=note)
+    beat: list = [stage.heartbeat(0.02, "חוקר את התוכן")]
 
-    lines, notes = await hebrew.build_hebrew(transcript.segments, transcript.language,
-                                             on_step=on_translate)
+    async def on_translate(note: str, fraction: float) -> None:
+        if beat[0]:
+            beat[0].cancel()
+        await stage.show(fraction, note=note, force=True)
+        beat[0] = stage.heartbeat(fraction, note)
+
+    try:
+        lines, notes = await hebrew.build_hebrew(transcript.segments,
+                                                 transcript.language,
+                                                 on_step=on_translate)
+    finally:
+        if beat[0]:
+            beat[0].cancel()
     await stage.finish()
 
     cues = srt.build_cues(transcript.segments, lines, speech=speech)
