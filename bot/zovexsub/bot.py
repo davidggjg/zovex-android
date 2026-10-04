@@ -53,6 +53,7 @@ OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
 • `{T} הסר 123456789` / `{T} הסר` בתגובה — מבטל אישור
 • `{T} רשימה` — כל המאושרים
 • `{T} בדיקה` בתגובה לסרטון — דוח תזמונים לאבחון סנכרון
+• `{T} עצור` — **עוצר מיד כל מה שרץ**, מרוקן את התור ומוחק את כל הקבצים
 • `{T} עזרה` — ההוראות למשתמשים"""
 
 # רק צורות שמתחילות בנקודה. מילה רגילה כמו "כתוביות" או "srt" מופיעה
@@ -101,7 +102,60 @@ burn_queue: asyncio.Queue[Job] = asyncio.Queue()
 burning = 0          # כמה צריבות רצות ברגע זה
 offers: dict[int, Offer] = {}      # לפי מזהה הודעת ההצעה
 waiting: dict[int, Pending] = {}   # בקשות שממתינות לקובץ כתוביות
+running: dict[int, asyncio.Task] = {}   # עבודות שרצות ברגע זה, לביטול
 me_id: int = 0
+
+
+async def _run_job(handler, job: "Job", work: Path) -> None:
+    """מריץ עבודה כמשימה נפרדת, כדי שאפשר יהיה לבטל אותה בלי להפיל את העובד."""
+    task = asyncio.current_task()
+    if task:
+        running[id(task)] = task
+    try:
+        await handler(job, work)
+    finally:
+        if task:
+            running.pop(id(task), None)
+
+
+def _drain(q: asyncio.Queue) -> int:
+    """מרוקן תור ומחזיר כמה עבודות הושלכו."""
+    dropped = 0
+    while True:
+        try:
+            q.get_nowait()
+        except asyncio.QueueEmpty:
+            return dropped
+        q.task_done()
+        dropped += 1
+
+
+async def stop_everything() -> tuple[int, int, float]:
+    """עוצר כל מה שרץ, מרוקן את התורים ומוחק את כל הקבצים הזמניים."""
+    dropped = _drain(queue) + _drain(burn_queue)
+
+    tasks = list(running.values())
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        # ffmpeg נהרג מתוך הביטול עצמו, אבל ממתינים שבאמת יסתיים
+        await asyncio.gather(*tasks, return_exceptions=True)
+    running.clear()
+    offers.clear()
+    waiting.clear()
+
+    freed = 0.0
+    try:
+        for item in config.WORK_DIR.iterdir():
+            freed += sum(f.stat().st_size for f in item.rglob("*") if f.is_file()) \
+                if item.is_dir() else item.stat().st_size
+            pipeline.cleanup(item) if item.is_dir() else item.unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("ניקוי תיקיית העבודה נכשל: %s", exc)
+
+    log.warning("עצירה מלאה: %d עבודות רצות, %d בתור, %.1fGB שוחררו",
+                len(tasks), dropped, freed / 1024 ** 3)
+    return len(tasks), dropped, freed / 1024 ** 3
 
 
 def free_gigabytes() -> float:
@@ -172,6 +226,18 @@ async def on_command(event: events.NewMessage.Event, body: str) -> None:
 
     # ---- פקודות ניהול ----
     if is_owner:
+        if body in ("עצור", "stop", "עצירה"):
+            note = await event.reply("🛑 עוצר הכל…")
+            stopped, dropped, freed = await stop_everything()
+            await _safe_edit(note, (
+                "🛑 **נעצר הכל**\n"
+                f"• {stopped} עבודות שרצו — בוטלו\n"
+                f"• {dropped} עבודות בתור — הושלכו\n"
+                f"• {freed:.1f}GB קבצים זמניים — נמחקו\n"
+                f"• {free_gigabytes():.0f}GB פנויים בדיסק\n\n"
+                "הבוט ממשיך לרוץ ומוכן לעבודה חדשה."
+            ))
+            return
         if body in ("ניהול", "admin"):
             await event.reply(OWNER_HELP)
             return
@@ -328,7 +394,10 @@ async def worker() -> None:
         job = await queue.get()
         work = config.WORK_DIR / uuid.uuid4().hex[:10]
         try:
-            await _subtitle(job, work)
+            await _run_job(_subtitle, job, work)
+        except asyncio.CancelledError:
+            log.warning("עבודת הכתוביות בוטלה")
+            await _safe_edit(job.status, "🛑 בוטל")
         except Exception as exc:  # noqa: BLE001 — מדווחים לצ'אט ולא מפילים את הבוט
             log.exception("עבודת הכתוביות נכשלה")
             await _safe_edit(job.status, f"❌ {exc}")
@@ -352,7 +421,10 @@ async def burn_worker() -> None:
         global burning
         burning += 1
         try:
-            await _burn(job, work)
+            await _run_job(_burn, job, work)
+        except asyncio.CancelledError:
+            log.warning("הצריבה בוטלה")
+            await _safe_edit(job.status, "🛑 בוטל")
         except Exception as exc:  # noqa: BLE001
             log.exception("הצריבה נכשלה")
             await _safe_edit(job.status, f"❌ {exc}")

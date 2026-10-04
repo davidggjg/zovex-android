@@ -46,6 +46,11 @@ async def _run(cmd: list[str], *, nice: bool = True,
             f"הצריבה עברה את תקרת הזמן ({timeout / 60:.0f} דקות) ונעצרה. "
             f"להעלאת התקרה: BURN_TIMEOUT_FACTOR ב-.env"
         ) from None
+    except asyncio.CancelledError:
+        # בלי זה ffmpeg היה ממשיך לרוץ יתום אחרי ביטול העבודה
+        proc.kill()
+        await proc.wait()
+        raise
     if proc.returncode != 0:
         tail = err.decode("utf-8", "replace").strip().splitlines()[-12:]
         raise FFmpegError("\n".join(tail) or f"exit {proc.returncode}")
@@ -129,6 +134,11 @@ async def _run_progress(cmd: list[str], total: float, on_progress, *,
             f"הצריבה עברה את תקרת הזמן ({timeout / 60:.0f} דקות) ונעצרה. "
             f"להעלאת התקרה: BURN_TIMEOUT_FACTOR ב-.env"
         ) from None
+    except asyncio.CancelledError:
+        # בלי זה ffmpeg היה ממשיך לרוץ יתום אחרי ביטול העבודה
+        proc.kill()
+        await proc.wait()
+        raise
 
     if proc.returncode != 0:
         err = (await proc.stderr.read()).decode("utf-8", "replace") if proc.stderr else ""
