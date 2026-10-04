@@ -84,6 +84,16 @@ async def extract_audio(src: Path, dst: Path) -> Path:
     return dst
 
 
+async def cut_audio(audio: Path, start: float, end: float, dst: Path) -> Path:
+    """חותך קטע אודיו לבדיקה חוזרת."""
+    await _run([
+        "ffmpeg", "-nostdin", "-y", "-threads", str(config.FFMPEG_THREADS),
+        "-ss", f"{max(0.0, start):.3f}", "-t", f"{max(0.2, end - start):.3f}",
+        "-i", str(audio), "-ac", "1", "-ar", "16000", "-c:a", "flac", str(dst),
+    ])
+    return dst
+
+
 @dataclass
 class Chunk:
     path: Path

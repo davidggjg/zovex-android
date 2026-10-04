@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import config, hebrew, media, srt
+from . import config, hebrew, media, realign, srt
 from .stt import transcribe
 
 log = logging.getLogger(__name__)
@@ -55,10 +55,13 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
         raise RuntimeError("לא זוהה דיבור בקובץ.")
     log.info("זוהו %d סגמנטים, שפה: %s", len(transcript.segments), transcript.language)
 
+    speech = await media.speech_spans(audio)
+    await progress("🎯 מדייק תזמונים…")
+    await realign.refine(transcript.segments, audio, work, speech)
+
     await progress(f"🔎 חוקר את התוכן (שפת מקור: {transcript.language})…")
     lines, notes = await hebrew.build_hebrew(transcript.segments, transcript.language)
 
-    speech = await media.speech_spans(audio)
     cues = srt.build_cues(transcript.segments, lines, speech=speech)
     if not cues:
         raise RuntimeError("התרגום חזר ריק.")

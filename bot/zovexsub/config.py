@@ -102,6 +102,10 @@ STT_CHUNK_BYTES = 20 * 1024 * 1024
 # אודיו FLAC 16kHz מונו ~ 100KB לשנייה במקרה הגרוע; נחתוך לפי זמן כגיבוי
 STT_CHUNK_SECONDS = _int("STT_CHUNK_SECONDS", 600)
 
+# כמה כתוביות חשודות מותר לשמוע שוב בעבודה אחת. כל הקשבה חוזרת היא
+# קריאת API נוספת, קצרה וזולה, אבל בסרט ארוך זה מצטבר
+REALIGN_MAX = _int("REALIGN_MAX", 60)
+
 # עיצוב כתוביות
 SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
 SRT_MAX_LINES = 2
