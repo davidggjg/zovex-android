@@ -81,7 +81,8 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
         stage.stop()
 
     stage = prog.Stage(progress, "🇮🇱 מתרגם")
-    await stage.show(0.02, note=f"חוקר את התוכן · מקור {transcript.language}", force=True)
+    await stage.show(0.04, note=f"חוקר את התוכן · מקור {transcript.language}",
+                     force=True)
 
     stage.pulse()
 

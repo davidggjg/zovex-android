@@ -22,6 +22,14 @@ log = logging.getLogger(__name__)
 WINDOW = 35          # שורות שמתורגמות בקריאה אחת
 CONTEXT = 12         # שורות הקשר לפני ואחרי (לא מתורגמות שוב)
 
+# חלוקת טווחי ההתקדמות. כל אחד מהמעברים האחרונים הוא קריאה אחת ארוכה
+# על כל הטקסט, ולכן מקבל טווח משלו ולא כמה אחוזים בסוף
+RESEARCH_TO = 0.15       # מסמך החקר
+TRANSLATE_FROM = 0.15
+TRANSLATE_TO = 0.65      # התרגום עצמו
+ADDRESSEE_TO = 0.82      # התאמת מגדר הפנייה
+QUALITY_TO = 0.95        # בקרת איכות וניקוי
+
 RESEARCH_SYSTEM = """אתה עורך לשוני ראשי באולפן כתוביות מקצועי בישראל.
 לפניך תמליל גולמי של סרטון. התפקיד שלך הוא לחקור אותו לעומק לפני התרגום,
 ולהשתמש בחיפוש באינטרנט לכל דבר שאתה לא מזהה בוודאות: שמות של אנשים,
@@ -237,17 +245,19 @@ async def build_hebrew(segments: list[Segment], language: str,
 
     lines = await _translate_all(segments, language, notes, on_step)
     if on_step:
-        await on_step("מתאים מגדר פנייה", 0.93)
+        await on_step("מתאים מגדר פנייה", TRANSLATE_TO)
     lines = await enforce_addressee(segments, lines, notes)
     if on_step:
-        await on_step("בודק עקביות", 0.97)
+        await on_step("בודק איכות ועקביות", ADDRESSEE_TO)
     lines = await _quality_pass(segments, lines, notes)
 
     # ניקוי ארטיפקטים: ניקוד מוסר ישירות, אותיות זרות נשלחות לתיקון ממוקד
     lines, foreign = cleanup.clean(lines)
+    if on_step:
+        await on_step("מסיים", QUALITY_TO)
     if foreign:
         if on_step:
-            await on_step("מתקן אותיות זרות", 0.99)
+            await on_step("מתקן אותיות זרות", QUALITY_TO)
         lines = await repair_foreign(segments, lines, foreign)
         lines, _ = cleanup.clean(lines)
 
@@ -333,8 +343,12 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         finished += len(window)
         log.info("תורגמו %d/%d שורות", finished, len(segments))
         if on_step:
+            # הטווחים מחולקים לפי הזמן שכל שלב באמת לוקח, ולא לפי כמות
+            # העבודה. מעבר שהוא קריאה אחת ארוכה צריך טווח משלו, אחרת
+            # המד נראה תקוע בדיוק כשהוא עובד
             await on_step(f"מתרגם {finished}/{len(segments)} שורות",
-                          0.05 + 0.85 * finished / max(1, len(segments)))
+                          TRANSLATE_FROM + (TRANSLATE_TO - TRANSLATE_FROM)
+                          * finished / max(1, len(segments)))
 
     await asyncio.gather(*(translate_window(start) for start in starts))
     return out
