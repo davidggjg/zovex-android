@@ -40,6 +40,9 @@ HELP = f"""**בוט כתוביות — זובקס**
 מ-{config.BURN_MAX_MINUTES} דקות, אציע לצרוב אותן על הסרטון —
 עונים `כן` בתגובה להצעה, ורק אז הצריבה מתחילה.
 
+**יש לך כבר קובץ כתוביות?** הגב לסרטון עם `{T} צריבה`,
+אני אבקש את הקובץ, ואצרוב אותו בלי לתמלל מחדש.
+
 תמלול עד {config.MAX_INPUT_MINUTES} דקות, כל שפה, הפלט תמיד עברית."""
 
 OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
@@ -68,6 +71,16 @@ class Job:
     work: Path | None = None
     diagnose: bool = False    # מפיק דוח תזמונים במקום כתוביות
     url: str = ""             # אם מוגדר — מורידים מהקישור במקום מטלגרם
+    srt_message: object = None  # קובץ כתוביות שהמשתמש שלח, לצריבה ישירה
+
+
+@dataclass
+class Pending:
+    """בקשת צריבה שממתינה לקובץ הכתוביות של המשתמש."""
+    video: object
+    message: object
+    user_id: int
+    expires: float
 
 
 @dataclass
@@ -85,6 +98,7 @@ class Offer:
 queue: asyncio.Queue[Job] = asyncio.Queue()
 burn_queue: asyncio.Queue[Job] = asyncio.Queue()
 offers: dict[int, Offer] = {}      # לפי מזהה הודעת ההצעה
+waiting: dict[int, Pending] = {}   # בקשות שממתינות לקובץ כתוביות
 me_id: int = 0
 
 
@@ -143,6 +157,7 @@ async def on_message(event: events.NewMessage.Event) -> None:
         if head in ALIASES:
             await on_command(event, text[len(head):].strip())
         elif event.is_reply:
+            await on_subtitle_file(event)
             await on_yes(event, text)
             await _hint_if_lost(event, text)
     except Exception:  # noqa: BLE001 — האנדלר לעולם לא מפיל את הבוט
@@ -221,6 +236,23 @@ async def on_command(event: events.NewMessage.Event, body: str) -> None:
         await event.reply("yt-dlp לא מותקן על השרת. התקנה:\n`pip install yt-dlp`")
         return
 
+    # צריבה עם קובץ כתוביות שהמשתמש כבר הכין
+    if body.startswith(("צריבה", "צרוב", "לצרוב", "burn", "hardsub")):
+        if not has_media:
+            await event.reply(f"צריך להגיב עם `{T} צריבה` להודעה שמכילה את הסרטון.")
+            return
+        if _is_subtitle(event.message):
+            await queue_burn(event, replied, event.message)
+            return
+        prompt = await event.reply(
+            "📄 **שלח לי עכשיו את קובץ הכתוביות** (`.srt`) **בתגובה להודעה הזו**, "
+            "ואני אצרוב אותו על הסרטון."
+        )
+        waiting[prompt.id] = Pending(video=replied, message=prompt, user_id=sender,
+                                     expires=time.monotonic() + OFFER_TTL)
+        log.info("ממתין לקובץ כתוביות (הודעה %s)", prompt.id)
+        return
+
     wants_report = body.startswith(("בדיקה", "אבחון", "debug", "diag"))
     first = "📥 בתור…" if queue.qsize() else (
         "🔗 מוריד מהקישור…" if url else "📥 מוריד את הקובץ…")
@@ -251,6 +283,36 @@ async def _describe(client: TelegramClient, user_id: int) -> str:
                                   getattr(entity, "last_name", "")])).strip()
     username = getattr(entity, "username", "")
     return f"{name} (@{username})" if username else name
+
+
+def _is_subtitle(message) -> bool:
+    name = _filename(message) if getattr(message, "media", None) else ""
+    return name.lower().endswith((".srt", ".vtt", ".ass", ".ssa"))
+
+
+async def queue_burn(event, video, srt_message) -> None:
+    status = await event.reply("🔥 בתור לצריבה…" if burn_queue.qsize() else "📥 מוריד…")
+    await burn_queue.put(Job(event, video, status, srt_message=srt_message))
+    log.info("צריבה ידנית נוספה לתור")
+
+
+async def on_subtitle_file(event: events.NewMessage.Event) -> None:
+    """קובץ כתוביות שנשלח בתגובה לבקשה — מתחיל צריבה."""
+    if not event.is_reply:
+        return
+    pending = waiting.get(event.reply_to_msg_id)
+    if pending is None:
+        return
+    sender = _who(event.message)
+    if sender != pending.user_id and sender != me_id:
+        return
+    if not _is_subtitle(event.message):
+        await event.reply("זה לא נראה כמו קובץ כתוביות. שלח קובץ `.srt`.")
+        return
+
+    waiting.pop(event.reply_to_msg_id, None)
+    await _safe_delete(pending.message)
+    await queue_burn(event, pending.video, event.message)
 
 
 async def on_yes(event: events.NewMessage.Event, text: str) -> None:
@@ -292,13 +354,14 @@ async def burn_worker() -> None:
     """תור נפרד לצריבה, שיכולה לרוץ שעות על קובץ ארוך."""
     while True:
         job = await burn_queue.get()
+        work = job.work or config.WORK_DIR / uuid.uuid4().hex[:10]
         try:
-            await _burn(job, job.work)
+            await _burn(job, work)
         except Exception as exc:  # noqa: BLE001
             log.exception("הצריבה נכשלה")
             await _safe_edit(job.status, f"❌ {exc}")
         finally:
-            pipeline.cleanup(job.work)
+            pipeline.cleanup(work)
             burn_queue.task_done()
 
 
@@ -370,11 +433,33 @@ async def _subtitle(job: Job, work: Path) -> None:
 
 
 async def _burn(job: Job, work: Path) -> None:
-    source = next(work.glob("source.*"))
-    ensure_space(source.stat().st_size)
-
     async def edit(text: str) -> None:
         await _safe_edit(job.status, text)
+
+    if job.srt_message is not None:
+        # צריבה של כתוביות שהמשתמש הביא: צריך להוריד גם את הסרטון וגם אותן
+        work.mkdir(parents=True, exist_ok=True)
+        total_bytes = int(getattr(getattr(job.message, "file", None), "size", 0) or 0)
+        ensure_space(total_bytes)
+
+        download = prog.Stage(edit, "📥 מוריד", total_bytes=total_bytes)
+
+        async def on_download(received: int, total: int) -> None:
+            await download.show(received / total if total else 0, done_bytes=received)
+
+        name = _filename(job.message)
+        source = work / f"source{Path(name).suffix or '.mp4'}"
+        await fastio.download(job.event.client, job.message, source,
+                              on_progress=on_download)
+        await download.finish()
+
+        job.srt_path = work / "subs.srt"
+        await job.srt_message.download_media(file=str(job.srt_path))
+        log.info("התקבל קובץ כתוביות: %.0fKB", job.srt_path.stat().st_size / 1024)
+    else:
+        source = next(work.glob("source.*"))
+
+    ensure_space(source.stat().st_size)
 
     stage = prog.Stage(edit, "🔥 צורב")
     stage.pulse()
