@@ -17,7 +17,7 @@ from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import allowlist, config, diagnose, pipeline
+from . import allowlist, config, diagnose, pipeline, progress as prog
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -295,21 +295,22 @@ async def _subtitle(job: Job, work: Path) -> None:
     name = _filename(job.message)
     source = work / f"source{Path(name).suffix or '.mp4'}"
 
-    last = 0.0
+    total_bytes = int(getattr(getattr(job.message, "file", None), "size", 0) or 0)
+    ensure_space(total_bytes)
+
+    async def edit(text: str) -> None:
+        await _safe_edit(job.status, text)
+
+    download = prog.Stage(edit, "📥 מוריד", total_bytes=total_bytes)
 
     async def on_download(received: int, total: int) -> None:
-        nonlocal last
-        if time.monotonic() - last < 6 or not total:
-            return
-        last = time.monotonic()
-        await _safe_edit(job.status, f"📥 מוריד… {received * 100 // total}%")
+        await download.show(received / total if total else 0, done_bytes=received)
 
-    ensure_space(int(getattr(getattr(job.message, "file", None), "size", 0) or 0))
     await job.message.download_media(file=str(source), progress_callback=on_download)
+    await download.finish()
     log.info("הורד: %s (%.1f MB)", source.name, source.stat().st_size / 1048576)
 
-    async def progress(text: str) -> None:
-        await _safe_edit(job.status, text)
+    progress = edit
 
     if job.diagnose:
         await progress("🔬 מפיק דוח תזמונים…")
@@ -348,10 +349,28 @@ async def _subtitle(job: Job, work: Path) -> None:
 async def _burn(job: Job, work: Path) -> None:
     source = next(work.glob("source.*"))
     ensure_space(source.stat().st_size)
-    burned = await pipeline.burn(source, job.srt_path, work)
-    await _safe_edit(job.status, "📤 מעלה את הוידאו הצרוב…")
-    await job.event.reply("🔥 וידאו עם כתוביות צרובות",
-                          file=str(burned), supports_streaming=True)
+
+    async def edit(text: str) -> None:
+        await _safe_edit(job.status, text)
+
+    stage = prog.Stage(edit, "🔥 צורב")
+
+    async def on_burn(fraction: float, speed: str) -> None:
+        await stage.show(fraction, note=f"קצב {speed}" if speed else "")
+
+    burned = await pipeline.burn(source, job.srt_path, work, on_progress=on_burn)
+    await stage.finish()
+
+    upload = prog.Stage(edit, "📤 מעלה", total_bytes=burned.stat().st_size)
+
+    async def on_upload(sent: int, total: int) -> None:
+        await upload.show(sent / total if total else 0, done_bytes=sent)
+
+    await job.event.client.send_file(
+        await job.event.get_input_chat(), str(burned),
+        caption="🔥 וידאו עם כתוביות צרובות", supports_streaming=True,
+        reply_to=job.event.message.id, progress_callback=on_upload,
+    )
     await _safe_delete(job.status)
     pipeline.cleanup(work)
 

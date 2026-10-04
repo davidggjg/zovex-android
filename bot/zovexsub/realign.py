@@ -52,7 +52,7 @@ def _suspects(segments: list[Segment], speech: list[tuple[float, float]]) -> lis
 
 
 async def refine(segments: list[Segment], audio: Path, work: Path,
-                 speech: list[tuple[float, float]]) -> int:
+                 speech: list[tuple[float, float]], on_step=None) -> int:
     """מקשיב שוב לכתוביות החשודות ומתקן את זמן ההתחלה שלהן."""
     suspects = _suspects(segments, speech)
     if not suspects:
@@ -74,6 +74,8 @@ async def refine(segments: list[Segment], audio: Path, work: Path,
         if end - start < 0.4:
             continue
 
+        if on_step:
+            await on_step(n + 1, budget)
         clip = await media.cut_audio(audio, start, end, work / f"re{n:03d}.flac")
         try:
             again = await transcribe([Chunk(clip, start)])

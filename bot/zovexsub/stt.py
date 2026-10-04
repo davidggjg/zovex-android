@@ -93,7 +93,8 @@ async def _post_chunk(client: httpx.AsyncClient, pool: KeyPool, chunk: Chunk,
     raise RuntimeError(f"התמלול נכשל אחרי מספר נסיונות — {last_error}")
 
 
-async def transcribe(chunks: list[Chunk], *, hint: str | None = None) -> Transcript:
+async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
+                     on_chunk=None) -> Transcript:
     pool = KeyPool("groq", config.GROQ_API_KEYS)
     segments: list[Segment] = []
     language = ""
@@ -140,6 +141,8 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None) -> Transcr
 
             if raw_segments:
                 carry = " ".join((s.get("text") or "") for s in raw_segments[-4:]).strip()
+            if on_chunk:
+                await on_chunk(n, len(chunks))
 
     segments = _drop_hallucinations(segments)
     for i, seg in enumerate(segments):

@@ -94,6 +94,40 @@ async def cut_audio(audio: Path, start: float, end: float, dst: Path) -> Path:
     return dst
 
 
+async def _run_progress(cmd: list[str], total: float, on_progress, *,
+                        timeout: float | None = None) -> None:
+    """מריץ ffmpeg וקורא את ההתקדמות שלו תוך כדי ריצה."""
+    full = _nice_prefix() + cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+    proc = await asyncio.create_subprocess_exec(
+        *full, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+
+    async def pump() -> None:
+        speed = ""
+        assert proc.stdout
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", "replace").strip()
+            if line.startswith("speed="):
+                speed = line.split("=", 1)[1].strip()
+            elif line.startswith("out_time_us=") and total > 0:
+                try:
+                    done = int(line.split("=", 1)[1]) / 1_000_000
+                except ValueError:
+                    continue
+                await on_progress(min(1.0, done / total), speed)
+
+    try:
+        await asyncio.wait_for(asyncio.gather(pump(), proc.wait()), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise FFmpegError(f"ffmpeg עבר את תקרת הזמן ({timeout:.0f} שניות) ונעצר") from None
+
+    if proc.returncode != 0:
+        err = (await proc.stderr.read()).decode("utf-8", "replace") if proc.stderr else ""
+        raise FFmpegError("\n".join(err.strip().splitlines()[-12:]) or "ffmpeg נכשל")
+
+
 @dataclass
 class Chunk:
     path: Path
@@ -251,7 +285,7 @@ def rtl_copy(srt: Path) -> Path:
     return dst
 
 
-async def burn(video: Path, srt: Path, dst: Path) -> Path:
+async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
     """צריבה לפי פרופיל האיכות, עם תקרת bitrate שמבטיחה שהקובץ ניתן להעלאה."""
     srt = rtl_copy(srt)
     duration = await duration_seconds(video)
@@ -285,7 +319,10 @@ async def burn(video: Path, srt: Path, dst: Path) -> Path:
                  cap, config.UPLOAD_LIMIT_MB)
 
     cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
-    await _run(cmd, timeout=config.BURN_TIMEOUT)
+    if on_progress:
+        await _run_progress(cmd, duration, on_progress, timeout=config.BURN_TIMEOUT)
+    else:
+        await _run(cmd, timeout=config.BURN_TIMEOUT)
 
     size_mb = dst.stat().st_size / 1024 ** 2
     log.info("הצריבה הסתיימה: %.0fMB", size_mb)

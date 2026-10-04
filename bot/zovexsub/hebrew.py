@@ -75,7 +75,8 @@ CHECK_SYSTEM = """אתה בקרת איכות לשונית באולפן כתוב�
 את המשמעות של המקור. מחזיר תמיד JSON בלבד."""
 
 
-async def build_hebrew(segments: list[Segment], language: str) -> tuple[list[str], str]:
+async def build_hebrew(segments: list[Segment], language: str,
+                       on_step=None) -> tuple[list[str], str]:
     """מחזיר את שורות העברית (באורך ובסדר של הסגמנטים) ואת מסמך ההנחיות."""
     numbered = "\n".join(f"[{s.index}] {s.text}" for s in segments)
 
@@ -88,12 +89,15 @@ async def build_hebrew(segments: list[Segment], language: str) -> tuple[list[str
     else:
         notes = "לא התקבל מסמך הנחיות. הסק מגדרים ונמענים מתוך הקונטקסט עצמו, בזהירות."
 
-    lines = await _translate_all(segments, language, notes)
+    lines = await _translate_all(segments, language, notes, on_step)
+    if on_step:
+        await on_step("בודק עקביות", 0.95)
     lines = await _quality_pass(segments, lines, notes)
     return lines, notes
 
 
-async def _translate_all(segments: list[Segment], language: str, notes: str) -> list[str]:
+async def _translate_all(segments: list[Segment], language: str, notes: str,
+                         on_step=None) -> list[str]:
     out: list[str] = [""] * len(segments)
     schema = {
         "type": "object",
@@ -154,7 +158,11 @@ async def _translate_all(segments: list[Segment], language: str, notes: str) -> 
                     schema=schema, temperature=0.3,
                 )
                 out[idx] = (_collect(retry).get(idx) or seg.text).strip()
-        log.info("תורגמו %d/%d שורות", min(start + WINDOW, len(segments)), len(segments))
+        done = min(start + WINDOW, len(segments))
+        log.info("תורגמו %d/%d שורות", done, len(segments))
+        if on_step:
+            await on_step(f"מתרגם {done}/{len(segments)} שורות",
+                          0.05 + 0.90 * done / max(1, len(segments)))
     return out
 
 
