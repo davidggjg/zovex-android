@@ -49,6 +49,7 @@ import {useIsFocused} from '@react-navigation/native';
 import {verifyPanelCode} from '../api/savedUpload';
 import TvFocusable from '../components/TvFocusable';
 import LiveChannelModal from '../components/LiveChannelModal';
+import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
 import UpdateDialog from '../components/UpdateDialog';
 import AmbientGlow from '../components/AmbientGlow';
@@ -1976,6 +1977,8 @@ export default function HomeScreen({navigation, route}) {
       {CatModal}
       {UserMenu}
 
+      <AdBanner />
+
       {/* הבועה הצפה נשארת לטלפון בלבד. בטלוויזיה הכפתור עבר לסרגל העליון
           (ראה TopBar) — שם אפשר להגיע אליו עם השלט, וכאן אי אפשר היה. */}
       {!IS_TV && (
@@ -2308,8 +2311,8 @@ const styles = StyleSheet.create({
   // physical left edge). Pick the side explicitly so this always ends up
   // in the bottom-left corner of the screen, regardless of RTL state.
   tgBubbleWrap: {
-    // באנר הפרסומת הוסר, ולכן הבועה חוזרת לגובה רגיל מעל הקצה.
-    position: 'absolute', bottom: 24, zIndex: 1000,
+    // bottom מוגבה כדי לא להיחסם ע"י באנר הפרסומת הקבוע בתחתית (AdBanner)
+    position: 'absolute', bottom: 78, zIndex: 1000,
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     // הצד נקבע בזמן הציור — ראה tgBubbleWrap ב-render.
   },
