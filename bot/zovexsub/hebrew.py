@@ -102,17 +102,26 @@ ADDRESSEE_SYSTEM = """אתה עורך כתוביות שתפקידו היחיד �
 משמעות. מחזיר תמיד JSON בלבד."""
 
 
-async def enforce_addressee(segments: list[Segment], lines: list[str],
-                            notes: str) -> list[str]:
-    """מעבר ייעודי אחד: קובע נמען לכל שורה ואוכף עליה את הצורה הנכונה."""
-    paired = "\n".join(
-        f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}"
-        for i in range(len(segments)) if lines[i]
-    )
+ADDRESSEE_WINDOW = 120   # שורות שנבדקות בקריאה אחת
+ADDRESSEE_CONTEXT = 15   # שורות הקשר לפני ואחרי
+
+
+async def enforce_addressee(segments: list[Segment], lines: list[str], notes: str,
+                            on_step=None) -> list[str]:
+    """קובע לכל שורה אל מי פונים ואוכף את הצורה המתאימה.
+
+    מחולק לחלונות שרצים במקביל. קריאה אחת על פרק שלם הייתה צריכה להחזיר
+    את כל השורות בחזרה — אלפי שורות פלט — וזה לקח דקות ארוכות וסיכן
+    חריגה ממגבלת הפלט. כאן כל חלון מחזיר רק את מה שהוא שינה.
+    """
+    indexed = [i for i in range(len(segments)) if lines[i]]
+    if not indexed:
+        return lines
+
     schema = {
         "type": "object",
         "properties": {
-            "lines": {
+            "fixes": {
                 "type": "array",
                 "items": {
                     "type": "object",
@@ -120,53 +129,84 @@ async def enforce_addressee(segments: list[Segment], lines: list[str],
                         "i": {"type": "integer"},
                         "addressee": {"type": "string"},
                         "he": {"type": "string"},
-                        "changed": {"type": "boolean"},
                     },
-                    "required": ["i", "addressee", "he", "changed"],
+                    "required": ["i", "he"],
                 },
             }
         },
-        "required": ["lines"],
+        "required": ["fixes"],
     }
-    prompt = f"""מסמך הנחיות:
----
-{_cap(notes, 15_000)}
----
 
-הכתוביות:
-{_cap(paired, 150_000)}
-
-עבור על כל השורות לפי הסדר. לכל שורה החזר:
-  i — האינדקס
-  addressee — אחד מ: "יחיד", "יחידה", "רבים", "אין"
-  he — השורה בעברית, מתוקנת אם הצורה לא תאמה את הנמען, אחרת כמו שהיא
-  changed — true רק אם שינית
-
-זכור את כלל הרצף: שורות עוקבות של אותו דובר אל אותו נמען חייבות אותה צורה.
-החזר JSON: {{"lines": [...]}}"""
-
-    try:
-        result = await gemini.ask_json(ADDRESSEE_SYSTEM, prompt, schema=schema,
-                                       temperature=0.0)
-    except gemini.GeminiError as exc:
-        log.warning("מעבר הנמענים נכשל: %s", exc)
-        return lines
-
-    items = result.get("lines") if isinstance(result, dict) else result
+    starts = list(range(0, len(indexed), ADDRESSEE_WINDOW))
+    workers = config.parallel(config.TRANSLATE_PARALLEL, config.GEMINI_API_KEYS)
+    gate = asyncio.Semaphore(workers)
     changed = 0
-    for item in items or []:
-        if not isinstance(item, dict):
-            continue
-        try:
-            index = int(item["i"])
-            text = str(item.get("he", "")).strip()
-        except (KeyError, TypeError, ValueError):
-            continue
-        if 0 <= index < len(lines) and text and text != lines[index]:
-            log.info("מגדר [%d] (%s): %s ⇐ %s", index,
-                     item.get("addressee", "?"), text[:45], lines[index][:45])
-            lines[index] = text
-            changed += 1
+    done = 0
+    lock = asyncio.Lock()
+    log.info("התאמת מגדר: %d חלונות, עד %d במקביל", len(starts), workers)
+
+    def render(numbers: list[int]) -> str:
+        return "\n".join(
+            f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}" for i in numbers
+        )
+
+    async def one(start: int) -> None:
+        nonlocal changed, done
+        window = indexed[start:start + ADDRESSEE_WINDOW]
+        before = indexed[max(0, start - ADDRESSEE_CONTEXT):start]
+        after = indexed[start + ADDRESSEE_WINDOW:start + ADDRESSEE_WINDOW + ADDRESSEE_CONTEXT]
+
+        prompt = f"""מסמך הנחיות:
+---
+{_cap(notes, 12_000)}
+---
+
+הקשר קודם (לקריאה בלבד):
+{render(before) or "(תחילת הסרטון)"}
+
+הקשר הבא (לקריאה בלבד):
+{render(after) or "(סוף הסרטון)"}
+
+השורות לבדיקה:
+{render(window)}
+
+עבור עליהן לפי הסדר וקבע לכל אחת מי הדובר ואל מי הוא פונה. החזר **רק
+את השורות שבהן הצורה לא תאמה את הנמען**, מתוקנות. שורה תקינה לא נכללת
+בתשובה כלל. אם הכול תקין החזר מערך ריק.
+
+החזר JSON: {{"fixes": [{{"i": <אינדקס>, "addressee": "יחיד/יחידה/רבים/אין",
+"he": "<השורה המתוקנת>"}}]}}"""
+
+        async with gate:
+            try:
+                result = await gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
+                                               schema=schema, temperature=0.0)
+            except gemini.GeminiError as exc:
+                log.warning("חלון התאמת מגדר נכשל: %s", exc)
+                return
+
+        items = result.get("fixes") if isinstance(result, dict) else result
+        async with lock:
+            for item in items or []:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    index = int(item["i"])
+                    text = str(item.get("he", "")).strip()
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if 0 <= index < len(lines) and text and text != lines[index]:
+                    log.info("מגדר [%d] (%s): %s ⇐ %s", index,
+                             item.get("addressee", "?"), text[:45], lines[index][:45])
+                    lines[index] = text
+                    changed += 1
+            done += len(window)
+            if on_step:
+                await on_step(f"מתאים מגדר פנייה {done}/{len(indexed)}",
+                              TRANSLATE_TO + (ADDRESSEE_TO - TRANSLATE_TO)
+                              * done / max(1, len(indexed)))
+
+    await asyncio.gather(*(one(start) for start in starts))
     log.info("מעבר הנמענים תיקן %d שורות", changed)
     return lines
 
@@ -246,7 +286,7 @@ async def build_hebrew(segments: list[Segment], language: str,
     lines = await _translate_all(segments, language, notes, on_step)
     if on_step:
         await on_step("מתאים מגדר פנייה", TRANSLATE_TO)
-    lines = await enforce_addressee(segments, lines, notes)
+    lines = await enforce_addressee(segments, lines, notes, on_step)
     if on_step:
         await on_step("בודק איכות ועקביות", ADDRESSEE_TO)
     lines = await _quality_pass(segments, lines, notes)
