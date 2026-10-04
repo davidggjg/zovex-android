@@ -296,17 +296,27 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
         filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
     filters.append(f"subtitles='{escaped}':force_style='{SUB_STYLE}'")
     vf = ",".join(filters)
+    settings = config.profile_for(video.stat().st_size, duration)
+    codec = config.BURN_CODEC or settings["codec"]
+    preset = config.BURN_PRESET or settings["preset"]
+    crf = config.BURN_CRF or str(settings["crf"])
+    pix_fmt = config.BURN_PIX_FMT or settings["pix_fmt"]
+    tune = config.BURN_TUNE or settings["tune"]
+    log.info("פרופיל צריבה: %s (%s %s CRF%s) למקור של %.0fMB באורך %.0f דקות",
+             config.profile_name(settings), codec, preset, crf,
+             video.stat().st_size / 1024 ** 2, duration / 60)
+
     cmd = [
         "ffmpeg", "-nostdin", "-y", "-threads", str(config.BURN_THREADS),
         "-i", str(video), "-vf", vf,
-        "-c:v", config.BURN_CODEC,
-        "-preset", config.BURN_PRESET,
-        "-crf", str(config.BURN_CRF),
-        "-pix_fmt", config.BURN_PIX_FMT,
+        "-c:v", codec,
+        "-preset", preset,
+        "-crf", str(crf),
+        "-pix_fmt", pix_fmt,
     ]
-    if config.BURN_TUNE:
-        cmd += ["-tune", config.BURN_TUNE]
-    if config.BURN_CODEC == "libx265":
+    if tune:
+        cmd += ["-tune", tune]
+    if codec == "libx265":
         # תג שמאפשר ניגון בנגנים של אפל ובטלגרם
         cmd += ["-tag:v", "hvc1"]
 

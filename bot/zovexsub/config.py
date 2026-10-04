@@ -59,31 +59,82 @@ BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 10)
 #   H.265 tune grain       74s   9144KB   (משמר גרעיניות - מגדיל פי 2.4)
 #   AV1 svt preset 8       50s  10580KB   (איטי וגדול יותר)
 PROFILES = {
-    # H.264 — נתמך בכל מקום, הקובץ הגדול ביותר
+    # קידוד מהיר ככל האפשר. הקובץ יוצא גדול, וזה בסדר כשהמקור קטן
+    # ויש מרחב עד מגבלת ההעלאה
+    "quick": {"codec": "libx264", "preset": "ultrafast", "crf": 23,
+              "pix_fmt": "yuv420p", "tune": "", "mbps": 7.0},
+    # H.264 — נתמך בכל מקום
     "fast": {"codec": "libx264", "preset": "veryfast", "crf": 28,
-             "pix_fmt": "yuv420p", "tune": ""},
+             "pix_fmt": "yuv420p", "tune": "", "mbps": 2.2},
     # H.265 — כמחצית הגודל, נתמך בטלגרם וברוב המכשירים המודרניים
     "balanced": {"codec": "libx265", "preset": "veryfast", "crf": 30,
-                 "pix_fmt": "yuv420p", "tune": ""},
+                 "pix_fmt": "yuv420p", "tune": "", "mbps": 1.2},
     # H.265 עם preset איטי יותר — אותה איכות, קובץ קטן יותר, פי שניים מעבד
     "small": {"codec": "libx265", "preset": "medium", "crf": 30,
-              "pix_fmt": "yuv420p", "tune": ""},
+              "pix_fmt": "yuv420p", "tune": "", "mbps": 1.0},
 }
 
-BURN_PROFILE = (os.getenv("BURN_PROFILE") or "balanced").strip().lower()
+# auto בוחר פרופיל לפי גודל המקור: קובץ קטן לא צריך דחיסה כבדה, כי גם
+# פלט גדול פי כמה נשאר הרחק מתחת למגבלת ההעלאה. קובץ גדול כן צריך.
+BURN_PROFILE = (os.getenv("BURN_PROFILE") or "auto").strip().lower()
+QUICK_UNDER_MB = _int("QUICK_UNDER_MB", 1024)
+SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
+
+
+# סדר יורד של מהירות: הראשון הכי מהיר, האחרון הכי דחוס
+LADDER = ("quick", "balanced", "small")
+
+
+def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
+    """בוחר הגדרות צריבה: מהירות כשאפשר, דחיסה כשחייבים.
+
+    מקור קטן לא צריך דחיסה כבדה — גם פלט גדול פי כמה נשאר הרחק מתחת
+    למגבלת ההעלאה, וחבל לבזבז עליו זמן מעבד. מקור גדול כן צריך.
+    אחרי הבחירה נבדק שהפלט הצפוי נכנס במגבלה, ואם לא יורדים דרגה.
+    """
+    if BURN_PROFILE != "auto":
+        return PROFILES.get(BURN_PROFILE, PROFILES["balanced"])
+
+    megabytes = source_bytes / 1024 ** 2
+    if megabytes <= QUICK_UNDER_MB:
+        start = 0
+    elif megabytes >= SMALL_OVER_MB:
+        start = 2
+    else:
+        start = 1
+
+    for name in LADDER[start:]:
+        settings = PROFILES[name]
+        if duration <= 0:
+            return settings
+        predicted = settings["mbps"] * 1_000_000 * duration / 8 / 1024 ** 2
+        if predicted <= UPLOAD_CEILING_MB:
+            return settings
+    return PROFILES["small"]
+
+
+def profile_name(settings: dict) -> str:
+    for name, values in PROFILES.items():
+        if values is settings:
+            return name
+    return BURN_PROFILE
+
+
 _profile = PROFILES.get(BURN_PROFILE, PROFILES["balanced"])
 
-# כל ערך בפרופיל ניתן לדריסה נקודתית ב-.env
-BURN_CODEC = os.getenv("BURN_CODEC") or _profile["codec"]
-BURN_PRESET = os.getenv("BURN_PRESET") or _profile["preset"]
-BURN_CRF = _int("BURN_CRF", _profile["crf"])
-BURN_PIX_FMT = os.getenv("BURN_PIX_FMT") or _profile["pix_fmt"]
-BURN_TUNE = os.getenv("BURN_TUNE", _profile["tune"])
+# דריסות נקודתיות. ריק פירושו "לפי הפרופיל שנבחר לקובץ"
+BURN_CODEC = os.getenv("BURN_CODEC", "")
+BURN_PRESET = os.getenv("BURN_PRESET", "")
+BURN_CRF = os.getenv("BURN_CRF", "")
+BURN_PIX_FMT = os.getenv("BURN_PIX_FMT", "")
+BURN_TUNE = os.getenv("BURN_TUNE", "")
 
 # תקרת bitrate קשיחה מעוותת את האיכות: סצנה מורכבת נחנקת בדיוק כשהיא
 # צריכה ביטים. CRF לבדו מחלק את הביטים נכון, ולכן התקרה כבויה כברירת
 # מחדל. ערך גדול מאפס מפעיל אותה, למקרה שחייבים להיכנס בגודל מסוים.
 UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
+# תקרת ההעלאה של טלגרם פרימיום, לבחירת פרופיל בלבד (לא תקרת bitrate)
+UPLOAD_CEILING_MB = _int("UPLOAD_CEILING_MB", 3800)
 # תקרת רזולוציה. המקור אף פעם לא מוגדל — רק 4K וגבוה מזה יורד ל-1080p,
 # כדי שהצריבה לא תימשך נצח. 0 מבטל כל שינוי רזולוציה.
 BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 1080)
