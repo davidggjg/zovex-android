@@ -109,6 +109,9 @@ FETCH_FORMAT = os.getenv(
 )
 FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 4)
 
+# כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
+TG_CONNECTIONS = _int("TG_CONNECTIONS", 4)
+
 # מגבלת גודל לקובץ שנשלח ל-Groq (25MB בתוכנית החינמית). נשאיר שולי ביטחון.
 STT_CHUNK_BYTES = 20 * 1024 * 1024
 # אודיו FLAC 16kHz מונו ~ 100KB לשנייה במקרה הגרוע; נחתוך לפי זמן כגיבוי

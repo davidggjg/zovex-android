@@ -17,7 +17,7 @@ from pathlib import Path
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import allowlist, config, diagnose, fetch, pipeline, progress as prog
+from . import allowlist, config, diagnose, fastio, fetch, media, pipeline, progress as prog
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -328,7 +328,8 @@ async def _subtitle(job: Job, work: Path) -> None:
         async def on_download(received: int, total: int) -> None:
             await download.show(received / total if total else 0, done_bytes=received)
 
-        await job.message.download_media(file=str(source), progress_callback=on_download)
+        await fastio.download(job.event.client, job.message, source,
+                              on_progress=on_download)
         await download.finish()
     log.info("מקור מוכן: %s (%.1f MB)", source.name, source.stat().st_size / 1048576)
 
@@ -388,11 +389,28 @@ async def _burn(job: Job, work: Path) -> None:
     async def on_upload(sent: int, total: int) -> None:
         await upload.show(sent / total if total else 0, done_bytes=sent)
 
-    await job.event.client.send_file(
-        await job.event.get_input_chat(), str(burned),
-        caption="🔥 וידאו עם כתוביות צרובות", supports_streaming=True,
-        reply_to=job.event.message.id, progress_callback=on_upload,
-    )
+    client = job.event.client
+    chat = await job.event.get_input_chat()
+    sent_file = await fastio.upload(client, burned, on_progress=on_upload)
+
+    if sent_file is not None:
+        info = await media.probe(burned)
+        stream = next((s for s in info.get("streams", [])
+                       if s.get("codec_type") == "video"), {})
+        await client.send_file(
+            chat, sent_file, caption="🔥 וידאו עם כתוביות צרובות",
+            supports_streaming=True, reply_to=job.event.message.id,
+            attributes=fastio.video_attributes(
+                burned, float(info.get("format", {}).get("duration", 0) or 0),
+                int(stream.get("width", 0) or 0), int(stream.get("height", 0) or 0),
+            ),
+        )
+    else:
+        await client.send_file(
+            chat, str(burned), caption="🔥 וידאו עם כתוביות צרובות",
+            supports_streaming=True, reply_to=job.event.message.id,
+            progress_callback=on_upload,
+        )
     await _safe_delete(job.status)
     pipeline.cleanup(work)
 
@@ -438,6 +456,9 @@ async def main() -> None:
     global me_id
     me = await client.get_me()
     me_id = me.id
+    if not fastio.crypto_ready():
+        log.warning("cryptg לא מותקן — ההורדה וההעלאה יהיו איטיות פי עשרות! "
+                    "התקנה: pip install cryptg")
     log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
              me.username or me.first_name, me.id, len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
