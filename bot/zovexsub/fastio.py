@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import importlib.util
 import logging
 import os
@@ -46,9 +47,12 @@ async def download(client, message, dst: Path, on_progress=None) -> Path:
         return dst
 
     try:
-        return await _parallel_download(client, message, dst, size, workers, on_progress)
-    except Exception as exc:  # noqa: BLE001 — נפילה חזרה עדיפה על כישלון
-        log.warning("ההורדה המקבילה נכשלה (%s), עוברים להורדה רגילה", exc)
+        return await asyncio.wait_for(
+            _parallel_download(client, message, dst, size, workers, on_progress),
+            timeout=config.TG_FAST_TIMEOUT or None)
+    except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
+        log.warning("ההורדה המקבילה נכשלה (%s: %s), עוברים להורדה רגילה",
+                    type(exc).__name__, exc)
         await message.download_media(file=str(dst), progress_callback=on_progress)
         return dst
 
@@ -75,8 +79,13 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
                     dc.ip_address, dc.port, dc.id,
                     loggers=client._log, proxy=client._proxy,
                 ))
-                await sender.send(functions.InvokeWithLayerRequest(
-                    LAYER, client._init_request))
+                # עותק משלנו של בקשת האתחול, עם query מפורש. הבקשה של
+                # הלקוח היא אובייקט אחד משותף שטלתון דורס את ה-query שלו
+                # לפני כל שליחה, ולכן שליחה שלו כמו שהוא מעבירה טוקן
+                # הרשאה ישן שכבר נוצל — והחיבור נתקע בלי תשובה ובלי שגיאה
+                init = copy.copy(client._init_request)
+                init.query = functions.help.GetConfigRequest()
+                await sender.send(functions.InvokeWithLayerRequest(LAYER, init))
             else:
                 sender = await client._create_exported_sender(dc_id)
             senders.append(sender)
@@ -114,7 +123,8 @@ async def _parallel_download(client, message, dst: Path, size: int,
     done = 0
     lock = asyncio.Lock()
     handle = os.open(dst, os.O_WRONLY)
-    senders = await _open_senders(client, dc_id, workers)
+    senders = await asyncio.wait_for(
+        _open_senders(client, dc_id, workers), timeout=config.TG_CONNECT_TIMEOUT)
 
     async def worker(sender, start: int) -> None:
         nonlocal done
@@ -161,9 +171,12 @@ async def upload(client, path: Path, on_progress=None):
         return None
 
     try:
-        return await _parallel_upload(client, path, size, parts, workers, on_progress)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("ההעלאה המקבילה נכשלה (%s), עוברים להעלאה רגילה", exc)
+        return await asyncio.wait_for(
+            _parallel_upload(client, path, size, parts, workers, on_progress),
+            timeout=config.TG_FAST_TIMEOUT or None)
+    except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
+        log.warning("ההעלאה המקבילה נכשלה (%s: %s), עוברים להעלאה רגילה",
+                    type(exc).__name__, exc)
         return None
 
 
@@ -179,7 +192,9 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
     handle = os.open(path, os.O_RDONLY)
     # אותה בעיה בדיוק כמו בהורדה: client(...) שולח דרך החיבור הראשי
     # היחיד, ולכן כל החלקים הסתדרו בתור על חיבור אחד
-    senders = await _open_senders(client, client.session.dc_id, workers)
+    senders = await asyncio.wait_for(
+        _open_senders(client, client.session.dc_id, workers),
+        timeout=config.TG_CONNECT_TIMEOUT)
 
     async def worker(sender) -> None:
         nonlocal done

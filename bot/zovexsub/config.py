@@ -238,6 +238,10 @@ FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 4)
 
 # כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
 TG_CONNECTIONS = _int("TG_CONNECTIONS", 8)
+# תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
+# במקום ליפול חזרה למסלול הרגיל של טלתון
+TG_CONNECT_TIMEOUT = float(os.getenv("TG_CONNECT_TIMEOUT") or 45)
+TG_FAST_TIMEOUT = float(os.getenv("TG_FAST_TIMEOUT") or 0)   # 0 = בלי תקרה
 
 # מגבלת גודל לקובץ שנשלח ל-Groq (25MB בתוכנית החינמית). נשאיר שולי ביטחון.
 STT_CHUNK_BYTES = 20 * 1024 * 1024
