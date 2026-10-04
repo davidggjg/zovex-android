@@ -133,30 +133,42 @@ async def mean_volume(audio: Path) -> float:
     return float(match.group(1)) if match else -30.0
 
 
-async def speech_spans(audio: Path, min_silence: float = 0.25) -> list[tuple[float, float]]:
+# יחס הדיבור שאנחנו מצפים לו בתוכן דיאלוגי. סף שמוצא הרבה יותר מזה
+# מחשיב מוזיקת רקע כדיבור; סף שמוצא הרבה פחות חותך תחילת מילים.
+TARGET_SPEECH_RATIO = 0.60
+
+
+async def speech_spans(audio: Path, min_silence: float = 0.18) -> list[tuple[float, float]]:
     """מאתר את הקטעים שבהם באמת מדברים.
 
-    סף קבוע לא עובד: בסדרה עם מוזיקת רקע שום דבר לא יורד מתחת ל-32dB-,
-    ואז "לא נמצא שקט" ושום כתובית לא זזה. לכן הסף נגזר מעוצמת הקול
-    הממוצעת של הקובץ, ולפניו מסנן תדרים שמשאיר את טווח הדיבור ומחליש
-    מוזיקה ורעש חדר. אם גם הסף הזה לא מפריד בין דיבור לרקע, מנסים ספים
-    גבוהים יותר במקום לוותר בשקט.
+    סף קבוע לא עובד: בתוכן עם מוזיקת רקע שום דבר לא יורד מתחת לסף נמוך,
+    והכול מסווג כדיבור. לכן נבדקים כמה ספים סביב עוצמת הקול הממוצעת,
+    ונבחר זה שמייצר יחס דיבור קרוב למצופה — לא הראשון שמחזיר משהו.
     """
     average = await mean_volume(audio)
     total = await duration_seconds(audio)
+    if total <= 0:
+        return []
 
-    # מנסים כמה ספים: אם הראשון לא מוצא שקט ממשי, מעלים אותו ומנסים שוב
-    for offset in (6.0, 3.0, 0.0, -3.0):
-        threshold = max(-50.0, min(-18.0, average - offset))
+    best: tuple[float, float, list] | None = None
+    for offset in (-9.0, -6.0, -3.0, 0.0, 3.0, 6.0):
+        threshold = max(-50.0, min(-12.0, average - offset))
         spans = await _detect(audio, threshold, min_silence, total)
-        covered = sum(b - a for a, b in spans)
-        log.info("סף %.1fdB: %d קטעי דיבור, %.0f מתוך %.0f שניות",
-                 threshold, len(spans), covered, total)
-        if spans and covered < 0.95 * total:
-            return spans
+        ratio = sum(b - a for a, b in spans) / total
+        log.info("סף %.1fdB: %d קטעים, %.0f%% דיבור", threshold, len(spans), ratio * 100)
+        if not spans or not 0.25 <= ratio <= 0.92:
+            continue
+        distance = abs(ratio - TARGET_SPEECH_RATIO)
+        if best is None or distance < best[0]:
+            best = (distance, threshold, spans)
 
-    log.info("לא זוהה שקט ממשי באף סף — מדלגים על ההצמדה")
-    return []
+    if best is None:
+        log.info("אף סף לא הפריד בין דיבור לרקע — מדלגים על ההצמדה")
+        return []
+
+    _, threshold, spans = best
+    log.info("נבחר סף %.1fdB עם %d קטעי דיבור", threshold, len(spans))
+    return spans
 
 
 async def _detect(audio: Path, threshold: float, min_silence: float,
@@ -234,10 +246,12 @@ async def burn(video: Path, srt: Path, dst: Path) -> Path:
     srt = rtl_copy(srt)
     duration = await duration_seconds(video)
     escaped = str(srt).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-    vf = (
-        f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=fast_bilinear,"
-        f"subtitles='{escaped}':force_style='{SUB_STYLE}'"
-    )
+    filters = []
+    if config.BURN_MAX_HEIGHT:
+        # min() מבטיח שמקור נמוך מהתקרה נשאר כמו שהוא ולא מוגדל
+        filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
+    filters.append(f"subtitles='{escaped}':force_style='{SUB_STYLE}'")
+    vf = ",".join(filters)
     cmd = [
         "ffmpeg", "-nostdin", "-y", "-threads", str(config.BURN_THREADS),
         "-i", str(video), "-vf", vf,
@@ -254,7 +268,7 @@ async def burn(video: Path, srt: Path, dst: Path) -> Path:
 
     # CRF בלבד לא מבטיח גודל. תקרת bitrate עם חוצץ ("capped CRF") שומרת
     # על האיכות המשתנה ובכל זאת מבטיחה שהקובץ ייכנס במגבלת ההעלאה.
-    cap = _bitrate_cap(duration)
+    cap = _bitrate_cap(duration) if config.UPLOAD_LIMIT_MB else 0
     if cap:
         cmd += ["-maxrate", f"{cap}k", "-bufsize", f"{cap * 2}k"]
         log.info("תקרת bitrate: %dkbps כדי להישאר מתחת ל-%dMB",

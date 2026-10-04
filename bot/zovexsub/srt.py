@@ -25,8 +25,12 @@ class Cue:
     text: str
 
 
-# כמה מותר להזיז כתובית כדי להצמיד אותה לדיבור שזוהה
-MAX_SNAP = 8.0
+# כמה מותר להזיז כתובית כדי להצמיד אותה לדיבור שזוהה. Whisper עובד
+# בחלונות של 30 שניות, וכשחלון מלא מוזיקה הוא מחזיר כתובית שמתחילה
+# בתחילת החלון — סטייה שיכולה להגיע לעשרות שניות.
+MAX_SNAP = 25.0
+# מקדימים את הכתובית במעט כדי לא לחתוך את ההברה הראשונה
+LEAD_IN = 0.12
 
 
 def build_cues(segments: list[Segment], lines: list[str],
@@ -59,13 +63,17 @@ def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]]) -> list[
         inside = [(a, b) for a, b in speech if b > cue.start + 0.05 and a < cue.end - 0.05]
         if not inside:
             continue
-        first, last = inside[0][0], inside[-1][1]
+        first = max(0.0, inside[0][0] - LEAD_IN)
+        last = inside[-1][1]
 
-        if 0 < first - cue.start <= MAX_SNAP and first < cue.end - 0.3:
+        # הכתובית מתחילה בתוך שקט — דוחפים אותה לרגע שהדיבור מתחיל
+        if 0.15 < first - cue.start <= MAX_SNAP and first < cue.end - 0.3:
+            log.debug("כתובית הוזזה מ-%.2f ל-%.2f", cue.start, first)
             cue.start = first
             moved += 1
-        if 0 < cue.end - last <= MAX_SNAP and last > cue.start + 0.3:
-            cue.end = last + 0.15
+        # הכתובית נמשכת לתוך שקט — מושכים את סופה אחורה
+        if 0.15 < cue.end - last <= MAX_SNAP and last > cue.start + 0.4:
+            cue.end = last + 0.2
 
     log.info("הוצמדו %d כתוביות לדיבור שזוהה", moved)
     return cues

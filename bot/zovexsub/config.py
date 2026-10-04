@@ -75,9 +75,13 @@ BURN_CRF = _int("BURN_CRF", _profile["crf"])
 BURN_PIX_FMT = os.getenv("BURN_PIX_FMT") or _profile["pix_fmt"]
 BURN_TUNE = os.getenv("BURN_TUNE", _profile["tune"])
 
-# תקרת גודל להעלאה. טלגרם פרימיום מאפשר 4GB; משאירים שוליים
-UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 3800)
-BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 720)
+# תקרת bitrate קשיחה מעוותת את האיכות: סצנה מורכבת נחנקת בדיוק כשהיא
+# צריכה ביטים. CRF לבדו מחלק את הביטים נכון, ולכן התקרה כבויה כברירת
+# מחדל. ערך גדול מאפס מפעיל אותה, למקרה שחייבים להיכנס בגודל מסוים.
+UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
+# תקרת רזולוציה. המקור אף פעם לא מוגדל — רק 4K וגבוה מזה יורד ל-1080p,
+# כדי שהצריבה לא תימשך נצח. 0 מבטל כל שינוי רזולוציה.
+BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 1080)
 FFMPEG_THREADS = _int("FFMPEG_THREADS", 1)
 # לצריבה כדאי יותר מ-thread אחד: הצוואר הוא פענוח המקור, ושתי ליבות
 # מכפילות את המהירות פי 2.4 בלי לשנות את גודל הפלט. חלון ההפרעה מתקצר,
