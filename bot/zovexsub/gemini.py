@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 
 import httpx
 
@@ -14,12 +15,28 @@ from .keypool import KeyPool
 log = logging.getLogger(__name__)
 
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-_pool = KeyPool("gemini", config.GEMINI_API_KEYS)
+# קירור קצר: הגבלת הקצב של גוגל מתאפסת בתוך שניות, וקירור ארוך
+# משבית את כל המפתחות בבת אחת ועוצר את העבודה לדקות
+_pool = KeyPool("gemini", config.GEMINI_API_KEYS, cooldown=15.0)
 
 # שמות מודלים אצל גוגל מתחלפים (2.5-pro הוסר, 3.1 נכנס). במקום לרדוף אחריהם
 # בקוד, אנחנו שואלים את ה-API מה זמין ובוחרים את הטוב ביותר, פעם אחת.
 _resolved: dict[str, str] = {}
 _resolve_lock = asyncio.Lock()
+# צמד מפתח-מודל שמיצה מכסה ארוכה. גוגל מגבילה לפי מפתח ולפי מודל
+# בנפרד, ולכן קירור המפתח כולו היה פוסל אותו גם במודלים שעדיין פתוחים
+_blocked: dict[tuple[str, str], float] = {}
+# מעל זה מדובר במכסה יומית ולא בהגבלת קצב לדקה
+LONG_WAIT = 120.0
+# מודל שהשרת שלו עמוס. אין טעם להתעקש עליו כשיש חלופה זמינה
+_overloaded: dict[str, float] = {}
+OVERLOAD_REST = 90.0
+
+
+def _retry_delay(payload: str) -> float:
+    """כמה זמן גוגל מבקשת להמתין. היא מחזירה את זה במפורש בתשובה."""
+    match = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"', payload)
+    return float(match.group(1)) if match else 0.0
 
 
 class GeminiError(RuntimeError):
@@ -101,13 +118,19 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
     last_error = "לא ידוע"
 
     async with httpx.AsyncClient() as client:
-        for wanted in _chain(model):
+        chain = _chain(model)
+        now = time.monotonic()
+        available = [m for m in chain if _overloaded.get(m, 0.0) <= now]
+        for wanted in (available or chain):
             name = await _resolve(wanted)
             if name in _dead:
                 continue
 
             for attempt in range(1, 5):
                 key = await _pool.wait_for_free()
+                if _blocked.get((name, key), 0.0) > time.monotonic():
+                    # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר
+                    continue
                 try:
                     resp = await client.post(
                         f"{BASE}/{name}:generateContent",
@@ -132,13 +155,33 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
                         log.warning("המודל %s חסום למפתחות האלה — יורד למודל הבא", name)
                         last_error = f"{name} חסום בתוכנית"
                         break
-                    _pool.penalize(key)
-                    last_error = f"{name}: מכסה זמנית"
+
+                    wait = _retry_delay(resp.text)
+                    if wait > LONG_WAIT:
+                        # מכסה יומית של המפתח הזה במודל הזה. המפתח עצמו
+                        # עדיין טוב למודלים אחרים, אז לא מקררים אותו כולו
+                        _blocked[(name, key)] = time.monotonic() + wait
+                        log.warning("%s מיצה את %s ל-%.0f דקות — מנסה מפתח אחר",
+                                    _pool.mask(key), name, wait / 60)
+                        last_error = f"{name}: מכסה יומית"
+                        continue
+
+                    # הגבלת קצב לדקה: גוגל אומרת כמה להמתין, ואין טעם
+                    # לקרר את המפתח הרבה מעבר לזה
+                    _pool.penalize(key, wait or 15)
+                    last_error = f"{name}: מכסה לדקה"
+                    await asyncio.sleep(min(wait or 2, 10))
                     continue
 
                 if resp.status_code >= 500:
+                    # השרת של המודל עמוס. במקום להתעקש, עוברים למודל
+                    # הבא ומסמנים את זה כעמוס לזמן קצר
                     last_error = f"{name}: HTTP {resp.status_code}"
-                    await asyncio.sleep(min(2 ** attempt, 15))
+                    if attempt >= 2:
+                        _overloaded[name] = time.monotonic() + OVERLOAD_REST
+                        log.warning("%s עמוס — מדלגים עליו לדקה וחצי", name)
+                        break
+                    await asyncio.sleep(2)
                     continue
 
                 if resp.status_code == 404:
@@ -156,6 +199,14 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
                     continue
 
                 raise GeminiError(f"Gemini HTTP {resp.status_code}: {text}")
+
+            # אם כל המפתחות מיצו את המודל הזה, אין טעם לבדוק אותו שוב
+            now = time.monotonic()
+            if config.GEMINI_API_KEYS and all(
+                _blocked.get((name, key), 0.0) > now for key in config.GEMINI_API_KEYS
+            ):
+                _dead.add(name)
+                log.warning("כל המפתחות מיצו את %s — לא ננסה אותו שוב בהרצה הזו", name)
 
             log.warning("עובר למודל הבא אחרי %s", last_error)
 
