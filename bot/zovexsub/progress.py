@@ -11,6 +11,9 @@ FULL, EMPTY = "▓", "░"
 WIDTH = 12
 MIN_INTERVAL = 5.0  # טלגרם חוסם עריכות תכופות מדי
 HEARTBEAT = 20.0    # כל כמה שניות להראות שהעבודה עדיין רצה
+# מתחת לאחוז הזה ההערכה מבוססת על מדגם זעיר ויוצאת מופרכת. שלב שמתחיל
+# באחוז סמלי, כמו החקר שלפני התרגום, היה מייצר ממנה זמן דמיוני שרק גדל
+ETA_FROM = 0.08
 
 
 def bar(fraction: float) -> str:
@@ -67,7 +70,7 @@ class Stage:
 
     def eta(self) -> float:
         """כמה זמן נשאר, לפי הקצב שנמדד עד כה."""
-        if self.fraction <= 0.01:
+        if self.fraction < ETA_FROM:
             return 0.0
         return self.elapsed * (1 - self.fraction) / self.fraction
 
