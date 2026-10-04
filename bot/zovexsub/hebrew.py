@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from . import config, gemini
+from . import cleanup, config, gemini
 from .stt import Segment
 
 log = logging.getLogger(__name__)
@@ -163,6 +163,64 @@ async def enforce_addressee(segments: list[Segment], lines: list[str],
     return lines
 
 
+REPAIR_SYSTEM = """אתה מתקן שגיאות כתיב בכתוביות בעברית. בשורות שאתה
+מקבל השתרבבו אותיות של שפה אחרת, בדרך כלל ערבית, לתוך מילים עבריות —
+למשל "פתח" שנכתב "פתح", או "לאחיך" שנכתב "לאחيك".
+
+תפקידך: לכתוב כל שורה מחדש בעברית תקנית בלבד, תוך שמירה מוחלטת על
+המשמעות, הניסוח והפיסוק. אל תתרגם מחדש, אל תשפר סגנון, אל תשנה מילים
+שאינן פגומות. רק תקן את האותיות הזרות למה שהיה אמור להיכתב בעברית.
+
+מחזיר תמיד JSON בלבד."""
+
+
+async def repair_foreign(segments: list[Segment], lines: list[str],
+                         indices: list[int]) -> list[str]:
+    """מתקן שורות שבהן השתרבבו אותיות משפה אחרת."""
+    if not indices:
+        return lines
+
+    log.warning("נמצאו %d שורות עם אותיות זרות — שולח לתיקון", len(indices))
+    listing = "\n".join(
+        f'[{i}] מקור: {segments[i].text}\n[{i}] פגום: {lines[i]}' for i in indices
+    )
+    schema = {
+        "type": "object",
+        "properties": {
+            "lines": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"i": {"type": "integer"}, "he": {"type": "string"}},
+                    "required": ["i", "he"],
+                },
+            }
+        },
+        "required": ["lines"],
+    }
+
+    try:
+        result = await gemini.ask_json(
+            REPAIR_SYSTEM,
+            f"{listing}\n\nהחזר JSON: {{\"lines\": [{{\"i\": <אינדקס>, "
+            f"\"he\": \"<השורה בעברית תקנית>\"}}]}}",
+            schema=schema, temperature=0.0,
+        )
+    except gemini.GeminiError as exc:
+        log.warning("תיקון האותיות הזרות נכשל: %s", exc)
+        return lines
+
+    fixed = 0
+    for item in (_collect(result) or {}).items():
+        index, text = item
+        if 0 <= index < len(lines) and text.strip() and not cleanup.has_foreign(text):
+            log.info("תוקן [%d]: %s ⇐ %s", index, text[:40], lines[index][:40])
+            lines[index] = text.strip()
+            fixed += 1
+    log.info("תוקנו %d שורות מתוך %d", fixed, len(indices))
+    return lines
+
+
 async def build_hebrew(segments: list[Segment], language: str,
                        on_step=None) -> tuple[list[str], str]:
     """מחזיר את שורות העברית (באורך ובסדר של הסגמנטים) ואת מסמך ההנחיות."""
@@ -184,6 +242,15 @@ async def build_hebrew(segments: list[Segment], language: str,
     if on_step:
         await on_step("בודק עקביות", 0.97)
     lines = await _quality_pass(segments, lines, notes)
+
+    # ניקוי ארטיפקטים: ניקוד מוסר ישירות, אותיות זרות נשלחות לתיקון ממוקד
+    lines, foreign = cleanup.clean(lines)
+    if foreign:
+        if on_step:
+            await on_step("מתקן אותיות זרות", 0.99)
+        lines = await repair_foreign(segments, lines, foreign)
+        lines, _ = cleanup.clean(lines)
+
     return lines, notes
 
 

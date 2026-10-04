@@ -167,9 +167,20 @@ BURN_THREADS = os.getenv("BURN_THREADS", "auto").strip().lower()
 RESERVE_CORES = float(os.getenv("RESERVE_CORES") or 1.5)
 # תקרה עליונה ל-threads, 0 = עד כל הליבות
 BURN_THREADS_MAX = _int("BURN_THREADS_MAX", 0)
-# תקרה קשיחה לצריבה. תוכן גרעיני מקודד לאט מזמן אמת, ובלי תקרה קובץ
-# חריג יכול לרוץ שעה על שרת עמוס
-BURN_TIMEOUT = _int("BURN_TIMEOUT", 1800)
+# תקרה קשיחה לצריבה. ערך קבוע לא מתאים: חצי שעה מספיקה לסרטון קצר אבל
+# הורגת סרט של שעתיים ממש לפני הסוף. auto גוזר אותה מאורך הווידאו לפי
+# הקצב האיטי ביותר שנמדד, עם רצפה ושוליים
+BURN_TIMEOUT = os.getenv("BURN_TIMEOUT", "auto").strip().lower()
+BURN_TIMEOUT_FACTOR = float(os.getenv("BURN_TIMEOUT_FACTOR") or 4.0)
+BURN_TIMEOUT_FLOOR = _int("BURN_TIMEOUT_FLOOR", 1800)
+
+
+def burn_timeout(duration: float) -> float:
+    """כמה זמן לתת לצריבה של וידאו באורך הזה."""
+    setting = str(BURN_TIMEOUT)
+    if setting.isdigit():
+        return float(setting)
+    return max(float(BURN_TIMEOUT_FLOOR), duration * BURN_TIMEOUT_FACTOR)
 # בדיקת מקום בדיסק לפני הורדה וצריבה: פי כמה מגודל המקור, ועוד רזרבה
 DISK_FACTOR = float(os.getenv("DISK_FACTOR") or 2.5)
 DISK_RESERVE_GB = float(os.getenv("DISK_RESERVE_GB") or 3.0)

@@ -41,7 +41,8 @@ async def _run(cmd: list[str], *, nice: bool = True,
         proc.kill()
         await proc.wait()
         raise FFmpegError(
-            f"ffmpeg עבר את תקרת הזמן ({timeout:.0f} שניות) ונעצר"
+            f"הצריבה עברה את תקרת הזמן ({timeout / 60:.0f} דקות) ונעצרה. "
+            f"להעלאת התקרה: BURN_TIMEOUT_FACTOR ב-.env"
         ) from None
     if proc.returncode != 0:
         tail = err.decode("utf-8", "replace").strip().splitlines()[-12:]
@@ -122,7 +123,10 @@ async def _run_progress(cmd: list[str], total: float, on_progress, *,
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        raise FFmpegError(f"ffmpeg עבר את תקרת הזמן ({timeout:.0f} שניות) ונעצר") from None
+        raise FFmpegError(
+            f"הצריבה עברה את תקרת הזמן ({timeout / 60:.0f} דקות) ונעצרה. "
+            f"להעלאת התקרה: BURN_TIMEOUT_FACTOR ב-.env"
+        ) from None
 
     if proc.returncode != 0:
         err = (await proc.stderr.read()).decode("utf-8", "replace") if proc.stderr else ""
@@ -421,10 +425,12 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
                  cap, config.UPLOAD_LIMIT_MB)
 
     cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
+    limit = config.burn_timeout(duration)
+    log.info("תקרת זמן לצריבה: %.0f דקות", limit / 60)
     if on_progress:
-        await _run_progress(cmd, duration, on_progress, timeout=config.BURN_TIMEOUT)
+        await _run_progress(cmd, duration, on_progress, timeout=limit)
     else:
-        await _run(cmd, timeout=config.BURN_TIMEOUT)
+        await _run(cmd, timeout=limit)
 
     size_mb = dst.stat().st_size / 1024 ** 2
     log.info("הצריבה הסתיימה: %.0fMB", size_mb)
