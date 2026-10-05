@@ -215,6 +215,27 @@ async def _parallel_download(client, message, dst: Path, size: int,
     senders = await asyncio.wait_for(
         _open_senders(client, dc_id, workers), timeout=config.TG_CONNECT_TIMEOUT)
 
+    # כמה בקשות מותר להחזיק באוויר בו-זמנית, על פני כל החיבורים. זה
+    # ולא מספר החיבורים הוא מה שקובע את הקצב, ואי אפשר לדעת מראש כמה
+    # החשבון והקו מרשים — לכן מתחילים גבוה ומצטמצמים רק אם טלגרם מתלונן
+    inflight = asyncio.Semaphore(workers * max(1, config.TG_PIPELINE))
+    shrunk = 0
+
+    async def shrink() -> None:
+        """מוריד את התקרה אחרי FLOOD_WAIT, ולא מעלה אותה בחזרה.
+
+        הפחתה כפלית: טלגרם כבר העניש אותנו, וניסיון לטפס חזרה מיד
+        מחזיר אותנו לאותו מקום. מי שמחזיק את ההיתרים האלה לא משחרר
+        אותם עד סוף ההורדה.
+        """
+        nonlocal shrunk
+        room = workers * max(1, config.TG_PIPELINE) - shrunk
+        drop = max(1, room // 2)
+        for _ in range(drop):
+            await inflight.acquire()
+        shrunk += drop
+        log.warning("התקרה ירדה ל-%d בקשות באוויר", room - drop)
+
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
         pending.put_nowait(index)
@@ -228,10 +249,11 @@ async def _parallel_download(client, message, dst: Path, size: int,
         """
         for attempt in range(1, config.TG_READ_RETRIES + 1):
             try:
-                return await asyncio.wait_for(
-                    client._call(sender, functions.upload.GetFileRequest(
-                        location, offset=offset, limit=part)),
-                    timeout=config.TG_READ_TIMEOUT)
+                async with inflight:
+                    return await asyncio.wait_for(
+                        client._call(sender, functions.upload.GetFileRequest(
+                            location, offset=offset, limit=part)),
+                        timeout=config.TG_READ_TIMEOUT)
             except FloodWaitError as flood:
                 # טלגרם אומר במפורש כמה להמתין. השהיה קצרה משלנו רק
                 # מאריכה את העונש, ולכן ממתינים בדיוק כמה שנדרש. זה
@@ -242,6 +264,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
                               "כדאי להוריד TG_PIPELINE", flood.seconds)
                     raise
                 log.warning("טלגרם מגביל קצב, ממתינים %.0f שניות", wait)
+                await shrink()
                 await asyncio.sleep(wait)
                 continue
             except asyncio.TimeoutError:
