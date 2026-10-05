@@ -614,6 +614,10 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 
     cmd = [
         "ffmpeg", "-nostdin", "-y", "-threads", str(threads),
+        # פענוח בחומרה כשיש. הפריימים חוזרים לזיכרון המערכת מאליהם, ולכן
+        # מסנן הכתוביות ממשיך לעבוד כרגיל, וכשאין חומרה ffmpeg נופל חזרה
+        # לתוכנה בלי להיכשל
+        "-hwaccel", "auto",
         "-i", str(video), "-vf", _video_filters(marked, credit, size),
     ] + _encoder_args(settings, threads, duration)
     cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
@@ -676,7 +680,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         cmd = [
             "ffmpeg", "-nostdin", "-y",
             "-ss", f"{begin:.3f}", "-t", f"{length:.3f}",
-            "-threads", str(threads), "-i", str(video),
+            "-threads", str(threads), "-hwaccel", "auto", "-i", str(video),
             "-vf", filters,
         ] + _encoder_args(settings, threads, duration)
         # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח

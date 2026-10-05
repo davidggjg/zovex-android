@@ -93,8 +93,12 @@ QUICK_UNDER_MB = _int("QUICK_UNDER_MB", 300)
 SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
 
 
-# סדר יורד של מהירות: הראשון הכי מהיר, האחרון הכי דחוס
-LADDER = ("quick", "balanced", "small")
+# סדר יורד של מהירות: הראשון הכי מהיר, האחרון הכי דחוס.
+# "small" יצא מהסולם האוטומטי בכוונה. לפי המדידה שלמעלה הוא קונה 9%
+# בגודל תמורת פי שניים בזמן הקידוד — על סרט של שעתיים זה עשרות דקות
+# שהמשתמש ממתין בשביל הבדל שאי אפשר לראות. הוא עדיין זמין ידנית
+# דרך BURN_PROFILE=small
+LADDER = ("quick", "balanced")
 
 
 def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
