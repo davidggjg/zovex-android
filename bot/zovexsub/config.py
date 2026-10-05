@@ -291,3 +291,14 @@ def validate() -> list[str]:
     if not GEMINI_API_KEYS:
         problems.append("חסר GEMINI_API_KEYS")
     return problems
+
+
+# זיהוי דיבור. silencedetect מודד עוצמה ולכן סופר מוזיקת רקע כדיבור;
+# מודל VAD אמיתי מבדיל ביניהם. ריק או קובץ חסר = חוזרים לשיטה הישנה
+VAD_MODEL = os.getenv("VAD_MODEL") or "/opt/zovexsub/models/silero_vad.onnx"
+VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD") or 0.5)
+# ריפוד סביב כל קטע דיבור, כדי לא לחתוך הברה ראשונה או אחרונה
+VAD_PAD = float(os.getenv("VAD_PAD") or 0.15)
+# פער קצר בין שני קטעים הוא נשימה באמצע משפט, לא סוף דיבור
+VAD_JOIN = float(os.getenv("VAD_JOIN") or 0.35)
+VAD_MIN_SPEECH = float(os.getenv("VAD_MIN_SPEECH") or 0.20)

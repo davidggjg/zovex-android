@@ -59,6 +59,14 @@ def check_environment() -> None:
     except (OSError, subprocess.SubprocessError) as exc:
         report(WARN, "גופן עברי", str(exc))
 
+    from . import vad
+    if vad.available():
+        report(OK, "זיהוי דיבור", "Silero VAD פעיל")
+    else:
+        report(WARN, "זיהוי דיבור",
+               f"מודל חסר ב-{config.VAD_MODEL} — זיהוי לפי עוצמה, "
+               "מוזיקת רקע תיחשב כדיבור")
+
     try:
         free = shutil.disk_usage(config.WORK_DIR).free / 1024 ** 3
         report(OK if free > 20 else WARN, "מקום פנוי", f"{free:.0f}GB")

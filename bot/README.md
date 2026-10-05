@@ -63,6 +63,22 @@ sudo systemctl enable --now zovexsub
 sudo journalctl -u zovexsub -f
 ```
 
+### מודל זיהוי הדיבור
+
+בלי המודל המערכת מזהה דיבור לפי עוצמת קול, ואז מוזיקת רקע נספרת כדיבור
+והכתוביות לא מוצמדות נכון. נמדד על קובץ שבו הדיבור תופס 22% מהזמן:
+זיהוי לפי עוצמה החזיר 85% דיבור, Silero החזיר מוזיקה 0-3% ודיבור 96%.
+
+```bash
+sudo mkdir -p /opt/zovexsub/models
+sudo curl -L -o /opt/zovexsub/models/silero_vad.onnx \
+  https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx
+/opt/zovexsub/venv/bin/pip install onnxruntime numpy
+```
+
+2.3MB, רץ על מעבד, 192x זמן אמת על ליבה אחת — סרט של שעתיים וחצי
+בפחות מדקה.
+
 ### איפה הלוגים
 
 בשרת הייעודי קובץ ה-service מפנה את הפלט לקובץ, לא ל-journal. לכן

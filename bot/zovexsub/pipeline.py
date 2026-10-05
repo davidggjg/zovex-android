@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import config, hebrew, media, progress as prog, realign, srt
+from . import config, hebrew, media, progress as prog, realign, srt, vad
 from .stt import transcribe
 
 log = logging.getLogger(__name__)
@@ -67,7 +67,10 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     log.info("זוהו %d סגמנטים, שפה: %s", len(transcript.segments), transcript.language)
 
     await progress("🔇 מזהה דיבור ושקט…")
-    speech = await media.speech_spans(audio)
+    # VAD אמיתי קודם; אם הוא לא זמין נופלים לזיהוי לפי עוצמת קול
+    speech = await vad.speech_spans(audio)
+    if speech is None:
+        speech = await media.speech_spans(audio)
 
     stage = prog.Stage(progress, "🎯 מדייק תזמונים")
     stage.pulse()
