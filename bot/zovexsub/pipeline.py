@@ -8,7 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import align, config, hebrew, media, progress as prog, realign, srt, vad
+from . import (align, config, gemini_stt, hebrew, media,
+               progress as prog, realign, srt, vad)
 from .stt import transcribe
 
 log = logging.getLogger(__name__)
@@ -48,8 +49,6 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
 
     await progress(f"🎧 מחלץ אודיו · {duration / 60:.0f} דקות וידאו")
     audio = await media.extract_audio(source, work / "audio.flac")
-    workers = config.parallel(config.STT_PARALLEL, config.GROQ_API_KEYS)
-    chunks = await media.split_audio(audio, work, duration, workers=workers)
 
     stage = prog.Stage(progress, "✍️ מתמלל")
     stage.pulse()
@@ -57,10 +56,25 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     async def on_chunk(done: int, total: int) -> None:
         await stage.show(done / total, note=f"{done}/{total} קטעים")
 
+    # gemini-3.5-transcribe הוא מודל ASR ייעודי: הוא מחזיר תזמוני מילים
+    # מדויקים במקור, ולכן התזמונים שלו לא צריכים יישור בדיעבד. הוא גם
+    # מחזיר מי אמר כל מילה, וזה מה שהופך את מגדר הפנייה מניחוש לעובדה
+    transcript = None
+    native_times = False
     try:
-        transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
-    finally:
-        stage.stop()
+        transcript = await gemini_stt.transcribe(audio, on_step=on_chunk)
+        native_times = transcript is not None
+    except Exception as exc:  # noqa: BLE001 — נופלים ל-Groq
+        log.warning("תמלול ג'ימיני נכשל (%s), עוברים ל-Groq", exc)
+
+    if transcript is None:
+        workers = config.parallel(config.STT_PARALLEL, config.GROQ_API_KEYS)
+        chunks = await media.split_audio(audio, work, duration, workers=workers)
+        try:
+            transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
+        finally:
+            stage.stop()
+    stage.stop()
     await stage.finish()
     if not transcript.segments:
         raise RuntimeError("לא זוהה דיבור בקובץ.")
@@ -68,7 +82,9 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
 
     # יישור כפוי קודם לכל השאר: הוא מתקן את התזמונים עצמם, ולא רק מזיז
     # כתוביות שנחתו על שקט. אחריו ההצמדה ל-VAD נוגעת רק בשאריות
-    if align.available():
+    if native_times:
+        log.info("התזמונים הגיעו מהמודל עצמו — אין צורך ביישור")
+    elif align.available():
         stage = prog.Stage(progress, "📐 מיישר תזמונים")
         stage.pulse()
 
@@ -91,8 +107,8 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     # חיתוך ffmpeg וקריאת Groq — דקות ארוכות. היא נבנתה כדי לתקן בדיוק
     # את מה שהיישור הכפוי מתקן, רק פחות מדויק ובמחיר עצום, ולכן כשהיישור
     # זמין היא מיותרת לחלוטין
-    if align.available():
-        log.info("מדלגים על ההקשבה החוזרת — היישור הכפוי כבר דייק את התזמונים")
+    if native_times or align.available():
+        log.info("מדלגים על ההקשבה החוזרת — התזמונים כבר מדויקים")
     else:
         stage = prog.Stage(progress, "🎯 מדייק תזמונים")
         stage.pulse()

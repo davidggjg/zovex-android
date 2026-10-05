@@ -33,6 +33,7 @@ class Segment:
     text: str
     words: list[Word] = field(default_factory=list)
     no_speech: float = 0.0
+    speaker: str = ""        # מי דיבר, כשהספק מחזיר זיהוי דוברים
 
 
 @dataclass

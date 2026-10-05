@@ -341,3 +341,16 @@ def align_parallel(cores: int) -> int:
 # מכסה לדקה מתאפסת תוך דקה, וליפול בגללה זה לאבד עבודה שלמה
 GEMINI_ROUNDS = _int("GEMINI_ROUNDS", 4)
 GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)
+
+
+# תמלול דרך gemini-3.5-transcribe: מודל ASR ייעודי שמחזיר תזמוני מילים
+# ומי אמר אותן. התזמונים שלו מדויקים במקור, בלי צורך ביישור בדיעבד
+GEMINI_STT = (os.getenv("GEMINI_STT") or "0").strip().lower() not in ("0", "off", "no", "")
+GEMINI_STT_SPEAKERS = (os.getenv("GEMINI_STT_SPEAKERS") or "1").strip() not in ("0", "off", "no")
+# עם תזמוני מילים המודל מקבל עד שלושים דקות לבקשה, אז עשרים בטוח
+GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 1200)
+GEMINI_STT_OVERLAP = float(os.getenv("GEMINI_STT_OVERLAP") or 10)
+# איך לקבץ מילים לשורות כתוביות
+GEMINI_STT_PAUSE = float(os.getenv("GEMINI_STT_PAUSE") or 0.72)
+GEMINI_STT_WORDS = _int("GEMINI_STT_WORDS", 18)
+GEMINI_STT_CHARS = _int("GEMINI_STT_CHARS", 110)
