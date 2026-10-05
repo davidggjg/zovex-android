@@ -274,14 +274,35 @@ async def check_telegram(work: Path, megabytes: int) -> None:
         report(OK if up > 0.5 else WARN, "העלאה",
                f"{up:.1f}MB/ש׳" + ("" if handle else " (מסלול טלתון)"))
 
+        # סריקה: אותו קובץ יורד בכמה הגדרות חיבורים, כדי לדעת מה באמת
+        # הכי מהיר בשרת הזה במקום לנחש. מודדים הורדה בלבד — ההעלאה
+        # כבר נעשתה, ואין טעם לחזור עליה לכל ערך
+        sweep = [int(v) for v in (os.getenv("SELFTEST_TG_SWEEP") or "").split(",")
+                 if v.strip().isdigit()] or [config.TG_CONNECTIONS]
+        original = config.TG_CONNECTIONS
+        best, rate = original, 0.0
         back = work / "tg.back.bin"
-        started = time.monotonic()
-        await fastio.download(client, sent, back)
-        down = megabytes / max(0.001, time.monotonic() - started)
-        same = hashlib.sha256(back.read_bytes()).hexdigest() == digest
-        report(OK if same else BAD, "הקובץ חזר שלם",
-               "זהה בייט־בייט" if same else "שונה מהמקור!")
-        report(OK if down > 0.5 else WARN, "הורדה", f"{down:.1f}MB/ש׳")
+        try:
+            for count in sweep:
+                config.TG_CONNECTIONS = count
+                back.unlink(missing_ok=True)
+                started = time.monotonic()
+                await fastio.download(client, sent, back)
+                down = megabytes / max(0.001, time.monotonic() - started)
+                same = hashlib.sha256(back.read_bytes()).hexdigest() == digest
+                mark = OK if same and down > 0.5 else (BAD if not same else WARN)
+                label = "הורדה" if len(sweep) == 1 else f"הורדה · {count} חיבורים"
+                report(mark, label,
+                       f"{down:.1f}MB/ש׳" + ("" if same else " — הקובץ שונה מהמקור!"))
+                if same and down > rate:
+                    best, rate = count, down
+        finally:
+            config.TG_CONNECTIONS = original
+            back.unlink(missing_ok=True)
+
+        if len(sweep) > 1:
+            report(OK, "המהיר ביותר",
+                   f"TG_CONNECTIONS={best} · {rate:.1f}MB/ש׳")
     except Exception as exc:  # noqa: BLE001
         report(BAD, "טלגרם", f"{type(exc).__name__}: {str(exc)[:150]}")
     finally:
