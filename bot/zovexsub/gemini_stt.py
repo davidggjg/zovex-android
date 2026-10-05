@@ -189,29 +189,42 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     tongue = ""
     done = 0
 
-    try:
-        for index, begin in enumerate(starts):
-            length = min(span, total - begin)
-            if length <= 0.5:
-                continue
+    # החלקים רצים במקביל, מפתח לכל אחד. קודם זו הייתה לולאה סדרתית —
+    # חלק אחד מועלה ומתומלל, ורק אז הבא — וסרט של שעתיים לקח שמונה
+    # סבבים בטור בזמן שתשעה מפתחות עמדו בטלה
+    gate = asyncio.Semaphore(max(1, len(config.GEMINI_API_KEYS)))
+    results: dict[int, list[dict]] = {}
+    found_any = [""]
+    flags = [diarize]
+
+    async def one(index: int, begin: float) -> None:
+        nonlocal done
+        length = min(span, total - begin)
+        if length <= 0.5:
+            return
+        async with gate:
             piece = work / f"part{index:03d}.wav"
             await media.cut_audio(audio, begin, begin + length, piece)
             try:
-                words, diarize, found = await _chunk_words(piece, diarize)
-                tongue = tongue or found
+                words, flags[0], found = await _chunk_words(piece, flags[0])
             finally:
                 piece.unlink(missing_ok=True)
+        found_any[0] = found_any[0] or found
+        results[index] = [{**w, "start": begin + w["start"],
+                           "end": begin + w["end"]} for w in words]
+        done += 1
+        if on_step:
+            await on_step(done, len(starts))
 
-            for word in words:
-                start = begin + word["start"]
-                # החפיפה נועדה לשמור על מילים בגבול, אבל אסור שתכפיל אותן
-                if collected and start < collected[-1]["end"] - 0.05:
+    try:
+        await asyncio.gather(*(one(i, b) for i, b in enumerate(starts)))
+        tongue = found_any[0]
+        # ההרכבה לפי הסדר, והחפיפה מסוננת כאן ולא תוך כדי
+        for index in sorted(results):
+            for word in results[index]:
+                if collected and word["start"] < collected[-1]["end"] - 0.05:
                     continue
-                collected.append({**word, "start": start,
-                                  "end": begin + word["end"]})
-            done += 1
-            if on_step:
-                await on_step(done, len(starts))
+                collected.append(word)
     finally:
         import shutil
         shutil.rmtree(work, ignore_errors=True)
