@@ -15,6 +15,7 @@ import logging
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -68,6 +69,7 @@ def check_environment() -> None:
                "מוזיקת רקע תיחשב כדיבור")
 
     try:
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
         free = shutil.disk_usage(config.WORK_DIR).free / 1024 ** 3
         report(OK if free > 20 else WARN, "מקום פנוי", f"{free:.0f}GB")
     except OSError as exc:
@@ -129,6 +131,7 @@ async def check_burn(work: Path) -> None:
     print("\n── צריבה ──")
     from . import media
 
+    work.mkdir(parents=True, exist_ok=True)
     src, srt, dst = work / "t.mp4", work / "t.srt", work / "t.out.mp4"
     try:
         subprocess.run(
@@ -195,6 +198,7 @@ async def check_telegram(work: Path, megabytes: int) -> None:
     from telethon import TelegramClient
     from . import fastio
 
+    work.mkdir(parents=True, exist_ok=True)
     src = work / "tg.bin"
     src.write_bytes(os.urandom(megabytes * 1024 * 1024))
     digest = hashlib.sha256(src.read_bytes()).hexdigest()
@@ -202,7 +206,12 @@ async def check_telegram(work: Path, megabytes: int) -> None:
     client = TelegramClient(config.TG_SESSION, config.TG_API_ID, config.TG_API_HASH)
     sent = None
     try:
-        await client.start()
+        # בלי session קיים, start מבקש מספר טלפון וממתין לנצח. בדיקה
+        # אמורה להיכשל ולדווח, לא להיתקע
+        await asyncio.wait_for(client.connect(), timeout=30)
+        if not await client.is_user_authorized():
+            report(BAD, "טלגרם", "אין התחברות — הרץ את הבוט פעם אחת כדי להתחבר")
+            return
         me = await client.get_me()
         report(OK, "מחובר", f"{me.username or me.first_name}")
 
@@ -235,9 +244,9 @@ async def check_telegram(work: Path, megabytes: int) -> None:
 
 async def main() -> int:
     megabytes = int(os.getenv("SELFTEST_MB") or 20)
-    work = config.WORK_DIR / "selftest"
-    shutil.rmtree(work, ignore_errors=True)
-    work.mkdir(parents=True, exist_ok=True)
+    # לא בתוך WORK_DIR: הבוט מוחק אותה במלואה כשהוא עולה, ו-restart
+    # בזמן הבדיקה היה מוחק את הקבצים שלה באמצע
+    work = Path(tempfile.mkdtemp(prefix="zovexsub-selftest-"))
 
     print("בדיקה עצמית של zovexsub")
     try:
@@ -245,7 +254,11 @@ async def main() -> int:
         check_config()
         await check_keys()
         await check_burn(work)
-        await check_telegram(work, megabytes)
+        try:
+            await asyncio.wait_for(check_telegram(work, megabytes),
+                                   timeout=float(os.getenv("SELFTEST_TG_TIMEOUT") or 300))
+        except asyncio.TimeoutError:
+            report(BAD, "טלגרם", "הבדיקה עברה את תקרת הזמן")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
