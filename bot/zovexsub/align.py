@@ -224,16 +224,18 @@ async def refine(segments: list, audio: Path, on_step=None) -> int:
 
     groups = _windows(segments, config.ALIGN_WINDOW)
     log.info("יישור כפוי: %d חלונות על %d סגמנטים", len(groups), len(segments))
-    import os
-    gate = asyncio.Semaphore(
-        config.align_parallel(os.cpu_count() or 2))
+    # היישור נרשם באותה בריכת ליבות של הצריבה. בלי זה הוא לוקח את כל
+    # המכונה בזמן שצריבה רצה לידו, ושניהם נחנקים — נמדד כצריבה שיורדת
+    # מ-18x ל-4x כששני השלבים רצים יחד
+    from . import media
+    pool = media.core_pool()
     loop = asyncio.get_running_loop()
     moved = 0
     done = 0
 
-    async def one(indices: list[int]) -> None:
+    async def one(token: int, indices: list[int]) -> None:
         nonlocal moved, done
-        async with gate:
+        async with pool.slot(token):
             try:
                 fixed = await loop.run_in_executor(
                     None, _align_window, audio, segments, indices, vocabulary)
@@ -250,6 +252,7 @@ async def refine(segments: list, audio: Path, on_step=None) -> int:
         if on_step:
             await on_step(done, len(groups))
 
-    await asyncio.gather(*(one(group) for group in groups))
+    async with pool.job() as token:
+        await asyncio.gather(*(one(token, group) for group in groups))
     log.info("היישור הזיז %d מתוך %d סגמנטים", moved, len(segments))
     return moved

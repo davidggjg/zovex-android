@@ -326,15 +326,9 @@ ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
 # יעיל יותר. תפוקה לליבה בשני חוטים — 15 שניות: 3.7x · 25: 2.75x · 40: 1.85x
 ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 15)   # שניות לחלון
 ALIGN_PAD = float(os.getenv("ALIGN_PAD") or 0.5)        # ריפוד סביב החלון
-ALIGN_THREADS = _int("ALIGN_THREADS", 2)                # חוטים לכל יישור
-ALIGN_PARALLEL = _int("ALIGN_PARALLEL", 0)              # 0 = לפי הליבות
-
-
-def align_parallel(cores: int) -> int:
-    """כמה חלונות ליישר בו-זמנית."""
-    if ALIGN_PARALLEL > 0:
-        return ALIGN_PARALLEL
-    return max(1, cores // max(1, ALIGN_THREADS))
+# חוטים לכל חלון יישור. שווה ל-BURN_SEGMENT_THREADS בכוונה: שניהם
+# לוקחים מקום אחד מאותה בריכה, ומקום חייב להיות באותו גודל לשניהם
+ALIGN_THREADS = _int("ALIGN_THREADS", 2)
 
 
 # כשכל מודלי ג'מיני במכסה לדקה, ההרצה ממתינה ומנסה שוב במקום להיכשל.
