@@ -203,7 +203,19 @@ async def check_telegram(work: Path, megabytes: int) -> None:
     src.write_bytes(os.urandom(megabytes * 1024 * 1024))
     digest = hashlib.sha256(src.read_bytes()).hexdigest()
 
-    client = TelegramClient(config.TG_SESSION, config.TG_API_ID, config.TG_API_HASH)
+    # עותק של ה-session, לא המקור. הבוט הרץ מחזיק את הקובץ פתוח
+    # ו-SQLite נועל אותו — בדיקה שמנסה לכתוב אליו נופלת על
+    # "database is locked". עותק נותן את אותה התחברות בלי להתנגש
+    origin = Path(f"{config.TG_SESSION}.session")
+    session = work / "probe.session"
+    if origin.exists():
+        shutil.copy2(origin, session)
+    else:
+        report(BAD, "טלגרם", f"אין קובץ session ב-{origin}")
+        return
+
+    client = TelegramClient(str(session.with_suffix("")),
+                            config.TG_API_ID, config.TG_API_HASH)
     sent = None
     try:
         # בלי session קיים, start מבקש מספר טלפון וממתין לנצח. בדיקה
