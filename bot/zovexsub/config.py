@@ -241,6 +241,12 @@ TG_CONNECTIONS = _int("TG_CONNECTIONS", 8)
 # תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
 # במקום ליפול חזרה למסלול הרגיל של טלתון
 TG_CONNECT_TIMEOUT = float(os.getenv("TG_CONNECT_TIMEOUT") or 45)
+# תקרת זמן לבקשת חלק בודדת. בלעדיה חיבור שמפסיק לענות באמצע משאיר את
+# העובד שלו ממתין לנצח, וההורדה נתקעת באחוז אקראי בלי שגיאה
+TG_READ_TIMEOUT = float(os.getenv("TG_READ_TIMEOUT") or 60)
+TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
+# אם לא ירד אף בייט בפרק הזמן הזה, ההעברה מוכרזת תקועה ונופלת חזרה
+TG_STALL_TIMEOUT = float(os.getenv("TG_STALL_TIMEOUT") or 180)
 TG_FAST_TIMEOUT = float(os.getenv("TG_FAST_TIMEOUT") or 0)   # 0 = בלי תקרה
 
 # מגבלת גודל לקובץ שנשלח ל-Groq (25MB בתוכנית החינמית). נשאיר שולי ביטחון.

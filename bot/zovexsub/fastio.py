@@ -16,6 +16,7 @@ import asyncio
 import copy
 import importlib.util
 import math
+import time
 import logging
 import os
 from pathlib import Path
@@ -134,7 +135,6 @@ async def _parallel_download(client, message, dst: Path, size: int,
     part = _parts(size)
     workers = min(workers, -(-size // part))
     total_parts = -(-size // part)
-    stride = workers * part
 
     done = 0
     lock = asyncio.Lock()
@@ -142,35 +142,98 @@ async def _parallel_download(client, message, dst: Path, size: int,
     senders = await asyncio.wait_for(
         _open_senders(client, dc_id, workers), timeout=config.TG_CONNECT_TIMEOUT)
 
-    async def worker(index: int, sender) -> None:
-        """כל חיבור לוקח חלק אחד מכל workers — שזירה ולא טווח רציף."""
-        nonlocal done
-        offset = index * part
-        remaining = len(range(index, total_parts, workers))
-        while remaining > 0:
-            # _call ולא sender.send: הוא מטפל ב-FloodWait, בשגיאות RPC
-            # ובניתוקים. שליחה גולמית פשוט נתקעת כשמשהו משתבש
-            result = await client._call(
-                sender, functions.upload.GetFileRequest(
-                    location, offset=offset, limit=part))
+    pending: asyncio.Queue[int] = asyncio.Queue()
+    for index in range(total_parts):
+        pending.put_nowait(index)
+    last_progress = time.monotonic()
+
+    async def fetch(sender, offset: int):
+        """בקשה אחת, עם תקרת זמן וניסיונות חוזרים.
+
+        בלי התקרה, חיבור שמפסיק לענות באמצע משאיר את העובד ממתין לנצח
+        וההורדה נתקעת באחוז אקראי — בלי שגיאה, בלי לוג, בלי נפילה חזרה.
+        """
+        for attempt in range(1, config.TG_READ_RETRIES + 1):
+            try:
+                return await asyncio.wait_for(
+                    client._call(sender, functions.upload.GetFileRequest(
+                        location, offset=offset, limit=part)),
+                    timeout=config.TG_READ_TIMEOUT)
+            except asyncio.TimeoutError:
+                log.warning("חלק ב-%d לא נענה תוך %.0f שניות (ניסיון %d/%d)",
+                            offset, config.TG_READ_TIMEOUT, attempt,
+                            config.TG_READ_RETRIES)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("חלק ב-%d נכשל: %s (ניסיון %d/%d)",
+                            offset, exc, attempt, config.TG_READ_RETRIES)
+            if attempt == config.TG_READ_RETRIES:
+                raise
+            await asyncio.sleep(min(8, 2 ** attempt))
+
+    async def worker(sender) -> None:
+        """כל עובד מושך חלקים מתור משותף.
+
+        תור ולא טווח קבוע: חיבור שמת לא משאיר את החלקים שלו יתומים —
+        מי שעדיין חי לוקח אותם.
+        """
+        nonlocal done, last_progress
+        while True:
+            try:
+                index = pending.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            offset = index * part
+            try:
+                result = await fetch(sender, offset)
+            except Exception:  # noqa: BLE001 — שיקח אותו עובד אחר
+                pending.put_nowait(index)
+                raise
             if isinstance(result, types.upload.FileCdnRedirect):
                 raise RuntimeError("טלגרם הפנה ל-CDN, אין תמיכה במסלול המהיר")
             block = bytes(result.bytes)[: max(0, size - offset)]
             if not block:
-                break
+                continue
             os.pwrite(handle, block, offset)
             async with lock:
                 done += len(block)
+                last_progress = time.monotonic()
                 if on_progress:
                     await on_progress(done, size)
-            offset += stride
-            remaining -= 1
+
+    async def watchdog() -> None:
+        """מכריז על תקיעה אם אף בייט לא ירד זמן רב."""
+        while True:
+            await asyncio.sleep(10)
+            idle = time.monotonic() - last_progress
+            if idle > config.TG_STALL_TIMEOUT:
+                raise RuntimeError(
+                    f"ההורדה תקועה {idle:.0f} שניות על {done * 100 // max(1, size)}%")
 
     try:
         log.info("מוריד ב-%d חיבורים, חלק %dKB, %d חלקים (%.0fMB)",
                  workers, part // 1024, total_parts, size / 1048576)
-        await asyncio.gather(*(worker(i, sender)
-                               for i, sender in enumerate(senders)))
+        guard = asyncio.create_task(watchdog())
+        healthy = list(senders)
+        try:
+            # סבבים: חיבור שמת מחזיר את החלק שלו לתור, ואם העובדים האחרים
+            # כבר סיימו — סבב נוסף עם מי שנשאר חי לוקח אותו. בלי זה חיבור
+            # אחד שנופל היה מכשיל את כל ההורדה
+            while healthy and not pending.empty():
+                outcomes = asyncio.gather(
+                    *(worker(sender) for sender in healthy), return_exceptions=True)
+                finished, _ = await asyncio.wait(
+                    [asyncio.ensure_future(outcomes), guard],
+                    return_when=asyncio.FIRST_COMPLETED)
+                if guard in finished:
+                    raise guard.exception() or RuntimeError("ההורדה תקועה")
+                healthy = [sender for sender, result
+                           in zip(healthy, await outcomes)
+                           if not isinstance(result, BaseException)]
+                if not pending.empty():
+                    log.warning("%d חלקים חוזרים לסבב נוסף, %d חיבורים חיים",
+                                pending.qsize(), len(healthy))
+        finally:
+            guard.cancel()
     finally:
         os.close(handle)
         await _close_senders(senders)
@@ -226,10 +289,24 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
             except asyncio.QueueEmpty:
                 return
             block = os.pread(handle, PART, index * PART)
-            # _call ולא send גולמי, מאותה סיבה כמו בהורדה
-            await client._call(sender, functions.upload.SaveBigFilePartRequest(
-                file_id=file_id, file_part=index, file_total_parts=parts, bytes=block,
-            ))
+            # תקרת זמן וניסיונות חוזרים, בדיוק כמו בהורדה: בלעדיהם חיבור
+            # שמפסיק לענות היה תוקע את ההעלאה לנצח
+            for attempt in range(1, config.TG_READ_RETRIES + 1):
+                try:
+                    await asyncio.wait_for(client._call(
+                        sender, functions.upload.SaveBigFilePartRequest(
+                            file_id=file_id, file_part=index,
+                            file_total_parts=parts, bytes=block)),
+                        timeout=config.TG_READ_TIMEOUT)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("חלק %d בהעלאה נכשל: %s (ניסיון %d/%d)",
+                                index, type(exc).__name__, attempt,
+                                config.TG_READ_RETRIES)
+                    if attempt == config.TG_READ_RETRIES:
+                        queue.put_nowait(index)
+                        raise
+                    await asyncio.sleep(min(8, 2 ** attempt))
             async with lock:
                 done += len(block)
                 if on_progress:
