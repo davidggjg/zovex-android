@@ -60,6 +60,10 @@ OWNER_HELP = f"""**פקודות ניהול (רק אתה)**
 # בשיחות רגילות, ובוט שמגיב לה מתפרץ לשיחות שלא קשורות אליו.
 ALIASES = {T, ".כתוביות", ".תמלל"}
 
+# סיומות וידאו, לזיהוי קובץ המקור בתיקיית העבודה
+VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v",
+                  ".ts", ".mpg", ".mpeg", ".wmv", ".flv", ".3gp", ".ogv"}
+
 YES_WORDS = {"כן", "כן!", "yes", "y", "לצרוב", "צרוב", "צריבה", "כן בבקשה", "✅", "👍"}
 OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז הקבצים נמחקים
 
@@ -529,9 +533,11 @@ async def _burn(job: Job, work: Path) -> None:
         await job.srt_message.download_media(file=str(job.srt_path))
         log.info("התקבל קובץ כתוביות: %.0fKB", job.srt_path.stat().st_size / 1024)
     else:
-        # next בלי ברירת מחדל זורק StopIteration, ובתוך קורוטינה פייתון
-        # הופך אותו ל-RuntimeError ריק — המשתמש קיבל ❌ בלי שום הסבר
-        source = next(iter(sorted(work.glob("source.*"))), None)
+        # בתיקייה יושבים גם source.he.srt ו-source.he.rtl.srt, ולכן אסור
+        # לקחת סתם את הראשון לפי שם: מיון אלפביתי מחזיר דווקא כתובית,
+        # ואז קריאת אורך הווידאו נכשלת. רק סיומות של וידאו נחשבות.
+        source = next((item for item in sorted(work.glob("source.*"))
+                       if item.suffix.lower() in VIDEO_SUFFIXES), None)
         if source is None:
             raise FileNotFoundError(
                 "קובץ המקור נמחק מהשרת. שלח את הסרטון מחדש.")
