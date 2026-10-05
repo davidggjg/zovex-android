@@ -79,7 +79,14 @@ def check_environment() -> None:
     except (OSError, subprocess.SubprocessError) as exc:
         report(WARN, "גופן עברי", str(exc))
 
-    from . import align, vad
+    from . import align, gemini_stt, vad
+    if gemini_stt.available():
+        report(OK, "תמלול", "gemini-3.5-transcribe — תזמונים ודוברים במקור")
+    elif config.GEMINI_STT:
+        report(WARN, "תמלול", "GEMINI_STT דלוק אבל google-genai לא מותקן")
+    else:
+        report(OK, "תמלול", "Groq Whisper (GEMINI_STT=1 מחליף)")
+
     if align.available():
         report(OK, "יישור תזמונים", "MMS forced aligner פעיל")
     else:

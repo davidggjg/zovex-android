@@ -40,6 +40,17 @@ def _config(diarize: bool) -> dict:
     return {"transcription_config": {"language_codes": [], "mode": mode}}
 
 
+def _language_of(interaction) -> str:
+    """שפת המקור, אם המודל מדווח עליה."""
+    for step in getattr(interaction, "steps", None) or []:
+        for content in getattr(step, "content", None) or []:
+            for field in ("language_code", "language"):
+                found = getattr(content, field, None)
+                if found:
+                    return str(found)
+    return ""
+
+
 def _words_of(interaction) -> list[dict]:
     """שולף את הערות ה-word_info שהמודל מחזיר."""
     found: list[dict] = []
@@ -91,7 +102,7 @@ def _one_chunk(path: Path, key: str, diarize: bool) -> list[dict]:
                     "mime_type": uploaded.mime_type}],
             generation_config=_config(diarize),
         )
-        return _words_of(interaction)
+        return _words_of(interaction), _language_of(interaction)
     finally:
         if uploaded is not None:
             try:
@@ -100,15 +111,16 @@ def _one_chunk(path: Path, key: str, diarize: bool) -> list[dict]:
                 pass
 
 
-async def _chunk_words(path: Path, diarize: bool) -> tuple[list[dict], bool]:
+async def _chunk_words(path: Path, diarize: bool) -> tuple[list[dict], bool, str]:
     """מתמלל קטע אחד, מסובב מפתחות, ומוותר על זיהוי דוברים אם הוא נדחה."""
     loop = asyncio.get_running_loop()
     last = None
     for key in config.GEMINI_API_KEYS:
         try:
-            words = await loop.run_in_executor(None, _one_chunk, path, key, diarize)
+            words, tongue = await loop.run_in_executor(
+                None, _one_chunk, path, key, diarize)
             if words:
-                return words, diarize
+                return words, diarize, tongue
             last = RuntimeError("התמלול חזר בלי תזמוני מילים")
         except Exception as exc:  # noqa: BLE001 — מנסים את המפתח הבא
             last = exc
@@ -174,6 +186,7 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     work.mkdir(parents=True, exist_ok=True)
     collected: list[dict] = []
     diarize = config.GEMINI_STT_SPEAKERS
+    tongue = ""
     done = 0
 
     try:
@@ -184,7 +197,8 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
             piece = work / f"part{index:03d}.wav"
             await media.cut_audio(audio, begin, begin + length, piece)
             try:
-                words, diarize = await _chunk_words(piece, diarize)
+                words, diarize, found = await _chunk_words(piece, diarize)
+                tongue = tongue or found
             finally:
                 piece.unlink(missing_ok=True)
 
@@ -208,7 +222,10 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     speakers = {s.speaker for s in segments if s.speaker}
     log.info("ג'ימיני תמלל %d מילים ב-%d שורות%s", len(collected), len(segments),
              f", {len(speakers)} דוברים" if speakers else "")
-    return Transcript(language="", segments=segments)
+    # בלי שפה מוצהרת, הפרומפטים של החקר והתרגום מקבלים שדה ריק. עדיף
+    # לומר למודל לזהות בעצמו מאשר להשאיר אותו ריק
+    return Transcript(language=tongue or "לא צוינה — זהה אותה מהתמליל",
+                      segments=segments)
 
 
 def _range(start: float, stop: float, step: float) -> list[float]:
