@@ -87,23 +87,25 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
     """
     dc = await client._get_dc(dc_id)
     home = client.session.dc_id == dc_id
+    key = client.session.auth_key if home else None
     senders = []
     try:
         for _ in range(count):
-            sender = MTProtoSender(client.session.auth_key if home else None,
-                                   loggers=client._log)
+            sender = MTProtoSender(key, loggers=client._log)
             await sender.connect(client._connection(
                 dc.ip_address, dc.port, dc.id,
                 loggers=client._log, proxy=client._proxy,
             ))
-            if not home:
-                # DC אחר מחייב ייצוא הרשאה. נעשה סדרתית בכוונה: הראשון
-                # מייצא, והשאר כבר מקבלים מפתח מוכן
+            if key is None:
+                # DC אחר מחייב ייצוא הרשאה — אבל רק פעם אחת. המפתח
+                # שנוצר כאן משמש גם את שאר החיבורים, במקום לבצע ייצוא
+                # נפרד לכל אחד מהם על החיבור הראשי
                 auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
                 init = copy.copy(client._init_request)
                 init.query = functions.auth.ImportAuthorizationRequest(
                     id=auth.id, bytes=auth.bytes)
                 await sender.send(functions.InvokeWithLayerRequest(LAYER, init))
+                key = sender.auth_key
             senders.append(sender)
     except Exception:
         await _close_senders(senders)
@@ -173,9 +175,11 @@ async def _parallel_download(client, message, dst: Path, size: int,
         os.close(handle)
         await _close_senders(senders)
 
-    actual = dst.stat().st_size
-    if actual != size:
-        raise RuntimeError(f"גודל לא תואם: {actual} במקום {size}")
+    # הגודל נקבע מראש ב-truncate, ולכן השוואת גודל לא בודקת כלום: חור
+    # באמצע הקובץ היה עובר בשקט ומגיע למשתמש כווידאו פגום. נספרים
+    # הבייטים שבאמת נכתבו
+    if done != size:
+        raise RuntimeError(f"ירדו {done} בייט מתוך {size} — הקובץ חסר")
     return dst
 
 

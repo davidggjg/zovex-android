@@ -111,6 +111,18 @@ async def _run_progress(cmd: list[str], total: float, on_progress, *,
         *full, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
 
+    # stderr נקרא תוך כדי ריצה ולא אחרי הסיום. ffmpeg כותב לשם אזהרות,
+    # ובצריבה ארוכה הן ממלאות את חוצץ הצינור (כ-64KB) — ואז ffmpeg נחסם
+    # על הכתיבה בזמן שאנחנו ממתינים שהוא יסתיים. תקיעה הדדית מושלמת,
+    # שנגמרת רק בתקרת הזמן ומדווחת כאילו הקידוד היה איטי מדי
+    tail: list[str] = []
+
+    async def drain() -> None:
+        assert proc.stderr
+        async for raw in proc.stderr:
+            tail.append(raw.decode("utf-8", "replace").rstrip())
+            del tail[:-40]
+
     async def pump() -> None:
         speed = ""
         assert proc.stdout
@@ -126,7 +138,8 @@ async def _run_progress(cmd: list[str], total: float, on_progress, *,
                 await on_progress(min(1.0, done / total), speed)
 
     try:
-        await asyncio.wait_for(asyncio.gather(pump(), proc.wait()), timeout=timeout)
+        await asyncio.wait_for(
+            asyncio.gather(pump(), drain(), proc.wait()), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
@@ -141,8 +154,7 @@ async def _run_progress(cmd: list[str], total: float, on_progress, *,
         raise
 
     if proc.returncode != 0:
-        err = (await proc.stderr.read()).decode("utf-8", "replace") if proc.stderr else ""
-        raise FFmpegError("\n".join(err.strip().splitlines()[-12:]) or "ffmpeg נכשל")
+        raise FFmpegError("\n".join(tail[-12:]) or f"ffmpeg נכשל (exit {proc.returncode})")
 
 
 @dataclass
@@ -671,7 +683,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         "-i", str(listing), "-i", str(video),
         "-map", "0:v:0", "-map", "1:a:0?", "-c", "copy",
         "-movflags", "+faststart", "-shortest", str(dst),
-    ], duration, assembling)
+    ], duration, assembling, timeout=limit)
 
     if on_progress:
         await on_progress(1.0, "בודק")

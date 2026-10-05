@@ -126,11 +126,18 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
             if name in _dead:
                 continue
 
-            for attempt in range(1, 5):
+            attempt, skipped = 0, 0
+            while attempt < 4:
                 key = await _pool.wait_for_free()
                 if _blocked.get((name, key), 0.0) > time.monotonic():
-                    # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר
+                    # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר. דילוג
+                    # אינו ניסיון — קודם הוא שרף אחד מארבעת הניסיונות
+                    # בלי לשלוח בקשה, והמודל ננטש אף שהיה מפתח פנוי
+                    skipped += 1
+                    if skipped > len(config.GEMINI_API_KEYS):
+                        break
                     continue
+                attempt += 1
                 try:
                     resp = await client.post(
                         f"{BASE}/{name}:generateContent",

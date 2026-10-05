@@ -529,7 +529,12 @@ async def _burn(job: Job, work: Path) -> None:
         await job.srt_message.download_media(file=str(job.srt_path))
         log.info("התקבל קובץ כתוביות: %.0fKB", job.srt_path.stat().st_size / 1024)
     else:
-        source = next(work.glob("source.*"))
+        # next בלי ברירת מחדל זורק StopIteration, ובתוך קורוטינה פייתון
+        # הופך אותו ל-RuntimeError ריק — המשתמש קיבל ❌ בלי שום הסבר
+        source = next(iter(sorted(work.glob("source.*"))), None)
+        if source is None:
+            raise FileNotFoundError(
+                "קובץ המקור נמחק מהשרת. שלח את הסרטון מחדש.")
 
     ensure_space(source.stat().st_size)
 
@@ -591,6 +596,13 @@ async def expire_offers() -> None:
                 offers.pop(message_id, None)
                 pipeline.cleanup(offer.work)
                 log.info("הצעת צריבה %s פגה, הקבצים נמחקו", message_id)
+        # waiting נבנה עם expires אבל אף אחד לא קרא אותו, אז בקשה שלא
+        # קיבלה את קובץ הכתוביות נשארה שם לנצח — והבקשה הישנה נשארה
+        # צריבה אפשרית ללא הגבלת זמן
+        for message_id, pending in list(waiting.items()):
+            if pending.expires <= now:
+                waiting.pop(message_id, None)
+                log.info("בקשת כתוביות %s פגה בלי קובץ", message_id)
 
 
 async def _safe_edit(status, text: str) -> None:
