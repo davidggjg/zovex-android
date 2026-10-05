@@ -93,12 +93,19 @@ QUICK_UNDER_MB = _int("QUICK_UNDER_MB", 300)
 SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
 
 
+# נמדד על מקור 1080p עם כתוביות, שני חוטים לקטע — בדיוק מה שקטע
+# בצריבה המקבילית מריץ:
+#   H.264 veryfast  1.75x לקטע  ->  15.8x על תשעה קטעים
+#   H.265 veryfast  0.78x לקטע  ->   7.0x על תשעה קטעים
+# כלומר H.265 חוסם את הצריבה ב-7x גם על מכונה שלמה, ולא משנה כמה
+# ליבות יש. "fast" (H.264) חסר היה מהסולם לגמרי, וכל קובץ מעל 300MB
+# קפץ ישר ל-H.265. זה ההבדל בין פרק קטן שרץ 18x לסרט שזוחל.
 # סדר יורד של מהירות: הראשון הכי מהיר, האחרון הכי דחוס.
 # "small" יצא מהסולם האוטומטי בכוונה. לפי המדידה שלמעלה הוא קונה 9%
 # בגודל תמורת פי שניים בזמן הקידוד — על סרט של שעתיים זה עשרות דקות
 # שהמשתמש ממתין בשביל הבדל שאי אפשר לראות. הוא עדיין זמין ידנית
 # דרך BURN_PROFILE=small
-LADDER = ("quick", "balanced")
+LADDER = ("quick", "fast", "balanced")
 
 
 def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
@@ -232,7 +239,14 @@ def burn_timeout(duration: float) -> float:
 # בדיקת מקום בדיסק לפני הורדה וצריבה: פי כמה מגודל המקור, ועוד רזרבה
 DISK_FACTOR = float(os.getenv("DISK_FACTOR") or 2.5)
 DISK_RESERVE_GB = float(os.getenv("DISK_RESERVE_GB") or 3.0)
-NICE = _int("NICE", 15)
+# nice 15 נתן למקודד כעשירית ממשקל המעבד של כל תהליך רגיל, כולל
+# תהליך הבוט עצמו שמעלה ומדווח התקדמות באותו זמן. 5 עדיין מפנה את
+# הדרך בלי לרסק את הצריבה
+NICE = _int("NICE", 5)
+# עדיפות דיסק: מחלקה 2 (best-effort) ברמה 7 (הנמוכה ביותר). ראה
+# ההסבר ב-media._nice_prefix — מחלקה 3 (idle) חנקה צריבה של קובץ גדול
+IONICE_CLASS = _int("IONICE_CLASS", 2)
+IONICE_LEVEL = _int("IONICE_LEVEL", 7)
 
 WORK_DIR = Path(os.getenv("WORK_DIR") or "/tmp/zovexsub")
 
