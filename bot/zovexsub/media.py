@@ -374,6 +374,32 @@ PDF = "\u202c"  # Pop Directional Formatting — סוגר אותו
 _MARKS = "\u200e\u200f\u202a\u202b\u202c"
 
 
+# פיסוק שבעברית תמיד חותם משפט. כשהוא מופיע בתחילת השורה בסדר הלוגי
+# זו כמעט תמיד שגיאה של המתרגם, והוא מוצג בצד הלא נכון של השורה
+# המקף נשאר בחוץ בכוונה: שורה שמתחילה במקף היא סימון של דובר חדש
+# בכתוביות, לא פיסוק שהתגלגל להתחלה
+_LEADING_PUNCTUATION = re.compile(r"^[!?,.:;…]+\s*")
+
+
+def _move_leading_punctuation(text: str) -> str:
+    """מעביר פיסוק פותח לסוף השורה.
+
+    המודל פולט לפעמים "?מה שלומך" במקום "מה שלומך?" — הסימן נמצא ראשון
+    בסדר הלוגי, ואז הוא מרונדר בצד השמאלי של שורה עברית. העטיפה
+    הדו-כיוונית לבדה לא מתקנת את זה, כי מבחינתה הסימן באמת שייך להתחלה.
+    """
+    if not HEBREW_LETTER.search(text):
+        return text
+    match = _LEADING_PUNCTUATION.match(text)
+    if not match:
+        return text
+    rest = text[match.end():].strip()
+    return f"{rest}{match.group().strip()}" if rest else text
+
+
+HEBREW_LETTER = re.compile(r"[\u0590-\u05FF]")
+
+
 def rtl_copy(srt: Path) -> Path:
     """עותק לצריבה שבו כל שורת טקסט עטופה בהטבעה דו-כיוונית.
 
@@ -391,7 +417,7 @@ def rtl_copy(srt: Path) -> Path:
         if is_meta:
             out.append(line)
         else:
-            out.append(RLE + line.strip(_MARKS) + PDF)
+            out.append(RLE + _move_leading_punctuation(line.strip(_MARKS)) + PDF)
     dst = srt.with_name(srt.stem + ".rtl.srt")
     dst.write_text("\n".join(out) + "\n", encoding="utf-8")
     return dst
@@ -419,7 +445,10 @@ def _encoder_args(settings: dict, threads: int, duration: float) -> list[str]:
     pix_fmt = config.BURN_PIX_FMT or settings["pix_fmt"]
     tune = config.BURN_TUNE or settings["tune"]
 
-    args = ["-c:v", codec, "-preset", preset, "-crf", str(crf), "-pix_fmt", pix_fmt]
+    # בלי זה ffmpeg נופל על "Too many packets buffered" בקבצים שבהם
+    # הווידאו והאודיו רחוקים זה מזה בזמן
+    args = ["-max_muxing_queue_size", "1024",
+            "-c:v", codec, "-preset", preset, "-crf", str(crf), "-pix_fmt", pix_fmt]
     if tune:
         args += ["-tune", tune]
     if codec == "libx265":

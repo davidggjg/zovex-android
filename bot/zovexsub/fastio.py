@@ -40,23 +40,95 @@ def crypto_ready() -> bool:
 
 
 async def download(client, message, dst: Path, on_progress=None) -> Path:
-    """מוריד בכמה בקשות במקביל, עם נפילה חזרה להורדה הרגילה."""
+    """מוריד, וממשיך מאיפה שנעצר אם ההורדה נקטעה.
+
+    הלקח מהלילה הזה: קוד העברה שכתבתי בעצמי נשבר שוב ושוב, בעוד
+    download_media של הספרייה פשוט עובד. לכן המסלול הרגיל הוא של טלתון,
+    והמסלול המקבילי שלי נכנס רק אם ביקשו אותו במפורש.
+
+    והחידוש האמיתי: הורדה שנקטעה ב-82% כבר לא מתחילה מאפס. הבייטים
+    שעל הדיסק נשמרים, והניסיון הבא ממשיך בדיוק משם.
+    """
     size = int(getattr(getattr(message, "file", None), "size", 0) or 0)
     workers = _connections(size, max(1, config.TG_CONNECTIONS))
 
-    if size < 8 * 1024 * 1024 or workers == 1:
-        await message.download_media(file=str(dst), progress_callback=on_progress)
-        return dst
+    if size and workers > 1 and size >= 8 * 1024 * 1024:
+        try:
+            return await asyncio.wait_for(
+                _parallel_download(client, message, dst, size, workers, on_progress),
+                timeout=config.TG_FAST_TIMEOUT or None)
+        except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
+            log.warning("ההורדה המקבילה נכשלה (%s: %s), עוברים למסלול הרגיל",
+                        type(exc).__name__, exc)
+            dst.unlink(missing_ok=True)
 
+    last = 0
+    for attempt in range(1, config.TG_READ_RETRIES + 1):
+        have = dst.stat().st_size if dst.exists() else 0
+        if size and have >= size:
+            return dst
+        if have and have == last:
+            log.warning("הניסיון לא התקדם מעבר ל-%.0fMB", have / 1048576)
+        last = have
+        try:
+            await _resume_download(client, message, dst, size, have, on_progress)
+            if not size or dst.stat().st_size >= size:
+                return dst
+            log.warning("ההורדה נקטעה על %.0f%% — ממשיכים מאותה נקודה",
+                        dst.stat().st_size * 100 / size)
+        except Exception as exc:  # noqa: BLE001
+            got = dst.stat().st_size if dst.exists() else 0
+            log.warning("ההורדה נכשלה ב-%.0fMB (%s: %s), ניסיון %d/%d",
+                        got / 1048576, type(exc).__name__, exc,
+                        attempt, config.TG_READ_RETRIES)
+            if attempt == config.TG_READ_RETRIES:
+                raise
+        await asyncio.sleep(min(10, 2 ** attempt))
+
+    return dst
+
+
+async def _resume_download(client, message, dst: Path, size: int, have: int,
+                           on_progress) -> None:
+    """מוריד מהנקודה שבה נעצרנו, עם זיהוי תקיעה.
+
+    iter_download עם offset הוא מה שמאפשר את ההמשכיות — download_media
+    תמיד מתחיל מאפס, ולכן הפסקה ב-82% הייתה מוחקת שעה של הורדה.
+    """
+    if have:
+        log.info("ממשיך הורדה מ-%.0fMB מתוך %.0fMB",
+                 have / 1048576, size / 1048576)
+    done = have
+    stalled = time.monotonic()
+
+    async def guard() -> None:
+        while True:
+            await asyncio.sleep(10)
+            if time.monotonic() - stalled > config.TG_STALL_TIMEOUT:
+                raise TimeoutError(
+                    f"לא ירד אף בייט {config.TG_STALL_TIMEOUT:.0f} שניות")
+
+    async def pull() -> None:
+        nonlocal done, stalled
+        with dst.open("ab" if have else "wb") as fh:
+            async for block in client.iter_download(message, offset=have):
+                fh.write(block)
+                done += len(block)
+                stalled = time.monotonic()
+                if on_progress:
+                    await on_progress(done, size or done)
+
+    watch = asyncio.create_task(guard())
     try:
-        return await asyncio.wait_for(
-            _parallel_download(client, message, dst, size, workers, on_progress),
-            timeout=config.TG_FAST_TIMEOUT or None)
-    except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
-        log.warning("ההורדה המקבילה נכשלה (%s: %s), עוברים להורדה רגילה",
-                    type(exc).__name__, exc)
-        await message.download_media(file=str(dst), progress_callback=on_progress)
-        return dst
+        puller = asyncio.ensure_future(pull())
+        finished, _ = await asyncio.wait([puller, watch],
+                                         return_when=asyncio.FIRST_COMPLETED)
+        if watch in finished:
+            puller.cancel()
+            raise watch.exception() or TimeoutError("ההורדה תקועה")
+        await puller
+    finally:
+        watch.cancel()
 
 
 def _parts(size: int) -> int:
