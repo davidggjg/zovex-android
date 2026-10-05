@@ -63,6 +63,17 @@ sudo systemctl enable --now zovexsub
 sudo journalctl -u zovexsub -f
 ```
 
+### איפה הלוגים
+
+בשרת הייעודי קובץ ה-service מפנה את הפלט לקובץ, לא ל-journal. לכן
+`journalctl` מראה רק את שורות systemd עצמו, ולא את מה שהבוט כותב:
+
+```bash
+tail -f /var/log/zovexsub.log          # מעקב חי
+grep "dB" /var/log/zovexsub.log        # זיהוי דיבור ושקט
+grep -E "מקביל|נכשל" /var/log/zovexsub.log
+```
+
 ## שימוש
 
 **סרטון לבד לא מפעיל כלום.** שולחים סרטון, ואז **מגיבים להודעה של הסרטון** עם `.srt`.
