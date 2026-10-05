@@ -32,6 +32,25 @@ def report(mark: str, name: str, detail: str = "") -> None:
     print(f"{mark} {name}" + (f" — {detail}" if detail else ""), flush=True)
 
 
+def _bot_running(session: Path) -> bool:
+    """האם השירות מחזיק את ה-session כרגע.
+
+    נקבע לפי נעילת SQLite ולא לפי systemd, כדי שזה יעבוד גם כשהבוט
+    הופעל ידנית.
+    """
+    import sqlite3
+    if not session.exists():
+        return False
+    try:
+        connection = sqlite3.connect(session, timeout=0.5)
+        connection.execute("begin exclusive")
+        connection.rollback()
+        connection.close()
+        return False
+    except sqlite3.OperationalError:
+        return True
+
+
 def _which(name: str) -> bool:
     return shutil.which(name) is not None
 
@@ -203,10 +222,16 @@ async def check_telegram(work: Path, megabytes: int) -> None:
     src.write_bytes(os.urandom(megabytes * 1024 * 1024))
     digest = hashlib.sha256(src.read_bytes()).hexdigest()
 
-    # עותק של ה-session, לא המקור. הבוט הרץ מחזיק את הקובץ פתוח
-    # ו-SQLite נועל אותו — בדיקה שמנסה לכתוב אליו נופלת על
-    # "database is locked". עותק נותן את אותה התחברות בלי להתנגש
     origin = Path(f"{config.TG_SESSION}.session")
+
+    # אם הבוט רץ, אסור להתחבר בכלל. חיבור שני לאותו חשבון — גם מעותק
+    # של ה-session — גורם לטלגרם להפסיק להזרים עדכונים לבוט, והוא
+    # מפסיק להגיב להודעות עד הפעלה מחדש. זה בדיוק מה שקרה בשרת.
+    if _bot_running(origin) and not os.getenv("SELFTEST_TELEGRAM"):
+        report(WARN, "טלגרם",
+               "דילוג — הבוט רץ, וחיבור שני היה משתק אותו. "
+               "לבדיקה: systemctl stop zovexsub, ואז SELFTEST_TELEGRAM=1")
+        return
     session = work / "probe.session"
     if origin.exists():
         shutil.copy2(origin, session)
