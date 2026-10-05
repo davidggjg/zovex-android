@@ -23,6 +23,7 @@ from pathlib import Path
 
 from telethon import utils
 from telethon.network import MTProtoSender
+from telethon.errors import FloodWaitError
 from telethon.tl import functions, types
 from telethon.tl.alltlobjects import LAYER
 
@@ -231,6 +232,18 @@ async def _parallel_download(client, message, dst: Path, size: int,
                     client._call(sender, functions.upload.GetFileRequest(
                         location, offset=offset, limit=part)),
                     timeout=config.TG_READ_TIMEOUT)
+            except FloodWaitError as flood:
+                # טלגרם אומר במפורש כמה להמתין. השהיה קצרה משלנו רק
+                # מאריכה את העונש, ולכן ממתינים בדיוק כמה שנדרש. זה
+                # נעשה קריטי ברגע שיש הרבה בקשות באוויר
+                wait = min(float(flood.seconds) + 1, config.TG_FLOOD_MAX)
+                if float(flood.seconds) > config.TG_FLOOD_MAX:
+                    log.error("טלגרם ביקש להמתין %ds — יותר מהתקרה, "
+                              "כדאי להוריד TG_PIPELINE", flood.seconds)
+                    raise
+                log.warning("טלגרם מגביל קצב, ממתינים %.0f שניות", wait)
+                await asyncio.sleep(wait)
+                continue
             except asyncio.TimeoutError:
                 log.warning("חלק ב-%d לא נענה תוך %.0f שניות (ניסיון %d/%d)",
                             offset, config.TG_READ_TIMEOUT, attempt,
@@ -242,8 +255,8 @@ async def _parallel_download(client, message, dst: Path, size: int,
                 raise
             await asyncio.sleep(min(8, 2 ** attempt))
 
-    async def worker(sender) -> None:
-        """כל עובד מושך חלקים מתור משותף.
+    async def pull(sender) -> None:
+        """מושך חלקים מתור משותף, בקשה אחת בכל רגע.
 
         תור ולא טווח קבוע: חיבור שמת לא משאיר את החלקים שלו יתומים —
         מי שעדיין חי לוקח אותם.
@@ -272,6 +285,24 @@ async def _parallel_download(client, message, dst: Path, size: int,
                 if on_progress:
                     await on_progress(done, size)
 
+    async def worker(sender) -> None:
+        """כמה בקשות באוויר על אותו חיבור, ולא אחת בכל רגע.
+
+        זה היה הצוואר האמיתי. בקשה אחת בכל רגע אומרת שהקצב נקבע בהשהיה
+        ולא ברוחב הפס: חלק של 512KB חלקי זמן הלוך-חזור לטלגרם (כ-380
+        אלפיות) נותן 1.35MB/s, וזה בדיוק מה שנמדד. הקו לא היה עמוס —
+        הוא עמד ריק רוב הזמן וחיכה לתשובה.
+
+        חיבור MTProto יחיד מסוגל להחזיק כמה שאילתות במקביל, ולכן ההכפלה
+        כאן אינה דורשת עוד חיבורים — מה שגם מקטין את הסיכון ש-טלגרם
+        יגביל קצב. בקשות באוויר = חיבורים × TG_PIPELINE.
+
+        כשאחת מהבקשות נכשלת ה-gather מפיץ את החריגה החוצה, והחיבור
+        מסומן כמת בדיוק כמו קודם — לוגיקת הסבבים שלמטה לא משתנה
+        """
+        await asyncio.gather(*(pull(sender)
+                               for _ in range(max(1, config.TG_PIPELINE))))
+
     async def watchdog() -> None:
         """מכריז על תקיעה אם אף בייט לא ירד זמן רב."""
         while True:
@@ -282,8 +313,10 @@ async def _parallel_download(client, message, dst: Path, size: int,
                     f"ההורדה תקועה {idle:.0f} שניות על {done * 100 // max(1, size)}%")
 
     try:
-        log.info("מוריד ב-%d חיבורים, חלק %dKB, %d חלקים (%.0fMB)",
-                 workers, part // 1024, total_parts, size / 1048576)
+        log.info("מוריד ב-%d חיבורים × %d בקשות = %d באוויר, "
+                 "חלק %dKB, %d חלקים (%.0fMB)",
+                 workers, config.TG_PIPELINE, workers * config.TG_PIPELINE,
+                 part // 1024, total_parts, size / 1048576)
         guard = asyncio.create_task(watchdog())
         healthy = list(senders)
         try:
