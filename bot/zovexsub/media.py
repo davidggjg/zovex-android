@@ -722,6 +722,24 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     return dst
 
 
+async def poster(video: Path, work: Path) -> Path | None:
+    """תמונה ממוזערת לסרטון.
+
+    בלי תמונה טלגרם מציג ריבוע שחור ולפעמים "0 מתוך 0" עד שנכנסים
+    להודעה. נלקחת שנייה 20 כדי לדלג על הקרדיט שבפתיחה.
+    """
+    thumb = work / "poster.jpg"
+    try:
+        await _run([
+            "ffmpeg", "-nostdin", "-y", "-ss", "20", "-i", str(video),
+            "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", str(thumb),
+        ], timeout=120)
+    except (FFmpegError, OSError) as exc:
+        log.warning("יצירת התמונה הממוזערת נכשלה: %s", exc)
+        return None
+    return thumb if thumb.exists() and thumb.stat().st_size else None
+
+
 async def _verify(result: Path, expected: float) -> None:
     """בלי אימות, הרכבה שבורה מגיעה למשתמש בשקט."""
     if not result.exists() or result.stat().st_size < 1024:

@@ -570,22 +570,29 @@ async def _burn(job: Job, work: Path) -> None:
     chat = await job.event.get_input_chat()
     sent_file = await fastio.upload(client, burned, on_progress=on_upload)
 
+    # התכונות נקבעות פעם אחת ונשלחות בשני המסלולים. בלעדיהן טלגרם לא
+    # יודע את אורך הסרטון ואת מידותיו, מציג "0 מתוך 0" ולא מנגן בתצוגה
+    # המקדימה — רק אחרי כניסה להודעה הוא קורא אותן מהקובץ עצמו
+    info = await media.probe(burned)
+    stream = next((s for s in info.get("streams", [])
+                   if s.get("codec_type") == "video"), {})
+    attributes = fastio.video_attributes(
+        burned, float(info.get("format", {}).get("duration", 0) or 0),
+        int(stream.get("width", 0) or 0), int(stream.get("height", 0) or 0),
+    )
+    thumb = await media.poster(burned, work)
+
     if sent_file is not None:
-        info = await media.probe(burned)
-        stream = next((s for s in info.get("streams", [])
-                       if s.get("codec_type") == "video"), {})
         await client.send_file(
             chat, sent_file, caption="🔥 וידאו עם כתוביות צרובות",
             supports_streaming=True, reply_to=job.event.message.id,
-            attributes=fastio.video_attributes(
-                burned, float(info.get("format", {}).get("duration", 0) or 0),
-                int(stream.get("width", 0) or 0), int(stream.get("height", 0) or 0),
-            ),
+            attributes=attributes, thumb=str(thumb) if thumb else None,
         )
     else:
         await client.send_file(
             chat, str(burned), caption="🔥 וידאו עם כתוביות צרובות",
             supports_streaming=True, reply_to=job.event.message.id,
+            attributes=attributes, thumb=str(thumb) if thumb else None,
             progress_callback=on_upload,
         )
     await _safe_delete(job.status)
