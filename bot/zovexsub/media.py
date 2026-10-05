@@ -540,7 +540,7 @@ class CorePool:
             token = self._next
             self.held[token] = 0
             self.cond.notify_all()
-        log.info("צריבה %d נכנסה: %d עבודות, מכסה %d קטעים (%d ליבות)",
+        log.info("צריבה %d נכנסה: %d עבודות, מכסה %d קטעים (%d חוטים)",
                  token, len(self.held), self.share(),
                  self.share() * config.BURN_SEGMENT_THREADS)
         try:
@@ -586,14 +586,46 @@ class CorePool:
 _pool: CorePool | None = None
 
 
+
+def _memory_cap(slots: int) -> int:
+    """מוריד מקומות אם אין מספיק זיכרון לכולם.
+
+    הקצאת־יתר מכפילה את מספר תהליכי ffmpeg שרצים יחד, וכל מקודד 1080p
+    מחזיק חוצצים משלו. בלי התקרה הזאת מכונה עם הרבה ליבות ומעט זיכרון
+    הייתה מגיעה ל-OOM, וה-OOM killer היה הורג תהליך אקראי — כלומר גם
+    את הבוט עצמו, לא רק קטע צריבה אחד.
+    """
+    try:
+        with open("/proc/meminfo", encoding="ascii") as handle:
+            fields = dict(
+                (parts[0].rstrip(":"), int(parts[1]))
+                for parts in (line.split() for line in handle) if len(parts) >= 2
+            )
+        available = fields["MemAvailable"] * 1024
+    except (OSError, KeyError, ValueError):
+        return slots
+
+    room = int(available * 0.75) // config.BURN_SEGMENT_MEMORY
+    if room >= slots:
+        return slots
+    capped = max(1, room)
+    log.warning("זיכרון פנוי %.1fGB מאפשר רק %d מקומות צריבה במקום %d",
+                available / 1024 ** 3, capped, slots)
+    return capped
+
+
 def core_pool() -> CorePool:
     global _pool
     if _pool is None:
         count = config.burn_slots(os.cpu_count() or 2)
+        count = _memory_cap(count)
         _pool = CorePool(count)
-        log.info("מקומות צריבה במכונה: %d (×%d חוטים = %d ליבות)",
+        cores = os.cpu_count() or 2
+        log.info("מקומות צריבה במכונה: %d קטעים ×%d חוטים = %d חוטים "
+                 "על %d ליבות (הקצאת־יתר ×%.1f)",
                  count, config.BURN_SEGMENT_THREADS,
-                 count * config.BURN_SEGMENT_THREADS)
+                 count * config.BURN_SEGMENT_THREADS, cores,
+                 count * config.BURN_SEGMENT_THREADS / cores)
     return _pool
 
 

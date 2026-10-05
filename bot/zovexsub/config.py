@@ -217,6 +217,21 @@ def burn_chunks(duration: float) -> int:
 BURN_PARALLEL_MIN_MINUTES = _int("BURN_PARALLEL_MIN_MINUTES", 3)
 # כמה צריבות מותר להריץ בו-זמנית. מעבר לזה נכנסים לתור
 BURN_JOBS = _int("BURN_JOBS", 2)
+# הקצאת־יתר: פי כמה תהליכים מהחוטים שהמכונה יכולה להריץ.
+# לכל תהליך ffmpeg יש שלבים טוריים שבהם החוטים שלו עומדים — libass
+# מרנדר בחוט אחד, וכך גם פתיחת הקובץ, החיפוש והמיזוג. ברגעים האלה
+# הליבה בטלה, ותהליך נוסף תופס את מקומה.
+#
+# נמדד על 1080p עם כתוביות, תפוקה מצרפית (שני חוטים לקטע):
+#   פי 1 (כמו שהיה)  2.00x
+#   פי 2             2.23x   <- הטוב ביותר
+#   פי 3             2.09x   הידרדרות: התהליכים נלחמים על מטמון וזיכרון
+# כלומר הליבות היו כבר כ-89% רוויות, וזה מוסיף כ-12% ולא יותר.
+BURN_OVERSUBSCRIBE = _int("BURN_OVERSUBSCRIBE", 2)
+# הערכת זיכרון לכל קטע צריבה, בבתים. נמדד על 1080p veryfast; משמש רק
+# כדי להוריד מקומות כשהזיכרון הפנוי לא מספיק לכולם
+BURN_SEGMENT_MEMORY = _int("BURN_SEGMENT_MEMORY", 400 * 1024 * 1024)
+
 
 
 def burn_slots(cores: int) -> int:
@@ -227,7 +242,7 @@ def burn_slots(cores: int) -> int:
     ומקבלת את המכונה כולה; כששנייה מצטרפת הן מתחלקות מאליהן, וכשאחת
     מסיימת השנייה מתרחבת בחזרה בלי שאיש יתערב.
     """
-    return max(1, cores // max(1, BURN_SEGMENT_THREADS))
+    return max(1, cores * BURN_OVERSUBSCRIBE // max(1, BURN_SEGMENT_THREADS))
 
 
 def burn_timeout(duration: float) -> float:
