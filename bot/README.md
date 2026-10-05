@@ -119,6 +119,36 @@ FETCH_COOKIES=/opt/zovexsub/cookies.txt
 בלי העוגיות ההורדה תיכשל — אבל עם הודעה שמסבירה בדיוק מה חסר, במקום
 שגיאה גולמית.
 
+### מודל יישור התזמונים
+
+זה השורש של "הכתוביות מופיעות מוקדם מדי". התזמונים ש-Whisper מחזיר הם
+ניחוש של המודל, והם סוטים בסדר גודל של שנייה שלמה. יישור כפוי מצמיד כל
+מילה למקום האמיתי שלה בגל הקול.
+
+נמדד על אודיו עם גבולות מילים ידועים, אחרי שהוסטו בכוונה בשנייה:
+
+```
+merhaba    סטייה 900ms  →   40ms
+dunya      סטייה 950ms  →   10ms
+gorusmek   סטייה 1030ms →   10ms
+```
+
+```bash
+sudo mkdir -p /opt/zovexsub/models/aligner
+cd /opt/zovexsub/models/aligner
+BASE=https://huggingface.co/romara-labs/mms-300m-1130-forced-aligner-ONNX/resolve/main
+sudo curl -L -O $BASE/model.q8.onnx
+sudo curl -L -O $BASE/vocab.json
+sudo curl -L -O $BASE/config.json
+```
+
+340MB, 1130 שפות, רץ על אותו onnxruntime של ה-VAD — בלי PyTorch.
+החלונות מיושרים במקביל על כל הליבות.
+
+מגבלה שחשוב להכיר: היישור עובד על טקסט שאפשר לתעתק לאותיות לטיניות.
+לטורקית זה מושלם. לשפת מקור בכתב אחר — ערבית, רוסית — הוא ידלג
+והתזמונים יישארו של Whisper.
+
 ### מודל זיהוי הדיבור
 
 בלי המודל המערכת מזהה דיבור לפי עוצמת קול, ואז מוזיקת רקע נספרת כדיבור

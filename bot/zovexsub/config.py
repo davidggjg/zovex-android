@@ -316,3 +316,20 @@ VAD_PAD = float(os.getenv("VAD_PAD") or 0.15)
 # פער קצר בין שני קטעים הוא נשימה באמצע משפט, לא סוף דיבור
 VAD_JOIN = float(os.getenv("VAD_JOIN") or 0.35)
 VAD_MIN_SPEECH = float(os.getenv("VAD_MIN_SPEECH") or 0.20)
+
+
+# יישור כפוי: מצמיד כל מילה למקום האמיתי שלה באודיו. התזמונים של
+# Whisper סוטים בסדר גודל של שנייה; היישור מוריד את זה לעשרות
+# מילישניות. ריק או מודל חסר = נשארים בתזמונים של Whisper
+ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
+ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 25)   # שניות לחלון
+ALIGN_PAD = float(os.getenv("ALIGN_PAD") or 0.5)        # ריפוד סביב החלון
+ALIGN_THREADS = _int("ALIGN_THREADS", 2)                # חוטים לכל יישור
+ALIGN_PARALLEL = _int("ALIGN_PARALLEL", 0)              # 0 = לפי הליבות
+
+
+def align_parallel(cores: int) -> int:
+    """כמה חלונות ליישר בו-זמנית."""
+    if ALIGN_PARALLEL > 0:
+        return ALIGN_PARALLEL
+    return max(1, cores // max(1, ALIGN_THREADS))

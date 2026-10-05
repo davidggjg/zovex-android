@@ -79,7 +79,14 @@ def check_environment() -> None:
     except (OSError, subprocess.SubprocessError) as exc:
         report(WARN, "גופן עברי", str(exc))
 
-    from . import vad
+    from . import align, vad
+    if align.available():
+        report(OK, "יישור תזמונים", "MMS forced aligner פעיל")
+    else:
+        report(WARN, "יישור תזמונים",
+               f"מודל חסר ב-{config.ALIGN_MODEL} — התזמונים יישארו של Whisper "
+               "(סטייה של כשנייה)")
+
     if vad.available():
         report(OK, "זיהוי דיבור", "Silero VAD פעיל")
     else:

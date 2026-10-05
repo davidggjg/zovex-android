@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import config, hebrew, media, progress as prog, realign, srt, vad
+from . import align, config, hebrew, media, progress as prog, realign, srt, vad
 from .stt import transcribe
 
 log = logging.getLogger(__name__)
@@ -65,6 +65,21 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     if not transcript.segments:
         raise RuntimeError("לא זוהה דיבור בקובץ.")
     log.info("זוהו %d סגמנטים, שפה: %s", len(transcript.segments), transcript.language)
+
+    # יישור כפוי קודם לכל השאר: הוא מתקן את התזמונים עצמם, ולא רק מזיז
+    # כתוביות שנחתו על שקט. אחריו ההצמדה ל-VAD נוגעת רק בשאריות
+    if align.available():
+        stage = prog.Stage(progress, "📐 מיישר תזמונים")
+        stage.pulse()
+
+        async def on_align(done: int, total: int) -> None:
+            await stage.show(done / total, note=f"{done}/{total} חלונות")
+
+        try:
+            await align.refine(transcript.segments, audio, on_step=on_align)
+        finally:
+            stage.stop()
+        await stage.finish()
 
     await progress("🔇 מזהה דיבור ושקט…")
     # VAD אמיתי קודם; אם הוא לא זמין נופלים לזיהוי לפי עוצמת קול
