@@ -335,3 +335,9 @@ def align_parallel(cores: int) -> int:
     if ALIGN_PARALLEL > 0:
         return ALIGN_PARALLEL
     return max(1, cores // max(1, ALIGN_THREADS))
+
+
+# כשכל מודלי ג'מיני במכסה לדקה, ההרצה ממתינה ומנסה שוב במקום להיכשל.
+# מכסה לדקה מתאפסת תוך דקה, וליפול בגללה זה לאבד עבודה שלמה
+GEMINI_ROUNDS = _int("GEMINI_ROUNDS", 4)
+GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)

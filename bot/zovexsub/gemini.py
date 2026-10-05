@@ -99,7 +99,11 @@ async def _resolve(model: str) -> str:
 
 
 # מודלים שהמפתח חסום מהם לגמרי (למשל pro בתוכנית החינמית, limit: 0)
+# מודלים שחסומים לתוכנית הזו לצמיתות ("limit: 0") — אין טעם לנסות שוב
 _dead: set[str] = set()
+# מודלים שכל המפתחות מיצו אותם כרגע. זה זמני: מכסה לדקה מתאפסת תוך
+# דקה, ולכן הרשימה מתרוקנת בין סבבים
+_exhausted: set[str] = set()
 
 
 def _chain(model: str) -> list[str]:
@@ -114,7 +118,28 @@ def _chain(model: str) -> list[str]:
 
 
 async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
-    """שולח את הבקשה, ויורד למודל הבא כשהנוכחי חסום או עמוס."""
+    """שולח את הבקשה, ויורד למודל הבא כשהנוכחי חסום או עמוס.
+
+    כשכל המודלים חסומים במכסה לדקה, ההרצה לא נכשלת: מכסה כזו מתאפסת
+    תוך דקה, ולכן ממתינים ומנסים את כל השרשרת שוב. קודם העבודה כולה
+    מתה בגלל המתנה של שישים שניות.
+    """
+    for attempt in range(1, config.GEMINI_ROUNDS + 1):
+        try:
+            return await _chain_once(model, body, timeout=timeout)
+        except GeminiError as exc:
+            transient = "מכסה לדקה" in str(exc) or "עמוס" in str(exc)
+            if not transient or attempt == config.GEMINI_ROUNDS:
+                raise
+            _exhausted.clear()
+            _overloaded.clear()
+            log.warning("כל המודלים במכסה לדקה — ממתינים %.0f שניות (סבב %d/%d)",
+                        config.GEMINI_COOLDOWN, attempt, config.GEMINI_ROUNDS)
+            await asyncio.sleep(config.GEMINI_COOLDOWN)
+    raise GeminiError("כל המודלים נכשלו")
+
+
+async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict:
     last_error = "לא ידוע"
 
     async with httpx.AsyncClient() as client:
@@ -123,7 +148,7 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
         available = [m for m in chain if _overloaded.get(m, 0.0) <= now]
         for wanted in (available or chain):
             name = await _resolve(wanted)
-            if name in _dead:
+            if name in _dead or name in _exhausted:
                 continue
 
             attempt, skipped = 0, 0
@@ -212,8 +237,8 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
             if config.GEMINI_API_KEYS and all(
                 _blocked.get((name, key), 0.0) > now for key in config.GEMINI_API_KEYS
             ):
-                _dead.add(name)
-                log.warning("כל המפתחות מיצו את %s — לא ננסה אותו שוב בהרצה הזו", name)
+                _exhausted.add(name)
+                log.warning("כל המפתחות מיצו את %s כרגע", name)
 
             log.warning("עובר למודל הבא אחרי %s", last_error)
 
