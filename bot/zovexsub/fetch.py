@@ -41,6 +41,27 @@ def _command() -> list[str]:
     return ["yt-dlp"]
 
 
+def _aria2_args() -> list[str]:
+    """מעביר את ההורדה ל-aria2c אם הוא מותקן.
+
+    aria2c פותח כמה חיבורים לאותו קובץ ומנצל את הקו טוב יותר מההורדה
+    הפנימית של yt-dlp. זה לא עוקף את רוחב הפס של השרת — רק מתקרב אליו.
+    """
+    if config.FETCH_ARIA2 in ("0", "off", "no", ""):
+        return []
+    if not shutil.which("aria2c"):
+        if config.FETCH_ARIA2 not in ("auto", "1", "on", "yes"):
+            log.warning("aria2c אינו מותקן — ממשיכים בהורדה הפנימית")
+        return []
+    count = max(1, config.ARIA2_CONNECTIONS)
+    return [
+        "--downloader", "aria2c",
+        "--downloader-args",
+        f"aria2c:-x{count} -s{count} -k1M --file-allocation=none "
+        "--console-log-level=warn",
+    ]
+
+
 def _number(token: str) -> float:
     try:
         value = float(token)
@@ -144,6 +165,7 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
         "--merge-output-format", "mp4",
         "--retries", "10", "--fragment-retries", "10",
         "--concurrent-fragments", str(config.FETCH_CONNECTIONS),
+    ] + _aria2_args() + [
         "-o", str(target),
     ] + (["--cookies", str(cookies)] if cookies else []) + [url]
     log.info("מוריד מקישור: %s", url)

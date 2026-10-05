@@ -245,6 +245,10 @@ FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")
 # משרתים, ו-cobalt מותקן עצמית עוקף את זה. ריק = משתמשים רק ב-yt-dlp
 COBALT_URL = (os.getenv("COBALT_URL") or "").rstrip("/")
 COBALT_QUALITY = os.getenv("COBALT_QUALITY", "1080")
+# aria2c מוריד בכמה חיבורים מקבילים ומנצל את הקו טוב יותר מההורדה
+# הפנימית של yt-dlp. ריק = לא בשימוש
+FETCH_ARIA2 = (os.getenv("FETCH_ARIA2") or "auto").strip().lower()
+ARIA2_CONNECTIONS = _int("ARIA2_CONNECTIONS", 16)
 
 # כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
 TG_CONNECTIONS = _int("TG_CONNECTIONS", 8)
