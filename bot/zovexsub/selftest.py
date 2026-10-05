@@ -292,8 +292,11 @@ async def main() -> int:
         await check_keys()
         await check_burn(work)
         try:
-            await asyncio.wait_for(check_telegram(work, megabytes),
-                                   timeout=float(os.getenv("SELFTEST_TG_TIMEOUT") or 300))
+            # התקרה גדלה עם הקובץ: 300 שניות הספיקו ל-20MB אבל חתכו
+            # בדיקה של 200MB באמצע ההעלאה
+            limit = float(os.getenv("SELFTEST_TG_TIMEOUT") or
+                          max(300.0, megabytes * 8))
+            await asyncio.wait_for(check_telegram(work, megabytes), timeout=limit)
         except asyncio.TimeoutError:
             report(BAD, "טלגרם", "הבדיקה עברה את תקרת הזמן")
     finally:
