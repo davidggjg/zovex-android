@@ -50,6 +50,83 @@ def _number(token: str) -> float:
 
 
 async def download(url: str, work: Path, on_progress=None) -> Path:
+    """מוריד מקישור. cobalt קודם אם הוגדר, אחרת yt-dlp."""
+    if config.COBALT_URL:
+        try:
+            return await _cobalt(url, work, on_progress)
+        except FetchError as exc:
+            log.warning("cobalt נכשל (%s), עוברים ל-yt-dlp", exc)
+    return await _ytdlp(url, work, on_progress)
+
+
+async def _cobalt(url: str, work: Path, on_progress=None) -> Path:
+    """מוריד דרך שרת cobalt מקומי.
+
+    יוטיוב חוסמים את yt-dlp מכתובות של שרתים ודורשים התחברות. cobalt
+    שרץ אצלנו פותר את זה בלי מפתחות ובלי חשבון — שולחים לו קישור, הוא
+    מחזיר כתובת הורדה ישירה.
+    """
+    import httpx
+
+    body = {
+        "url": url,
+        "videoQuality": config.COBALT_QUALITY,
+        "filenameStyle": "basic",
+        "downloadMode": "auto",
+    }
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(900.0, connect=20.0)) as http:
+        try:
+            answer = await http.post(config.COBALT_URL + "/", json=body,
+                                     headers=headers)
+            data = answer.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise FetchError(f"שרת cobalt לא הגיב: {exc}") from None
+
+        status = data.get("status")
+        if status == "error":
+            code = (data.get("error") or {}).get("code", "")
+            raise FetchError(f"cobalt סירב: {code or data}")
+        if status == "picker":
+            items = [i for i in data.get("picker", []) if i.get("type") != "photo"]
+            if not items:
+                raise FetchError("cobalt החזיר רק תמונות")
+            link, name = items[0].get("url"), "source.mp4"
+        elif status in ("tunnel", "redirect", "local-processing"):
+            link = data.get("url") or next(iter(data.get("tunnel") or []), None)
+            name = data.get("filename") or "source.mp4"
+        else:
+            raise FetchError(f"תשובה לא מוכרת מ-cobalt: {status}")
+        if not link:
+            raise FetchError("cobalt לא החזיר כתובת הורדה")
+
+        suffix = Path(name).suffix or ".mp4"
+        target = work / f"source{suffix}"
+        done = 0
+        log.info("מוריד דרך cobalt: %s", name)
+        try:
+            async with http.stream("GET", link) as stream:
+                stream.raise_for_status()
+                total = int(stream.headers.get("content-length") or 0)
+                with target.open("wb") as fh:
+                    async for block in stream.aiter_bytes(1024 * 256):
+                        fh.write(block)
+                        done += len(block)
+                        if on_progress:
+                            await on_progress(done, total)
+        except httpx.HTTPError as exc:
+            target.unlink(missing_ok=True)
+            raise FetchError(f"ההורדה מ-cobalt נקטעה: {exc}") from None
+
+    if not target.exists() or target.stat().st_size < 1024:
+        raise FetchError("cobalt החזיר קובץ ריק")
+    log.info("הורד דרך cobalt: %s (%.1f MB)",
+             target.name, target.stat().st_size / 1048576)
+    return target
+
+
+async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
     """מוריד את הווידאו הטוב ביותר שנכנס במגבלה, וממזג לקובץ אחד."""
     if not available():
         raise FetchError("yt-dlp לא מותקן על השרת. התקנה: pip install yt-dlp")

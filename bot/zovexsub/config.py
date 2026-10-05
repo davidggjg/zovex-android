@@ -241,6 +241,10 @@ FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 4)
 # יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
 # מחשבון מחובר פותר את זה. ריק = בלי עוגיות
 FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")
+# cobalt — שרת הורדה קטן שרץ אצלנו בקונטיינר. יוטיוב חוסמים את yt-dlp
+# משרתים, ו-cobalt מותקן עצמית עוקף את זה. ריק = משתמשים רק ב-yt-dlp
+COBALT_URL = (os.getenv("COBALT_URL") or "").rstrip("/")
+COBALT_QUALITY = os.getenv("COBALT_QUALITY", "1080")
 
 # כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
 TG_CONNECTIONS = _int("TG_CONNECTIONS", 8)
