@@ -336,11 +336,24 @@ def credit_file(work: Path) -> Path | None:
     return dst
 
 
-SUB_STYLE = (
-    "FontName=Noto Sans Hebrew,FontSize=20,PrimaryColour=&H00FFFFFF,"
-    "OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,"
-    "Alignment=2,MarginV=28"
-)
+# שלושה גדלי כתוביות. המתאר והשוליים גדלים יחד עם הגופן, אחרת כתובית
+# גדולה נראית דקה ונדבקת לתחתית המסך. "גדול" הוא גדול וקריא, לא ענק —
+# כתובית שתופסת רבע מסך מסתירה את הסרט
+SUB_SIZES = {
+    "קטן": {"font": 20, "outline": 2.0, "margin": 28},
+    "בינוני": {"font": 26, "outline": 2.4, "margin": 34},
+    "גדול": {"font": 32, "outline": 2.8, "margin": 40},
+}
+
+
+def sub_style(size: str = "") -> str:
+    values = SUB_SIZES.get(size or config.SUB_SIZE, SUB_SIZES["קטן"])
+    return (
+        f"FontName={config.SUB_FONT},FontSize={values['font']},"
+        "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,"
+        f"Outline={values['outline']},Shadow=0,Alignment=2,"
+        f"MarginV={values['margin']}"
+    )
 
 
 def burn_threads() -> int:
@@ -427,12 +440,12 @@ def _escape(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
-def _video_filters(srt: Path, credit: Path | None) -> str:
+def _video_filters(srt: Path, credit: Path | None, size: str = "") -> str:
     filters = []
     if config.BURN_MAX_HEIGHT:
         # min() מבטיח שמקור נמוך מהתקרה נשאר כמו שהוא ולא מוגדל
         filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
-    filters.append(f"subtitles='{_escape(srt)}':force_style='{SUB_STYLE}'")
+    filters.append(f"subtitles='{_escape(srt)}':force_style='{sub_style(size)}'")
     if credit:
         filters.append(f"subtitles='{_escape(credit)}'")
     return ",".join(filters)
@@ -573,24 +586,26 @@ def core_pool() -> CorePool:
     return _pool
 
 
-async def burn(video: Path, srt: Path, dst: Path, on_progress=None) -> Path:
+async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
+         size: str = "") -> Path:
     """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
     duration = await duration_seconds(video)
     segments = config.burn_chunks(duration)
 
     if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
         try:
-            return await _burn_parallel(video, srt, dst, duration, segments, on_progress)
+            return await _burn_parallel(video, srt, dst, duration, segments,
+                                        on_progress, size)
         except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
             log.warning("הצריבה המקבילית נכשלה (%s), עוברים לצריבה רגילה", exc)
             if on_progress:
                 await on_progress(0.0, "מתחיל מחדש בתהליך יחיד")
 
-    return await _burn_single(video, srt, dst, duration, on_progress)
+    return await _burn_single(video, srt, dst, duration, on_progress, size)
 
 
 async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
-                       on_progress=None) -> Path:
+                       on_progress=None, size: str = "") -> Path:
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
     settings = config.profile_for(video.stat().st_size, duration)
@@ -599,7 +614,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 
     cmd = [
         "ffmpeg", "-nostdin", "-y", "-threads", str(threads),
-        "-i", str(video), "-vf", _video_filters(marked, credit),
+        "-i", str(video), "-vf", _video_filters(marked, credit, size),
     ] + _encoder_args(settings, threads, duration)
     cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
 
@@ -618,7 +633,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 
 
 async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
-                         segments: int, on_progress=None) -> Path:
+                         segments: int, on_progress=None, size: str = "") -> Path:
     """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
 
     מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
@@ -655,7 +670,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         piece_srt = srt_tools.slice_file(marked, begin, begin + length,
                                          work / f"seg{index:02d}.srt")
         # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון
-        filters = _video_filters(piece_srt, credit if index == 0 else None)
+        filters = _video_filters(piece_srt, credit if index == 0 else None, size)
         piece = work / f"seg{index:02d}.mp4"
 
         cmd = [

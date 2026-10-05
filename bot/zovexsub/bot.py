@@ -65,6 +65,10 @@ VIDEO_SUFFIXES = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v",
                   ".ts", ".mpg", ".mpeg", ".wmv", ".flv", ".3gp", ".ogv"}
 
 YES_WORDS = {"כן", "כן!", "yes", "y", "לצרוב", "צרוב", "צריבה", "כן בבקשה", "✅", "👍"}
+# אפשר להוסיף גודל לאישור: "כן בינוני", "כן גדול"
+SIZE_WORDS = {"קטן": "קטן", "קטנות": "קטן", "small": "קטן",
+              "בינוני": "בינוני", "בינוניות": "בינוני", "medium": "בינוני",
+              "גדול": "גדול", "גדולות": "גדול", "large": "גדול", "big": "גדול"}
 OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז הקבצים נמחקים
 
 
@@ -78,6 +82,7 @@ class Job:
     diagnose: bool = False    # מפיק דוח תזמונים במקום כתוביות
     url: str = ""             # אם מוגדר — מורידים מהקישור במקום מטלגרם
     srt_message: object = None  # קובץ כתוביות שהמשתמש שלח, לצריבה ישירה
+    size: str = ""            # גודל כתוביות: קטן / בינוני / גדול
 
 
 @dataclass
@@ -382,16 +387,24 @@ async def on_yes(event: events.NewMessage.Event, text: str) -> None:
     offer = offers.get(event.reply_to_msg_id)
     if offer is None:
         return
-    if text.strip(".!") not in YES_WORDS:
+    # "כן", ואפשר גם "כן גדול" או "כן בינוני" כדי לבחור גודל כתוביות
+    words = text.strip(".!").split()
+    size = ""
+    if words and words[-1] in SIZE_WORDS:
+        size = SIZE_WORDS[words[-1]]
+        words = words[:-1]
+    if " ".join(words) not in YES_WORDS:
         return
     sender = _who(event.message)
     if sender != offer.user_id and sender != me_id:
         return
 
     offers.pop(event.reply_to_msg_id, None)
-    status = await event.reply("🔥 בתור לצריבה…" if _queued() else "🔥 צורב…")
+    label = f" ({size})" if size else ""
+    status = await event.reply(
+        f"🔥 בתור לצריבה{label}…" if _queued() else f"🔥 צורב{label}…")
     await burn_queue.put(Job(event, offer.message, status,
-                             srt_path=offer.srt_path, work=offer.work))
+                             srt_path=offer.srt_path, work=offer.work, size=size))
     log.info("אושרה צריבה על ידי %s", sender)
 
 
@@ -493,7 +506,8 @@ async def _subtitle(job: Job, work: Path) -> None:
     if result.burnable:
         offer_message = await job.event.reply(
             "רוצה שאצרוב את הכתוביות על הסרטון?\n"
-            "**תשלח `כן` בתגובה להודעה הזו.**"
+            "**תשלח `כן` בתגובה להודעה הזו.**\n\n"
+            "לכתוביות גדולות יותר: `כן בינוני` או `כן גדול`"
         )
         offers[offer_message.id] = Offer(
             work=work, source=source, srt_path=result.srt_path,
@@ -556,7 +570,8 @@ async def _burn(job: Job, work: Path) -> None:
                          force=restarted)
 
     try:
-        burned = await pipeline.burn(source, job.srt_path, work, on_progress=on_burn)
+        burned = await pipeline.burn(source, job.srt_path, work,
+                                     on_progress=on_burn, size=job.size)
     finally:
         stage.stop()
     await stage.finish()

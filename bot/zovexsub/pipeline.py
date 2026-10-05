@@ -114,7 +114,8 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     )
 
 
-async def burn(source: Path, srt_path: Path, work: Path, on_progress=None) -> Path:
+async def burn(source: Path, srt_path: Path, work: Path, on_progress=None,
+               size: str = "") -> Path:
     """צריבה בפני עצמה — נקראת רק אחרי שהמשתמש אישר במפורש."""
     duration = await media.duration_seconds(source)
     if duration > config.BURN_MAX_MINUTES * 60:
@@ -123,7 +124,7 @@ async def burn(source: Path, srt_path: Path, work: Path, on_progress=None) -> Pa
             f"(הקובץ הזה {duration / 60:.0f} דקות)."
         )
     return await media.burn(source, srt_path, work / f"{source.stem}.he.mp4",
-                            on_progress=on_progress)
+                            on_progress=on_progress, size=size)
 
 
 def cleanup(work: Path) -> None:

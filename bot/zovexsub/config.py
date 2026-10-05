@@ -146,6 +146,9 @@ BURN_TUNE = os.getenv("BURN_TUNE", "")
 # מחדל. ערך גדול מאפס מפעיל אותה, למקרה שחייבים להיכנס בגודל מסוים.
 UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
 # קרדיט שמוצג בפתיחת הסרטון הצרוב. שורות מופרדות בתו |, ריק מבטל
+# גודל הכתוביות: קטן / בינוני / גדול. אפשר לבחור גם לכל צריבה בנפרד
+SUB_SIZE = (os.getenv("SUB_SIZE") or "קטן").strip()
+SUB_FONT = os.getenv("SUB_FONT", "Noto Sans Hebrew")
 CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד על ידי|zovex|ועולם הדרמות הטורקיות")
 CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
 CREDIT_SIZE = _int("CREDIT_SIZE", 34)
@@ -235,6 +238,9 @@ FETCH_FORMAT = os.getenv(
     "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
 )
 FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 4)
+# יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
+# מחשבון מחובר פותר את זה. ריק = בלי עוגיות
+FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")
 
 # כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
 TG_CONNECTIONS = _int("TG_CONNECTIONS", 8)
