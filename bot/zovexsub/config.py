@@ -322,7 +322,9 @@ VAD_MIN_SPEECH = float(os.getenv("VAD_MIN_SPEECH") or 0.20)
 # Whisper סוטים בסדר גודל של שנייה; היישור מוריד את זה לעשרות
 # מילישניות. ריק או מודל חסר = נשארים בתזמונים של Whisper
 ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
-ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 25)   # שניות לחלון
+# אורך החלון נמדד: הקשב של המודל גדל ריבועית עם האורך, ולכן חלון קצר
+# יעיל יותר. תפוקה לליבה בשני חוטים — 15 שניות: 3.7x · 25: 2.75x · 40: 1.85x
+ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 15)   # שניות לחלון
 ALIGN_PAD = float(os.getenv("ALIGN_PAD") or 0.5)        # ריפוד סביב החלון
 ALIGN_THREADS = _int("ALIGN_THREADS", 2)                # חוטים לכל יישור
 ALIGN_PARALLEL = _int("ALIGN_PARALLEL", 0)              # 0 = לפי הליבות

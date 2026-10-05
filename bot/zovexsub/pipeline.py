@@ -87,16 +87,24 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     if speech is None:
         speech = await media.speech_spans(audio)
 
-    stage = prog.Stage(progress, "🎯 מדייק תזמונים")
-    stage.pulse()
+    # ההקשבה החוזרת מתמללת עד 60 קליפים מחדש, אחד-אחד בטור, כל אחד עם
+    # חיתוך ffmpeg וקריאת Groq — דקות ארוכות. היא נבנתה כדי לתקן בדיוק
+    # את מה שהיישור הכפוי מתקן, רק פחות מדויק ובמחיר עצום, ולכן כשהיישור
+    # זמין היא מיותרת לחלוטין
+    if align.available():
+        log.info("מדלגים על ההקשבה החוזרת — היישור הכפוי כבר דייק את התזמונים")
+    else:
+        stage = prog.Stage(progress, "🎯 מדייק תזמונים")
+        stage.pulse()
 
-    async def on_listen(done: int, total: int) -> None:
-        await stage.show(done / total, note=f"מקשיב שוב {done}/{total}")
+        async def on_listen(done: int, total: int) -> None:
+            await stage.show(done / total, note=f"מקשיב שוב {done}/{total}")
 
-    try:
-        await realign.refine(transcript.segments, audio, work, speech, on_step=on_listen)
-    finally:
-        stage.stop()
+        try:
+            await realign.refine(transcript.segments, audio, work, speech,
+                                 on_step=on_listen)
+        finally:
+            stage.stop()
 
     stage = prog.Stage(progress, "🇮🇱 מתרגם")
     await stage.show(0.04, note=f"חוקר את התוכן · מקור {transcript.language}",
