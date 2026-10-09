@@ -108,8 +108,8 @@ def _one_chunk(path: Path, key: str, diarize: bool) -> list[dict]:
         if uploaded is not None:
             try:
                 client.files.delete(name=uploaded.name)
-            except Exception:  # noqa: BLE001 — ניקוי לא אמור להפיל כלום
-                pass
+            except Exception as exc:  # noqa: BLE001 — ניקוי לא מפיל כלום
+                log.debug("מחיקת הקובץ שהועלה נכשלה: %s", exc)
 
 
 # מאגר מפתחות משותף לכל הקטעים, כדי שתמלול מקבילי יתחלק ולא יצטופף

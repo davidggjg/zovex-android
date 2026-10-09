@@ -215,8 +215,8 @@ async def _close_senders(senders: list) -> None:
     for sender in senders:
         try:
             await sender.disconnect()
-        except Exception:  # noqa: BLE001 — סגירה לא אמורה להפיל כלום
-            pass
+        except Exception as exc:  # noqa: BLE001 — סגירה לא מפילה כלום
+            log.debug("סגירת חיבור נכשלה: %s", exc)
 
 
 async def _parallel_download(client, message, dst: Path, size: int,

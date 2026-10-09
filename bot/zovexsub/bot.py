@@ -760,8 +760,8 @@ async def _safe_edit(status, text: str) -> None:
 async def _safe_delete(status) -> None:
     try:
         await status.delete()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001 — הודעה שכבר נמחקה היא מצב רגיל
+        log.debug("מחיקת הודעה נכשלה: %s", exc)
 
 
 _loop_name = "asyncio"
