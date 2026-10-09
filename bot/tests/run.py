@@ -1,6 +1,9 @@
 """בדיקות ליבה — רצות בלי שום תלות חיצונית.
 
-    python3 bot/tests/run.py
+    /opt/zovexsub/venv/bin/python bot/tests/run.py
+
+חובה להריץ עם הפייתון של הסביבה הווירטואלית — פייתון של המערכת לא רואה
+את הספריות של הבוט.
 
 נכתבו אחרי שרגרסיה אמיתית הגיעה למשתמש: החלפת פרמטר בחתימה של burn
 עודכנה במימוש ולא בעוטפת שמעליו, וכל צריבה נפלה. בדיקה אחת הייתה תופסת
@@ -16,8 +19,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from zovexsub import config, fetch, hebrew, media, pipeline, srt   # noqa: E402
-from zovexsub.keypool import AllKeysBusy, KeyPool                  # noqa: E402
+try:
+    from zovexsub import config, fetch, hebrew, media, pipeline, srt   # noqa: E402
+    from zovexsub.keypool import AllKeysBusy, KeyPool                  # noqa: E402
+except ModuleNotFoundError as missing:                                 # noqa: E402
+    # הבוט רץ מתוך סביבה וירטואלית, ופייתון של המערכת לא רואה את
+    # הספריות שלו. בלי ההודעה הזאת השגיאה נראית כמו תקלה בקוד
+    print(f"חסרה הספרייה '{missing.name}'.\n"
+          f"הבדיקות חייבות לרוץ עם הפייתון של הבוט:\n"
+          f"    /opt/zovexsub/venv/bin/python {Path(__file__).name}\n"
+          f"(או הנתיב המלא: /opt/zovexsub/venv/bin/python "
+          f"/opt/zovexsub/repo/bot/tests/run.py)")
+    raise SystemExit(2)
 
 CHECKS: list = []
 
