@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from . import cleanup, config, gemini
 from .stt import Segment
@@ -47,6 +48,12 @@ PEOPLE_USER = """להלן תמליל גולמי (שפת מקור: {language}).
 2. דוברים: רשימת הדוברים שזוהו, ולכל אחד — מגדר (זכר/נקבה/לא ידוע) ועל מה הסתמכת (שם, פנייה אליו, צורות דקדוק במקור, הקשר).
 3. נמענים: אל מי כל דובר פונה בכל חלק — יחיד זכר, יחידה נקבה, רבים מעורב, קהל. זה הסעיף הקריטי ביותר: ציין במפורש את מספרי השורות שבהם הפנייה מתחלפת (למשל "משורה 412 ואילך הוא פונה לאישה — צריך לשון נקבה").
 4. אזהרות: כל דבר נוסף שמתרגם חייב לדעת.
+
+בסוף המסמך, בשורה נפרדת ואחרונה, כתוב טבלת מגדר קומפקטית בפורמט הזה
+בדיוק, בלי שום טקסט נוסף באותה שורה:
+@מגדר: A=זכר, B=נקבה, C=לא ידוע
+השתמש באותן אותיות דובר שמופיעות בתמליל. זו השורה שתוצמד לכל קטע
+תרגום, ולכן היא חייבת להיות מדויקת וקצרה.
 
 התמליל:
 {transcript}
@@ -190,7 +197,8 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
         before = indexed[max(0, start - ADDRESSEE_CONTEXT):start]
         after = indexed[start + ADDRESSEE_WINDOW:start + ADDRESSEE_WINDOW + ADDRESSEE_CONTEXT]
 
-        prompt = f"""מסמך הנחיות:
+        genders = gender_table(notes)
+        prompt = (f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else "") + f"""מסמך הנחיות:
 ---
 {_cap(notes, 12_000)}
 ---
@@ -431,7 +439,10 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         before = segments[max(0, start - CONTEXT):start]
         after = segments[start + WINDOW:start + WINDOW + CONTEXT]
 
-        prompt = f"""מסמך הנחיות לסרטון הזה:
+        genders = gender_table(notes)
+        pinned = f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else ""
+
+        prompt = f"""{pinned}מסמך הנחיות לסרטון הזה:
 ---
 {_cap(notes, 20_000)}
 ---
@@ -514,7 +525,9 @@ _QUALITY_SCHEMA = {
 def _quality_prompt(notes: str, paired: str) -> str:
     if not paired.strip():
         return ""
-    return f"""מסמך הנחיות:
+    genders = gender_table(notes)
+    pinned = f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else ""
+    return pinned + f"""מסמך הנחיות:
 ---
 {_cap(notes, 20_000)}
 ---
@@ -625,6 +638,24 @@ def _numbered(segs: list[Segment]) -> str:
 def _window_text(segments: list[Segment], idx: int) -> str:
     lo, hi = max(0, idx - 3), min(len(segments), idx + 4)
     return " ".join(s.text for s in segments[lo:hi])
+
+
+_GENDER_LINE = re.compile(r"^@מגדר:\s*(.+)$", re.MULTILINE)
+
+
+def gender_table(notes: str) -> str:
+    """מחלץ את שורת המגדר ממסמך החקר.
+
+    סעיף 6: המסמך כבר נשאל על מגדר הדוברים, אבל ענה בפרוזה בתוך 20,000
+    תווים. בכל חלון תרגום המודל נדרש לחלץ אותה מחדש מתוך ההקשר הארוך,
+    וזה בדיוק המקום שבו המגדר מתהפך באמצע שיחה. שורה אחת קצרה שנעוצה
+    בראש כל חלון עולה אפס קריאות ואינה משאירה מקום לפרשנות.
+    """
+    found = _GENDER_LINE.search(notes or "")
+    if not found:
+        return ""
+    row = " ".join(found.group(1).split())[:300]
+    return row
 
 
 def _cap(text: str, limit: int) -> str:
