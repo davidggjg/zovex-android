@@ -120,33 +120,41 @@ async def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="dlbench-"))
     session = work / "probe.session"
     shutil.copy2(origin, session)
+    # SQLite כותב גם קובצי לוואי. בלעדיהם העותק עלול להיות חסר מצב,
+    # ולחיצת היד מול טלגרם נתקעת במקום להיכשל בבירור
+    for suffix in ("-journal", "-wal", "-shm"):
+        side = Path(str(origin) + suffix)
+        if side.exists():
+            shutil.copy2(side, str(session) + suffix)
 
     client = TelegramClient(str(session.with_suffix("")),
                             config.TG_API_ID, config.TG_API_HASH)
 
-    # זמן החיבור עצמו הוא מדידה ולא רק הכנה: חיבור שלוקח עשרות שניות
-    # מעיד על השהיה גבוהה לשרתי טלגרם, וזה בדיוק מה שמאט הורדה
-    # שתלויה בהשהיה. הניסיון הראשון כאן נכשל ב-30 שניות
-    for attempt in (1, 2):
-        began = time.monotonic()
-        try:
-            await asyncio.wait_for(client.connect(), timeout=90)
-            print(f"החיבור לטלגרם נוצר ב-{time.monotonic() - began:.1f} שניות")
-            break
-        except asyncio.TimeoutError:
-            print(f"ניסיון {attempt}: החיבור לא נוצר תוך 90 שניות")
-            if attempt == 2:
-                print("\nטלגרם אינו נגיש מהשרת כרגע. בדיקה מהירה:\n"
-                      "    timeout 10 bash -c '</dev/tcp/149.154.167.51/443'; echo $?\n"
-                      "0 = נגיש · 124 = חסום או איטי מאוד")
-                return 2
-            await asyncio.sleep(5)
+    # ביטול של connect באמצע לחיצת היד משאיר את טלתון במצב חצי־מחובר,
+    # והקריאה הבאה מחזירה "מחובר" מיד בלי שהתחברה באמת. לכן אין כאן
+    # wait_for: התקרה נמסרת לטלתון עצמו, שיודע לנתק נקי ולדווח
+    client.flood_sleep_threshold = 0
+    print("מתחבר לטלגרם…", flush=True)
+    began = time.monotonic()
+    try:
+        await client.connect()
+    except Exception as exc:                        # noqa: BLE001
+        print(f"החיבור נכשל אחרי {time.monotonic() - began:.1f} שניות: "
+              f"{type(exc).__name__}: {exc}\n\n"
+              "בדיקת נגישות ישירה ל-DC של טלגרם:\n"
+              "    timeout 10 bash -c '</dev/tcp/149.154.167.51/443'; echo $?\n"
+              "0 = נגיש · 124 = חסום או איטי מאוד")
+        return 2
+    spent = time.monotonic() - began
+    print(f"החיבור נוצר ב-{spent:.1f} שניות"
+          + ("  ← איטי מאוד, זו כנראה הבעיה" if spent > 10 else ""), flush=True)
 
     if not await client.is_user_authorized():
         print("הסשן אינו מחובר.")
         await client.disconnect()
         return 2
 
+    print("מחפש קובץ מבחן ב'הודעות שמורות'…", flush=True)
     message = None
     async for msg in client.iter_messages("me", limit=40):
         size = int(getattr(getattr(msg, "file", None), "size", 0) or 0)
@@ -164,6 +172,7 @@ async def main() -> int:
     print("חיבורים  בקשות  חלק     באוויר   קצב        הערות")
     best = None
     for conns, pipe, part_kb in PLANS:
+        print(f"   מודד {conns}×{pipe} חלק {part_kb}KB…", end="\r", flush=True)
         try:
             got = await measure(client, message, conns, pipe, part_kb)
         except Exception as exc:                    # noqa: BLE001
