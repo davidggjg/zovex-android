@@ -103,6 +103,30 @@ async def _resolve(model: str) -> str:
 # מודלים שחסומים לתוכנית הזו לצמיתות ("limit: 0") — אין טעם לנסות שוב
 # צמדי (מודל, מפתח) שחסומים בתוכנית. קודם זו הייתה קבוצת שמות מודלים
 # בלבד, ומפתח אחד בתוכנית מצומצמת היה פוסל מודל שעובד בכל השאר
+# חשבונאות זמן: כמה מתוך השלב באמת עבר בהמתנה למפתח פנוי, לעומת
+# המתנה לתשובה של המודל. בלי ההפרדה הזאת אי אפשר לדעת אם המכסות הן
+# הצוואר או שהקריאות עצמן פשוט איטיות — וזו בדיוק השאלה הפתוחה
+class Tally:
+    def __init__(self) -> None:
+        self.reset()
+
+    def reset(self) -> None:
+        self.calls = 0
+        self.quota_wait = 0.0     # שניות בהמתנה למפתח פנוי
+        self.model_wait = 0.0     # שניות בהמתנה לתשובת המודל
+        self.rate_limited = 0     # כמה פעמים חזר 429
+
+    def report(self, label: str) -> str:
+        if not self.calls:
+            return f"{label}: אין קריאות"
+        return (f"{label}: {self.calls} קריאות · "
+                f"המתנה למפתח {self.quota_wait:.0f}ש · "
+                f"המתנה למודל {self.model_wait:.0f}ש · "
+                f"429: {self.rate_limited}")
+
+
+tally = Tally()
+
 _dead: set[tuple[str, str]] = set()
 # מודלים שכל המפתחות מיצו אותם כרגע. זה זמני: מכסה לדקה מתאפסת תוך
 # דקה, ולכן הרשימה מתרוקנת בין סבבים
@@ -160,7 +184,9 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
             attempt, skipped = 0, 0
             budget = max(4, 2 * len(config.GEMINI_API_KEYS))
             while attempt < budget:
+                _waited = time.monotonic()
                 key = await _pool.wait_for_free()
+                tally.quota_wait += time.monotonic() - _waited
                 if (_blocked.get((name, key), 0.0) > time.monotonic()
                         or (name, key) in _dead):
                     # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר. דילוג
@@ -171,6 +197,8 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
                         break
                     continue
                 attempt += 1
+                _sent = time.monotonic()
+                tally.calls += 1
                 try:
                     resp = await client.post(
                         f"{BASE}/{name}:generateContent",
@@ -182,6 +210,8 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
                     await asyncio.sleep(min(2 ** attempt, 15))
                     continue
 
+                tally.model_wait += time.monotonic() - _sent
+
                 if resp.status_code == 200:
                     _pool.report_ok(key)
                     return resp.json()
@@ -189,6 +219,7 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
                 text = resp.text[:400]
 
                 if resp.status_code == 429:
+                    tally.rate_limited += 1
                     # "limit: 0" = המודל חסום לתוכנית הזו, לא עומס רגעי
                     if "limit: 0" in text:
                         _dead.add((name, key))

@@ -410,17 +410,34 @@ async def build_hebrew(segments: list[Segment], language: str,
     """מחזיר את שורות העברית (באורך ובסדר של הסגמנטים) ואת מסמך ההנחיות."""
     numbered = "\n".join(f"[{s.index}] {s.text}" for s in segments)
 
-    notes = await research_notes(numbered, language, on_step)
+    async def staged(label: str, coro):
+        """מריץ שלב ומדווח כמה מהזמן שלו עבר בהמתנה למכסה.
+
+        השאלה "המפתחות מגבילים אותנו או שהקריאות פשוט איטיות" חזרה שוב
+        ושוב ואי אפשר היה להכריע בה מהצד. כאן היא נענית במספרים: המתנה
+        למפתח פנוי מול המתנה לתשובת המודל, ומספר ה-429 בפועל
+        """
+        gemini.tally.reset()
+        started = time.monotonic()
+        result = await coro
+        log.info("%s · סה״כ %.0fש | %s", label,
+                 time.monotonic() - started, gemini.tally.report(label))
+        return result
+
+    notes = await staged("חקר", research_notes(numbered, language, on_step))
     if not notes:
         notes = "לא התקבל מסמך הנחיות. הסק מגדרים ונמענים מתוך הקונטקסט עצמו, בזהירות."
 
-    lines = await _translate_all(segments, language, notes, on_step)
+    lines = await staged("תרגום",
+                         _translate_all(segments, language, notes, on_step))
     if on_step:
         await on_step("מתאים מגדר פנייה", TRANSLATE_TO)
-    lines = await enforce_addressee(segments, lines, notes, on_step)
+    lines = await staged("מגדר פנייה",
+                         enforce_addressee(segments, lines, notes, on_step))
     if on_step:
         await on_step("בודק איכות ועקביות", ADDRESSEE_TO)
-    lines = await _quality_pass(segments, lines, notes, on_step)
+    lines = await staged("בקרת איכות",
+                         _quality_pass(segments, lines, notes, on_step))
 
     # ניקוי ארטיפקטים: ניקוד מוסר ישירות, אותיות זרות נשלחות לתיקון ממוקד
     lines, foreign = cleanup.clean(lines)
