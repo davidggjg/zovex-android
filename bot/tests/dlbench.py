@@ -123,7 +123,25 @@ async def main() -> int:
 
     client = TelegramClient(str(session.with_suffix("")),
                             config.TG_API_ID, config.TG_API_HASH)
-    await asyncio.wait_for(client.connect(), timeout=30)
+
+    # זמן החיבור עצמו הוא מדידה ולא רק הכנה: חיבור שלוקח עשרות שניות
+    # מעיד על השהיה גבוהה לשרתי טלגרם, וזה בדיוק מה שמאט הורדה
+    # שתלויה בהשהיה. הניסיון הראשון כאן נכשל ב-30 שניות
+    for attempt in (1, 2):
+        began = time.monotonic()
+        try:
+            await asyncio.wait_for(client.connect(), timeout=90)
+            print(f"החיבור לטלגרם נוצר ב-{time.monotonic() - began:.1f} שניות")
+            break
+        except asyncio.TimeoutError:
+            print(f"ניסיון {attempt}: החיבור לא נוצר תוך 90 שניות")
+            if attempt == 2:
+                print("\nטלגרם אינו נגיש מהשרת כרגע. בדיקה מהירה:\n"
+                      "    timeout 10 bash -c '</dev/tcp/149.154.167.51/443'; echo $?\n"
+                      "0 = נגיש · 124 = חסום או איטי מאוד")
+                return 2
+            await asyncio.sleep(5)
+
     if not await client.is_user_authorized():
         print("הסשן אינו מחובר.")
         await client.disconnect()
