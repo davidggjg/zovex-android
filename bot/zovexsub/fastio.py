@@ -146,11 +146,22 @@ def _note(state: dict) -> str:
 def _parts(size: int) -> int:
     """גודל חלק שטלגרם מקבל, לפי גודל הקובץ.
 
-    טלתון יודע לגזור אותו: 128KB לקובץ קטן, 512KB לקובץ גדול. קודם
-    השתמשתי ב-1MB קבוע, וזה חרג ממה שהשרת מוכן לתת — הבקשה הראשונה
-    עברה והשאר פשוט לא נענו.
+    טלתון בוחר 512KB לקובץ גדול, אבל התיעוד הרשמי מתיר עד 1MB לבקשה.
+    מכיוון שההורדה חסומה בהשהיה ולא ברוחב פס, מספר הבקשות הוא בדיוק מה
+    שקובע את הזמן — וחלק כפול הוא חצי מזמני ההלוך-חזור. על קובץ של
+    2 ג'יגה זה 2000 בקשות במקום 4000.
+
+    אילוצי upload.getFile מהתיעוד, שכולם מתקיימים כאן: limit מתחלק
+    ב-4096, 1MB מתחלק ב-limit, וכל בקשה נופלת בתוך מקטע 1MB יחיד —
+    מה שמובטח כש-offset מיושר ל-1MB ו-limit הוא בדיוק 1MB.
+
+    קובץ קטן נשאר עם הבחירה של טלתון: שם מספר הבקשות ממילא זניח, ואין
+    טעם לבקש מקטע גדול מהקובץ עצמו.
     """
-    return utils.get_appropriated_part_size(size) * 1024
+    default = utils.get_appropriated_part_size(size) * 1024
+    if size < config.TG_BIG_PART_FROM:
+        return default
+    return max(default, min(config.TG_PART_MAX, 1024 * 1024))
 
 
 def _connections(size: int, ceiling: int) -> int:
