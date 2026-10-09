@@ -754,6 +754,24 @@ async def _safe_delete(status) -> None:
         pass
 
 
+_loop_name = "asyncio"
+
+
+def _fast_loop() -> str:
+    """מחליף את לולאת האירועים ב-uvloop כשהוא מותקן.
+
+    סעיף 7: ההורדה מחזיקה עשרות בקשות במקביל, וכל חלק שמגיע עובר דרך
+    הלולאה. uvloop בנוי על libuv ומטפל ב-I/O מקבילי מהר יותר מהמימוש
+    שבספרייה התקנית. אין שינוי בקוד — רק במי שמריץ אותו
+    """
+    try:
+        import uvloop
+    except ImportError:
+        return "asyncio (להתקנת uvloop: pip install uvloop)"
+    uvloop.install()
+    return f"uvloop {getattr(uvloop, '__version__', '')}".strip()
+
+
 async def main() -> None:
     problems = config.validate()
     if problems:
@@ -782,6 +800,7 @@ async def main() -> None:
     log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
              me.username or me.first_name, me.id, len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
+    log.info("לולאת אירועים: %s", _loop_name)
     log.info("טריגר: %s · רשימת מורשים: %s · תיקיית עבודה: %s",
              T, config.ALLOWLIST_FILE, config.WORK_DIR)
 
@@ -793,4 +812,6 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # חייב לקרות לפני יצירת הלולאה, אחרת ההחלפה חסרת ערך
+    _loop_name = _fast_loop()
     asyncio.run(main())

@@ -218,8 +218,13 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # כמה בקשות מותר להחזיק באוויר בו-זמנית, על פני כל החיבורים. זה
     # ולא מספר החיבורים הוא מה שקובע את הקצב, ואי אפשר לדעת מראש כמה
     # החשבון והקו מרשים — לכן מתחילים גבוה ומצטמצמים רק אם טלגרם מתלונן
-    inflight = asyncio.Semaphore(workers * max(1, config.TG_PIPELINE))
+    base = workers * max(1, config.TG_PIPELINE)
+    ceiling = max(base, config.TG_INFLIGHT_MAX)
+    inflight = asyncio.Semaphore(base)
     shrunk = 0
+    grown = 0
+    flooded = False
+    since_grow = 0
 
     async def shrink() -> None:
         """מוריד את התקרה אחרי FLOOD_WAIT, ולא מעלה אותה בחזרה.
@@ -228,14 +233,36 @@ async def _parallel_download(client, message, dst: Path, size: int,
         מחזיר אותנו לאותו מקום. מי שמחזיק את ההיתרים האלה לא משחרר
         אותם עד סוף ההורדה.
         """
-        nonlocal shrunk
-        room = workers * max(1, config.TG_PIPELINE) - shrunk
+        nonlocal shrunk, flooded
+        flooded = True
+        room = base + grown - shrunk
         drop = max(1, room // 2)
         for _ in range(drop):
             await inflight.acquire()
         shrunk += drop
         log.warning("התקרה ירדה ל-%d בקשות באוויר", room - drop)
 
+    async def grow() -> None:
+        """מרחיב את התקרה כל עוד טלגרם לא התלונן אף פעם.
+
+        התקרה ההתחלתית היא ניחוש זהיר, וכשהרשת פנויה היא פשוט מבזבזת
+        את הקו. כאן היא מטפסת בהדרגה — תוספת אחת לכל חבילת חלקים
+        שעברה נקי — ונעצרת לצמיתות ברגע הראשון שמתקבל FLOOD_WAIT.
+        עלייה איטית וירידה חדה: הדרך היחידה למצוא את הגבול בלי לחצות
+        אותו שוב ושוב
+        """
+        nonlocal grown, since_grow
+        if flooded or base + grown >= ceiling:
+            return
+        since_grow += 1
+        if since_grow < config.TG_GROW_EVERY:
+            return
+        since_grow = 0
+        grown += 1
+        inflight.release()
+        log.info("התקרה עלתה ל-%d בקשות באוויר", base + grown - shrunk)
+
+    started = time.monotonic()
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
         pending.put_nowait(index)
@@ -302,6 +329,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
             if not block:
                 continue
             os.pwrite(handle, block, offset)
+            await grow()
             async with lock:
                 done += len(block)
                 last_progress = time.monotonic()
@@ -371,6 +399,13 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # הבייטים שבאמת נכתבו
     if done != size:
         raise RuntimeError(f"ירדו {done} בייט מתוך {size} — הקובץ חסר")
+    # המספר שאי אפשר לנחש במקומו: כמה באמת יצא מהקו הזה
+    spent = max(0.001, time.monotonic() - started)
+    log.info("ההורדה הסתיימה: %.0fMB ב-%.0f שניות = %.1f MB/s · "
+             "תקרה סופית %d בקשות באוויר%s",
+             size / 1048576, spent, size / 1048576 / spent,
+             base + grown - shrunk,
+             " (טלגרם הגביל קצב)" if flooded else "")
     return dst
 
 

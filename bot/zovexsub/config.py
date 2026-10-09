@@ -326,6 +326,10 @@ TG_PIPELINE = _int("TG_PIPELINE", 8)
 # המתנה מרבית ל-FLOOD_WAIT. מעבר לזה ההורדה נופלת למסלול הרגיל במקום
 # להחזיק את העבודה שעה — וזה גם הסימן ש-TG_PIPELINE גבוה מדי
 TG_FLOOD_MAX = float(os.getenv("TG_FLOOD_MAX") or 120)
+# תקרה עליונה לבקשות באוויר, ובכל כמה חלקים מוצלחים לטפס אליה. ההרחבה
+# נעצרת לצמיתות ברגע הראשון של FLOOD_WAIT — עלייה איטית, ירידה חדה
+TG_INFLIGHT_MAX = _int("TG_INFLIGHT_MAX", 64)
+TG_GROW_EVERY = _int("TG_GROW_EVERY", 8)
 # תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
 # במקום ליפול חזרה למסלול הרגיל של טלתון
 TG_CONNECT_TIMEOUT = float(os.getenv("TG_CONNECT_TIMEOUT") or 45)
