@@ -490,10 +490,37 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
     workers = config.parallel(config.TRANSLATE_PARALLEL, config.GEMINI_API_KEYS)
     gate = asyncio.Semaphore(workers)
     finished = 0
+    # אותו תיקון שנעשה בשלב החקר: בלי דיווח בזמן אמת, חלון שרץ דקה
+    # משאיר על המסך את ההודעה של השלב הקודם — ונראה כאילו שום דבר לא
+    # קורה. בקליפ קצר יש חלון אחד בלבד, ואז זה כל משך התרגום
+    live: dict[int, float] = {}
+    report_lock = asyncio.Lock()
     log.info("מתרגם %d חלונות, עד %d במקביל", len(starts), workers)
+
+    async def refresh() -> None:
+        if not on_step:
+            return
+        now = time.monotonic()
+        if live:
+            oldest = int(now - min(live.values()))
+            note = (f"מתרגם {finished}/{len(segments)} שורות · "
+                    f"{len(live)} חלונות בעבודה · {oldest}ש")
+        else:
+            note = f"מתרגם {finished}/{len(segments)} שורות"
+        await on_step(note, TRANSLATE_FROM + (TRANSLATE_TO - TRANSLATE_FROM)
+                      * finished / max(1, len(segments)))
+
+    async def ticker() -> None:
+        while True:
+            await asyncio.sleep(3)
+            async with report_lock:
+                await refresh()
 
     async def translate_window(start: int) -> None:
         nonlocal finished
+        async with report_lock:
+            live[start] = time.monotonic()
+            await refresh()
         window = segments[start:start + WINDOW]
         before = segments[max(0, start - CONTEXT):start]
         after = segments[start + WINDOW:start + WINDOW + CONTEXT]
@@ -543,15 +570,15 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
 
         finished += len(window)
         log.info("תורגמו %d/%d שורות", finished, len(segments))
-        if on_step:
-            # הטווחים מחולקים לפי הזמן שכל שלב באמת לוקח, ולא לפי כמות
-            # העבודה. מעבר שהוא קריאה אחת ארוכה צריך טווח משלו, אחרת
-            # המד נראה תקוע בדיוק כשהוא עובד
-            await on_step(f"מתרגם {finished}/{len(segments)} שורות",
-                          TRANSLATE_FROM + (TRANSLATE_TO - TRANSLATE_FROM)
-                          * finished / max(1, len(segments)))
+        async with report_lock:
+            live.pop(start, None)
+            await refresh()
 
-    await asyncio.gather(*(translate_window(start) for start in starts))
+    pulse = asyncio.create_task(ticker())
+    try:
+        await asyncio.gather(*(translate_window(start) for start in starts))
+    finally:
+        pulse.cancel()
     return out
 
 
