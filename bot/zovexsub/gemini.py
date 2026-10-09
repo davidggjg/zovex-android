@@ -321,6 +321,24 @@ async def ask_json(system: str, user: str, *, schema: dict | None = None,
     raise GeminiError("לא התקבל JSON תקין מ-Gemini")
 
 
+# מתי מכסת החיפוש נגמרה לאחרונה. למכסת החיפוש של ג'מיני יש מונה נפרד
+# וקטן, וכשהיא אוזלת כל קריאת חקר משלמת את תקרת הזמן המלאה לפני
+# שהיא מוותרת ועוברת למסלול המהיר. בשלב עם כמה קריאות זה מצטבר לדקות
+# שנשרפות על ניסיון שידוע מראש שייכשל
+_search_down_until = 0.0
+
+
+def _search_usable() -> bool:
+    return time.monotonic() >= _search_down_until
+
+
+def _search_failed(reason: str) -> None:
+    global _search_down_until
+    _search_down_until = time.monotonic() + config.SEARCH_REST
+    log.warning("חיפוש גוגל לא זמין (%s) — מדלגים עליו ל-%.0f דקות",
+                reason, config.SEARCH_REST / 60)
+
+
 async def research(system: str, user: str, *, grounded: bool = True) -> str:
     """מעבר חקר מחובר לחיפוש Google — לשמות, מונחים, ציטוטים ומושגים.
 
@@ -337,7 +355,7 @@ async def research(system: str, user: str, *, grounded: bool = True) -> str:
 
     # חיפוש מאט מאוד — המודל יוצא לרשת וממתין. חלק מהמעברים לא צריכים
     # אותו בכלל, ואז מדלגים ישר על הניסיון האיטי
-    attempts = [(with_search, "עם חיפוש")] if grounded else []
+    attempts = [(with_search, "עם חיפוש")] if grounded and _search_usable() else []
     attempts.append((base, "בלי חיפוש"))
 
     # המעבר הזה לא קריטי לתרגום, ולכן הוא לא מחזיק את התור יותר מדי זמן
@@ -350,8 +368,12 @@ async def research(system: str, user: str, *, grounded: bool = True) -> str:
             log.warning("החקר %s חזר ריק", label)
         except asyncio.TimeoutError:
             log.warning("החקר %s עבר את תקרת הזמן (%ds)", label, config.RESEARCH_TIMEOUT)
+            if body is with_search:
+                _search_failed("תקרת זמן")
         except GeminiError as exc:
             log.warning("החקר %s נכשל: %s", label, exc)
+            if body is with_search:
+                _search_failed(str(exc)[:60])
 
     log.warning("ממשיכים בלי מסמך הנחיות")
     return ""

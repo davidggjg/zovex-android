@@ -762,7 +762,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
         else:
             await _run(cmd, timeout=limit)
 
-    await _check_codec(dst)
+    await _check_codec(dst, config.BURN_CODEC or settings["codec"])
     log.info("הצריבה הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
     return dst
 
@@ -869,7 +869,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     if on_progress:
         await on_progress(1.0, "בודק")
     await _verify(dst, duration)
-    await _check_codec(dst)
+    await _check_codec(dst, config.BURN_CODEC or settings["codec"])
     shutil.rmtree(work, ignore_errors=True)
     log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
     return dst
@@ -893,14 +893,18 @@ async def poster(video: Path, work: Path) -> Path | None:
     return thumb if thumb.exists() and thumb.stat().st_size else None
 
 
-async def _check_codec(result: Path) -> None:
+async def _check_codec(result: Path, expected: str = "") -> None:
     """מוודא שהפלט באמת HEVC כשזה מה שביקשנו.
 
     בלי זה נפילה שקטה לפרופיל x264 — או דריסה ידנית שנשכחה ב-.env —
     הייתה מגיעה לאתר כקובץ בקודק אחר, ומתגלה רק אצל צופה שלא מצליח
     לנגן. ALLOW_X264=1 מכבה את הבדיקה במפורש.
     """
-    if config.ALLOW_X264:
+    # B7: BURN_CODEC מאפשר לדרוס את הקודק, והאימות בדק hevc קשיח. מי
+    # שדרס במפורש קיבל כישלון רק בסוף הצריבה כולה, אחרי שכל העבודה
+    # כבר נעשתה. בדיקה מול מה שבאמת ביקשנו לקודד מסירה את הסתירה
+    wanted = {"libx265": "hevc", "libx264": "h264"}.get(expected or "", "")
+    if config.ALLOW_X264 and not wanted:
         return
     try:
         out = await _run([
@@ -914,11 +918,12 @@ async def _check_codec(result: Path) -> None:
     fields = [line.strip() for line in out.splitlines() if line.strip()]
     codec = fields[0] if fields else ""
     tag = fields[1] if len(fields) > 1 else ""
-    if codec != "hevc":
+    target = wanted or "hevc"
+    if codec != target:
         raise FFmpegError(
-            f"הפלט יצא בקודק {codec or 'לא ידוע'} ולא HEVC. "
-            f"להתיר במפורש: ALLOW_X264=1 ב-.env")
-    if tag != "hvc1":
+            f"הפלט יצא בקודק {codec or 'לא ידוע'} במקום {target}. "
+            f"אם זו הייתה הכוונה: ALLOW_X264=1 ב-.env")
+    if target == "hevc" and tag != "hvc1":
         log.warning("תגית הווידאו היא %s ולא hvc1 — ניגון באפל עלול להיכשל", tag)
     log.info("אימות קודק: %s/%s", codec, tag)
 

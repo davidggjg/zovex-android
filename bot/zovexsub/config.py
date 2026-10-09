@@ -61,6 +61,8 @@ RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
 # לאורך פרק ארוך ועושה חיפוש באינטרנט; על קליפ קצר הוא רק מוסיף זמן.
 # 4000 תווים הם בערך שלוש דקות דיבור
 RESEARCH_FACTS_MIN = _int("RESEARCH_FACTS_MIN", 4000)
+# לכמה זמן לדלג על חיפוש גוגל אחרי שהוא נכשל. ראו gemini._search_failed
+SEARCH_REST = float(os.getenv("SEARCH_REST") or 900)
 
 MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 300)
 BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 300)
