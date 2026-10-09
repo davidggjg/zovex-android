@@ -380,7 +380,7 @@ async def build_hebrew(segments: list[Segment], language: str,
     lines = await enforce_addressee(segments, lines, notes, on_step)
     if on_step:
         await on_step("בודק איכות ועקביות", ADDRESSEE_TO)
-    lines = await _quality_pass(segments, lines, notes)
+    lines = await _quality_pass(segments, lines, notes, on_step)
 
     # ניקוי ארטיפקטים: ניקוד מוסר ישירות, אותיות זרות נשלחות לתיקון ממוקד
     lines, foreign = cleanup.clean(lines)
@@ -485,31 +485,36 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
     return out
 
 
-async def _quality_pass(segments: list[Segment], lines: list[str], notes: str) -> list[str]:
-    """סריקה על כל הכתוביות בבת אחת, ואחריה תיקון ממוקד."""
-    paired = "\n".join(
-        f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}"
-        for i in range(len(segments)) if lines[i]
-    )
-    schema = {
-        "type": "object",
-        "properties": {
-            "fixes": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "i": {"type": "integer"},
-                        "he": {"type": "string"},
-                        "why": {"type": "string"},
-                    },
-                    "required": ["i", "he"],
+# שורות בכל קריאת בקרת איכות. קודם זו הייתה קריאה אחת על כל הכתוביות
+# (עד 200,000 תווים): מפתח אחד עבד בזמן שכל השאר עמדו פנויים, והשלב כולו
+# היה חסום על הקריאה האיטית הזאת. חלונות מקביליים מנצלים את כל המפתחות,
+# ובונוס: חלון קצר מקבל תשומת לב טובה יותר מהמודל מאשר ערימה ענקית
+QUALITY_WINDOW = 120
+
+_QUALITY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "fixes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "i": {"type": "integer"},
+                    "he": {"type": "string"},
+                    "why": {"type": "string"},
                 },
-            }
-        },
-        "required": ["fixes"],
-    }
-    prompt = f"""מסמך הנחיות:
+                "required": ["i", "he"],
+            },
+        }
+    },
+    "required": ["fixes"],
+}
+
+
+def _quality_prompt(notes: str, paired: str) -> str:
+    if not paired.strip():
+        return ""
+    return f"""מסמך הנחיות:
 ---
 {_cap(notes, 20_000)}
 ---
@@ -539,15 +544,43 @@ async def _quality_pass(segments: list[Segment], lines: list[str], notes: str) -
 אם אין שגיאות החזר מערך ריק. אל תשנה שורות תקינות ואל תשפר סגנון.
 החזר JSON: {{"fixes": [{{"i": <אינדקס>, "he": "<עברית מתוקנת>", "why": "<הסיבה>"}}]}}"""
 
-    try:
-        result = await gemini.ask_json(CHECK_SYSTEM, prompt, schema=schema, temperature=0.0)
-    except gemini.GeminiError as exc:
-        log.warning("בדיקת האיכות נכשלה, מחזיר את התרגום כמו שהוא: %s", exc)
-        return lines
 
-    fixes = result.get("fixes") if isinstance(result, dict) else None
+async def _quality_pass(segments: list[Segment], lines: list[str], notes: str,
+                        on_step=None) -> list[str]:
+    """סריקת איכות בחלונות מקביליים, ואחריה תיקון ממוקד."""
+    starts = list(range(0, len(segments), QUALITY_WINDOW))
+    done = 0
+    lock = asyncio.Lock()
+
+    async def one(start: int) -> list:
+        nonlocal done
+        stop = min(start + QUALITY_WINDOW, len(segments))
+        paired = "\n".join(
+            f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}"
+            for i in range(start, stop) if lines[i]
+        )
+        prompt = _quality_prompt(notes, paired)
+        if not prompt:
+            return []
+        try:
+            result = await gemini.ask_json(CHECK_SYSTEM, prompt,
+                                           schema=_QUALITY_SCHEMA, temperature=0.0)
+        except gemini.GeminiError as exc:
+            # חלון שנכשל לא מפיל את השאר. קודם כשל יחיד החזיר את כל
+            # התרגום בלי שום בדיקת איכות
+            log.warning("חלון בקרת איכות נכשל ומדולג: %s", exc)
+            return []
+        async with lock:
+            done += 1
+            if on_step:
+                await on_step(f"בודק איכות {done}/{len(starts)}",
+                              ADDRESSEE_TO + (1.0 - ADDRESSEE_TO)
+                              * done / max(1, len(starts)))
+        return (result.get("fixes") or []) if isinstance(result, dict) else []
+
+    batches = await asyncio.gather(*(one(s) for s in starts))
     applied = 0
-    for fix in fixes or []:
+    for fix in (f for batch in batches for f in batch):
         try:
             idx = int(fix["i"])
             text = str(fix["he"]).strip()
@@ -557,7 +590,7 @@ async def _quality_pass(segments: list[Segment], lines: list[str], notes: str) -
             log.info("תיקון [%d]: %s", idx, str(fix.get("why", ""))[:120])
             lines[idx] = text
             applied += 1
-    log.info("בדיקת האיכות תיקנה %d שורות", applied)
+    log.info("בדיקת האיכות רצה ב-%d חלונות ותיקנה %d שורות", len(starts), applied)
     return lines
 
 

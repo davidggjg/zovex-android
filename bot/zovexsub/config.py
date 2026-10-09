@@ -52,7 +52,11 @@ GEMINI_LAST_RESORT_MODEL = os.getenv("GEMINI_LAST_RESORT_MODEL", "gemini-flash-l
 # מהמקור ולא מתרגום קודם — ולכן אפשר להריץ אותם במקביל
 TRANSLATE_PARALLEL = _int("TRANSLATE_PARALLEL", 0)
 # מעבר החקר לא קריטי — אחריו ממשיכים בלעדיו במקום להחזיק את התור
-RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 180)
+# B6: שלב החקר הוא ארבע קריאות LLM של כ-46 שניות כל אחת, והן רצות
+# במקביל. תקרה של 180 שניות פירושה שקריאה תקועה מחזיקה את כל השלב שלוש
+# דקות לפני שמוותרים עליה. 60 נותן מרווח כפול מעל הזמן שנמדד ועדיין
+# חותך תקיעה מהר
+RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
 
 MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 180)
 BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 10)
