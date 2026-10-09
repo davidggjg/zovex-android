@@ -45,6 +45,59 @@ def clock(seconds: float) -> str:
     return f"{minutes}:{secs:02d}"
 
 
+# סימני כיוון. בלי RLM שורה שמתחילה באימוג'י או במספר נשברת לסדר הפוך
+# בטלגרם, ובלי LRM מספר עם נקודה או נקודתיים מתהפך בתוך שורה עברית
+RLM, LRM = "\u200f", "\u200e"
+
+
+def rtl(line: str) -> str:
+    return RLM + line
+
+
+def num(text: str) -> str:
+    """עוטף מספר כך שלא יתהפך בתוך טקסט עברי."""
+    return LRM + text + LRM
+
+
+class Card:
+    """כרטיס עבודה אחד שנערך במקום, עם היסטוריה של מה שכבר הסתיים.
+
+    סעיף 8: עד כה כל שלב דרס את קודמו באותה הודעה, ולכן לא היה שום זכר
+    למה שכבר רץ — אי אפשר היה לדעת כמה לקח התמלול, או אם היישור בכלל
+    התבצע. הכרטיס שומר שורה לכל שלב שהסתיים, והשלב הפעיל מופיע מתחתיו.
+    """
+
+    def __init__(self, edit: Edit, title: str = ""):
+        self._edit = edit
+        self.title = title
+        self.history: list[str] = []
+        self.current = ""
+        self.started = time.monotonic()
+
+    def _render(self) -> str:
+        lines = []
+        if self.title:
+            lines.append(rtl(f"**{self.title}**"))
+        lines += [rtl(f"✅ {row}") for row in self.history]
+        if self.current:
+            lines.append(rtl(f"⏳ {self.current}"))
+        return "\n".join(lines)
+
+    async def write(self, current: str) -> None:
+        self.current = current
+        await self._edit(self._render())
+
+    async def done(self, line: str) -> None:
+        """מעביר שלב להיסטוריה."""
+        self.history.append(line)
+        self.current = ""
+        await self._edit(self._render())
+
+    def stage(self, title: str, *, total_bytes: int = 0) -> "Stage":
+        """שלב חדש שכותב לתוך הכרטיס במקום לדרוס את ההודעה."""
+        return Stage(self.write, title, total_bytes=total_bytes, card=self)
+
+
 class Stage:
     """עוקב אחרי שלב אחד ומעדכן את הודעת הסטטוס.
 
@@ -54,8 +107,10 @@ class Stage:
     קורא תמיד את המצב הנוכחי.
     """
 
-    def __init__(self, edit: Edit, title: str, *, total_bytes: int = 0):
+    def __init__(self, edit: Edit, title: str, *, total_bytes: int = 0,
+                 card: "Card | None" = None):
         self.edit = edit
+        self.card = card
         self.title = title
         self.total_bytes = total_bytes
         self.started = time.monotonic()
@@ -144,6 +199,12 @@ class Stage:
 
     async def finish(self, note: str = "") -> None:
         self.stop()
+        if self.card is not None:
+            # בכרטיס אין טעם להשאיר פס מלא: השלב עובר להיסטוריה בשורה
+            # אחת קצרה, והמקום מתפנה לשלב הבא
+            await self.card.done(f"{self.title} · {num(clock(self.elapsed))}"
+                                 + (f" · {note}" if note else ""))
+            return
         async with self._lock:
             self.fraction = 1.0
             self.done_bytes = self.total_bytes or self.done_bytes

@@ -546,6 +546,10 @@ async def _subtitle(job: Job, work: Path) -> None:
     async def edit(text: str) -> None:
         await _safe_edit(job.status, text)
 
+    # כרטיס אחד לכל העבודה: כל שלב שמסתיים נשאר כשורה, ולא נמחק על ידי
+    # הבא אחריו. כך רואים בסוף כמה לקח כל חלק
+    card = prog.Card(edit)
+
     if job.url:
         ensure_space(0)
         download = prog.Stage(edit, "🔗 מוריד מהקישור")
@@ -583,7 +587,7 @@ async def _subtitle(job: Job, work: Path) -> None:
         await _safe_delete(job.status)
         return
 
-    result = await pipeline.run(source, work, progress=progress)
+    result = await pipeline.run(source, work, progress=progress, card=card)
 
     await job.event.reply(
         f"✅ **{result.cues} כתוביות** · {result.duration / 60:.1f} דק׳ · "

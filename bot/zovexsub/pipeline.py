@@ -32,8 +32,18 @@ class Result:
         return self.duration <= config.BURN_MAX_MINUTES * 60
 
 
-async def run(source: Path, work: Path, *, progress: Progress) -> Result:
-    """progress מקבל טקסט מוכן להצגה — כאן נבנים השלבים עם אחוזים וזמן משוער."""
+async def run(source: Path, work: Path, *, progress: Progress,
+              card: "prog.Card | None" = None) -> Result:
+    """progress מקבל טקסט מוכן להצגה — כאן נבנים השלבים עם אחוזים וזמן משוער.
+
+    card אופציונלי: כשהוא קיים כל שלב שמסתיים נשאר כשורה בהיסטוריה
+    במקום להידרס על ידי הבא אחריו
+    """
+    def make(title: str, **kwargs) -> prog.Stage:
+        if card is not None:
+            return card.stage(title, **kwargs)
+        return make(title, **kwargs)
+
     started = time.monotonic()
     work.mkdir(parents=True, exist_ok=True)
 
@@ -50,7 +60,7 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     await progress(f"🎧 מחלץ אודיו · {duration / 60:.0f} דקות וידאו")
     audio = await media.extract_audio(source, work / "audio.flac")
 
-    stage = prog.Stage(progress, "✍️ מתמלל")
+    stage = make("✍️ מתמלל")
     stage.pulse()
 
     async def on_chunk(done: int, total: int) -> None:
@@ -85,7 +95,7 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     if native_times:
         log.info("התזמונים הגיעו מהמודל עצמו — אין צורך ביישור")
     elif align.available():
-        stage = prog.Stage(progress, "📐 מיישר תזמונים")
+        stage = make("📐 מיישר תזמונים")
         stage.pulse()
 
         async def on_align(done: int, total: int) -> None:
@@ -110,7 +120,7 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
     if native_times or align.available():
         log.info("מדלגים על ההקשבה החוזרת — התזמונים כבר מדויקים")
     else:
-        stage = prog.Stage(progress, "🎯 מדייק תזמונים")
+        stage = make("🎯 מדייק תזמונים")
         stage.pulse()
 
         async def on_listen(done: int, total: int) -> None:
@@ -122,7 +132,7 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
         finally:
             stage.stop()
 
-    stage = prog.Stage(progress, "🇮🇱 מתרגם")
+    stage = make("🇮🇱 מתרגם")
     await stage.show(0.04, note=f"חוקר את התוכן · מקור {transcript.language}",
                      force=True)
 
