@@ -563,8 +563,11 @@ async def _subtitle(job: Job, work: Path) -> None:
         ensure_space(total_bytes)
         download = prog.Stage(edit, "📥 מוריד", total_bytes=total_bytes)
 
-        async def on_download(received: int, total: int) -> None:
-            await download.show(received / total if total else 0, done_bytes=received)
+        async def on_download(received: int, total: int, note: str = "") -> None:
+            # note מסביר למה אין תנועה — למשל המתנה ש-טלגרם ביקש.
+            # בלעדיו המסך נראה קפוא והמשתמש חושב שהבוט מת
+            await download.show(received / total if total else 0,
+                                done_bytes=received, note=note)
 
         await fastio.download(job.event.client, job.message, source,
                               on_progress=on_download)
@@ -622,8 +625,11 @@ async def _burn(job: Job, work: Path) -> None:
 
         download = prog.Stage(edit, "📥 מוריד", total_bytes=total_bytes)
 
-        async def on_download(received: int, total: int) -> None:
-            await download.show(received / total if total else 0, done_bytes=received)
+        async def on_download(received: int, total: int, note: str = "") -> None:
+            # note מסביר למה אין תנועה — למשל המתנה ש-טלגרם ביקש.
+            # בלעדיו המסך נראה קפוא והמשתמש חושב שהבוט מת
+            await download.show(received / total if total else 0,
+                                done_bytes=received, note=note)
 
         name = _filename(job.message)
         source = work / f"source{Path(name).suffix or '.mp4'}"

@@ -117,7 +117,7 @@ async def _resume_download(client, message, dst: Path, size: int, have: int,
                 done += len(block)
                 stalled = time.monotonic()
                 if on_progress:
-                    await on_progress(done, size or done)
+                    await on_progress(done, size or done, "")
 
     watch = asyncio.create_task(guard())
     try:
@@ -130,6 +130,14 @@ async def _resume_download(client, message, dst: Path, size: int, have: int,
         await puller
     finally:
         watch.cancel()
+
+
+def _note(state: dict) -> str:
+    """טקסט קצר שמסביר למה אין התקדמות ברגע זה."""
+    left = state["until"] - time.monotonic()
+    if left > 1:
+        return f"טלגרם מגביל קצב · ממתינים {int(left) // 60}:{int(left) % 60:02d}"
+    return ""
 
 
 def _parts(size: int) -> int:
@@ -263,6 +271,10 @@ async def _parallel_download(client, message, dst: Path, size: int,
         log.info("התקרה עלתה ל-%d בקשות באוויר", base + grown - shrunk)
 
     started = time.monotonic()
+    # מה להציג למשתמש כשההורדה לא מתקדמת. בלי זה הבוט נראה מת בזמן
+    # שהוא פשוט ממתין בציות להוראת FLOOD_WAIT של טלגרם — וזו בדיוק
+    # ה"תקיעה של עשרים דקות" שדווחה
+    state = {"note": "", "until": 0.0}
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
         pending.put_nowait(index)
@@ -292,7 +304,11 @@ async def _parallel_download(client, message, dst: Path, size: int,
                     raise
                 log.warning("טלגרם מגביל קצב, ממתינים %.0f שניות", wait)
                 await shrink()
+                state["until"] = max(state["until"], time.monotonic() + wait)
+                if on_progress:
+                    await on_progress(done, size, _note(state))
                 await asyncio.sleep(wait)
+                state["note"] = ""
                 continue
             except asyncio.TimeoutError:
                 log.warning("חלק ב-%d לא נענה תוך %.0f שניות (ניסיון %d/%d)",
@@ -334,7 +350,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
                 done += len(block)
                 last_progress = time.monotonic()
                 if on_progress:
-                    await on_progress(done, size)
+                    await on_progress(done, size, _note(state))
 
     async def worker(sender) -> None:
         """כמה בקשות באוויר על אותו חיבור, ולא אחת בכל רגע.
@@ -358,7 +374,14 @@ async def _parallel_download(client, message, dst: Path, size: int,
         """מכריז על תקיעה אם אף בייט לא ירד זמן רב."""
         while True:
             await asyncio.sleep(10)
-            idle = time.monotonic() - last_progress
+            now = time.monotonic()
+            if now < state["until"]:
+                # המתנה שטלגרם ביקש אינה תקיעה. מדווחים אותה כדי
+                # שהמסך יזוז, ולא מתחילים לספור לקראת כישלון
+                if on_progress:
+                    await on_progress(done, size, _note(state))
+                continue
+            idle = now - last_progress
             if idle > config.TG_STALL_TIMEOUT:
                 raise RuntimeError(
                     f"ההורדה תקועה {idle:.0f} שניות על {done * 100 // max(1, size)}%")
@@ -473,7 +496,7 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
             async with lock:
                 done += len(block)
                 if on_progress:
-                    await on_progress(done, size)
+                    await on_progress(done, size, "")
 
     try:
         log.info("מעלה ב-%d חיבורים במקביל (%.0fMB, %d חלקים)",
