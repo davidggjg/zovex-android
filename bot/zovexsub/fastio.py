@@ -132,6 +132,16 @@ async def _resume_download(client, message, dst: Path, size: int, have: int,
         watch.cancel()
 
 
+def _flush_cache(handle: int) -> None:
+    """מסנכרן לדיסק ומשחרר את מטמון העמודים של מה שכבר נכתב."""
+    try:
+        os.fdatasync(handle)
+        if hasattr(os, "posix_fadvise"):
+            os.posix_fadvise(handle, 0, 0, os.POSIX_FADV_DONTNEED)
+    except OSError as exc:
+        log.debug("סנכרון לדיסק נכשל: %s", exc)
+
+
 def _note(state: dict) -> str:
     """טקסט קצר שמסביר למה אין התקדמות ברגע זה."""
     left = state["until"] - time.monotonic()
@@ -289,6 +299,12 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # שהוא פשוט ממתין בציות להוראת FLOOD_WAIT של טלגרם — וזו בדיוק
     # ה"תקיעה של עשרים דקות" שדווחה
     state = {"note": "", "until": 0.0, "premium": False}
+    # בייטים שנכתבו מאז הסנכרון האחרון. בלי סנכרון תקופתי מצטברים
+    # מאות מגה־בייטים של דפים מלוכלכים בזיכרון, והקרנל נכנס לכתיבה
+    # כפויה שמקפיאה את כל המכונה — כולל SSH. זה בדיוק מה שנראה כמו
+    # "השרת קורס בזמן הורדה"
+    since_sync = 0
+    write_lock = asyncio.Lock()
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
         pending.put_nowait(index)
@@ -367,7 +383,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
             block = bytes(result.bytes)[: max(0, size - offset)]
             if not block:
                 continue
-            os.pwrite(handle, block, offset)
+            await write_block(block, offset)
             await grow()
             async with lock:
                 done += len(block)
@@ -392,6 +408,27 @@ async def _parallel_download(client, message, dst: Path, size: int,
         """
         await asyncio.gather(*(pull(sender)
                                for _ in range(max(1, config.TG_PIPELINE))))
+
+    async def write_block(block: bytes, offset: int) -> None:
+        """כותב לדיסק בלי לחסום את לולאת האירועים.
+
+        os.pwrite הוא קריאת מערכת חוסמת. כשהיא רצה על חוט הלולאה, כל
+        הבוט עוצר עד שהדיסק מסיים — ועם עשרות כתיבות של מגה־בייט
+        בו-זמנית זה הופך לעצירה מורגשת. החוט הנפרד משחרר את הלולאה.
+
+        אחת לכמה עשרות מגה־בייט הנתונים מסונכרנים ומשוחררים ממטמון
+        העמודים. אנחנו לא נקרא אותם שוב בקרוב, והחזקתם בזיכרון רק
+        דוחפת את הקרנל לכתיבה כפויה בהמשך
+        """
+        nonlocal since_sync
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, os.pwrite, handle, block, offset)
+        async with write_lock:
+            since_sync += len(block)
+            if since_sync < config.TG_SYNC_EVERY:
+                return
+            since_sync = 0
+        await loop.run_in_executor(None, _flush_cache, handle)
 
     async def watchdog() -> None:
         """מכריז על תקיעה אם אף בייט לא ירד זמן רב."""
