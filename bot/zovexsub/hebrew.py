@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 
 from . import cleanup, config, gemini
 from .stt import Segment
@@ -329,39 +330,70 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
     done = 0
     total = len(chunks) + 1
     gate = asyncio.Lock()
+    # מה רץ ברגע זה ומתי התחיל. בלי זה ההתקדמות דיווחה רק בסיום כל
+    # קריאה, והמסך נראה תקוע על אותו אחוז כל עוד שלוש הקריאות באוויר —
+    # בדיוק התחושה של "נתקע בהתחלה"
+    live: dict[str, float] = {}
 
-    async def step(label: str) -> None:
+    async def refresh() -> None:
+        if not on_step:
+            return
+        now = time.monotonic()
+        running = " · ".join(f"{name} {int(now - t)}ש"
+                             for name, t in sorted(live.items()))
+        label = running or "מסכם"
+        await on_step(f"חוקר את התוכן {done}/{total} · {label}",
+                      RESEARCH_TO * done / total)
+
+    async def ticker() -> None:
+        """מזיז את המסך בזמן שהקריאות הארוכות רצות."""
+        while True:
+            await asyncio.sleep(3)
+            async with gate:
+                await refresh()
+
+    async def call(name: str, coro) -> str:
         nonlocal done
+        started = time.monotonic()
         async with gate:
-            done += 1
-            if on_step:
-                await on_step(f"חוקר את התוכן {done}/{total} · {label}",
-                              RESEARCH_TO * done / total)
+            live[name] = started
+            await refresh()
+        try:
+            return await coro
+        finally:
+            spent = time.monotonic() - started
+            # המספר שחסר לנו: כמה כל קריאת חקר באמת לוקחת
+            log.info("חקר — %s הסתיים ב-%.0f שניות", name, spent)
+            async with gate:
+                live.pop(name, None)
+                done += 1
+                await refresh()
 
     async def people() -> str:
-        text = await gemini.research(
+        return await gemini.research(
             PEOPLE_SYSTEM,
             PEOPLE_USER.format(language=language, transcript=_cap(numbered, 120_000)),
             grounded=False,
         )
-        await step("דוברים ונמענים")
-        return text
 
     async def facts(index: int, chunk: str) -> str:
-        text = await gemini.research(
+        return await gemini.research(
             FACTS_SYSTEM,
             FACTS_USER.format(part=index + 1, total=len(chunks),
                               language=language, transcript=chunk),
         )
-        await step("שמות ומונחים")
-        return text
 
     if on_step:
         await on_step(f"חוקר את התוכן 0/{total}", 0.0)
 
-    parts = await asyncio.gather(
-        people(), *(facts(i, chunk) for i, chunk in enumerate(chunks))
-    )
+    pulse = asyncio.create_task(ticker())
+    try:
+        parts = await asyncio.gather(
+            call("דוברים", people()),
+            *(call(f"עובדות {i + 1}", facts(i, chunk))
+              for i, chunk in enumerate(chunks)))
+    finally:
+        pulse.cancel()
 
     who, *found = parts
     sections = [who.strip()] if who.strip() else []
