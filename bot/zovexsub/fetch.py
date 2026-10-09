@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import pathlib
 import os
 import importlib.util
@@ -149,10 +150,44 @@ async def _cobalt(url: str, work: Path, on_progress=None) -> Path:
     return target
 
 
+# מפסק זרם: אחרי כמה כשלונות רצופים אין טעם להמשיך לדפוק על אותה דלת.
+# יוטיוב מחמירה את החסימה כשממשיכים לנסות, ולכן עדיף לעצור, להודיע
+# בבירור, ולתת לזה לנוח
+_failures = 0
+_blocked_until = 0.0
+
+
+def _breaker_open() -> float:
+    """כמה שניות נותרו לחסימה העצמית, או 0 אם פתוח."""
+    return max(0.0, _blocked_until - time.monotonic())
+
+
+def _note_failure() -> None:
+    global _failures, _blocked_until
+    _failures += 1
+    if _failures >= config.FETCH_BREAKER_FAILS:
+        _blocked_until = time.monotonic() + config.FETCH_BREAKER_REST
+        log.warning("%d כשלונות רצופים — עוצרים הורדות מקישור ל-%.0f דקות",
+                    _failures, config.FETCH_BREAKER_REST / 60)
+
+
+def _note_success() -> None:
+    global _failures, _blocked_until
+    _failures = 0
+    _blocked_until = 0.0
+
+
 async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
     """מוריד את הווידאו הטוב ביותר שנכנס במגבלה, וממזג לקובץ אחד."""
     if not available():
         raise FetchError("yt-dlp לא מותקן על השרת. התקנה: pip install yt-dlp")
+    rest = _breaker_open()
+    if rest:
+        raise FetchError(
+            f"יוטיוב חוסמת את השרת כרגע. ניסינו {config.FETCH_BREAKER_FAILS} "
+            f"פעמים ברצף ונכשלנו, ולכן ההורדות מקישור מושהות עוד "
+            f"{rest / 60:.0f} דקות כדי לא להחמיר את החסימה.\n"
+            "בינתיים אפשר לשלוח את הקובץ ישירות לבוט.")
 
     target = work / "source.%(ext)s"
     cookies = Path(config.FETCH_COOKIES) if config.FETCH_COOKIES else None
@@ -161,13 +196,22 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
         cookies = None
 
     cmd = _command() + [
+        # --no-config: קובץ הגדרות אישי בשרת שינה התנהגות בלי שאיש ידע.
+        # -4: רזולוציית IPv6 נכשלת בשקט אצל חלק מהספקים ועולה בזמן.
+        # player_client: הלקוח שיוטיוב מגישה לו את הנגן. הערכים משתנים
+        # מגרסה לגרסה, ולכן הוא ניתן להגדרה ולא מוטבע בקוד
+        "--no-config", "-4",
+        "--extractor-args", f"youtube:player_client={config.FETCH_CLIENTS}",
         "--no-playlist", "--newline",
         "--progress-template", TEMPLATE,
         "-f", config.FETCH_FORMAT,
         "--merge-output-format", "mp4",
         "--retries", "10", "--fragment-retries", "10",
         "--concurrent-fragments", str(config.FETCH_CONNECTIONS),
-    ] + _aria2_args() + [
+    ] + (["--extractor-args",
+          f"youtubepot-bgutilhttp:base_url={config.FETCH_POT_URL}"]
+         if config.FETCH_POT_URL else []
+         ) + _aria2_args() + [
         "-o", str(target),
     ] + (["--cookies", str(cookies)] if cookies else []) + [url]
     log.info("מוריד מקישור: %s", url)
@@ -196,11 +240,17 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
     await proc.wait()
 
     if proc.returncode != 0:
-        raise FetchError(_explain((err or b"").decode("utf-8", "replace")))
+        stderr = (err or b"").decode("utf-8", "replace")
+        # רק חסימה אמיתית מקדמת את המפסק. קישור שגוי או סרטון פרטי הם
+        # כישלון של הבקשה הזו ולא סימן שיוטיוב חוסמת את השרת
+        if _is_block(stderr):
+            _note_failure()
+        raise FetchError(_explain(stderr))
 
     files = sorted(work.glob("source.*"), key=lambda p: p.stat().st_size, reverse=True)
     if not files:
         raise FetchError("ההורדה הסתיימה אבל לא נוצר קובץ")
+    _note_success()
     log.info("הורד: %s (%.1f MB)", files[0].name, files[0].stat().st_size / 1048576)
     return files[0]
 
@@ -239,6 +289,17 @@ def child_env() -> dict:
     return env
 
 
+# סימנים לכך שיוטיוב חוסמת את השרת, להבדיל מתקלה בבקשה עצמה
+_BLOCK_SIGNS = ("sign in to confirm", "not a bot", "429", "too many requests",
+                "failed to extract", "player response", "po token",
+                "unable to download api page")
+
+
+def _is_block(stderr: str) -> bool:
+    low = stderr.lower()
+    return any(sign in low for sign in _BLOCK_SIGNS)
+
+
 def _explain(stderr: str) -> str:
     """הופך את השגיאה של yt-dlp להסבר שאפשר לפעול לפיו.
 
@@ -248,10 +309,20 @@ def _explain(stderr: str) -> str:
     log.error("yt-dlp נכשל:\n%s", stderr.strip()[-2000:])
     low = stderr.lower()
 
-    if "confirm you" in low or "not a bot" in low or "sign in" in low:
-        return ("יוטיוב דורש התחברות להורדה מהשרת הזה.\n"
-                "צריך קובץ עוגיות מחשבון מחובר, ואז FETCH_COOKIES ב-.env.\n"
-                "ההוראות ב-README תחת 'הורדה מיוטיוב'.")
+    if ("sign in" in low or "confirm you" in low
+            or "not a bot" in low or "po token" in low):
+        if config.FETCH_POT_URL:
+            return ("יוטיוב דורשת אימות שאינך בוט, וגם שרת ה-PO token "
+                    f"שהוגדר ({config.FETCH_POT_URL}) לא עזר. ודא שהוא רץ, "
+                    "או הוסף קובץ עוגיות ב-FETCH_COOKIES.")
+        return ("יוטיוב דורשת אימות שאינך בוט מכתובות של שרתים.\n"
+                "שלוש דרכים, מהקלה לכבדה:\n"
+                "1. לשלוח את הקובץ ישירות לבוט במקום קישור\n"
+                "2. להפעיל שרת PO token ולהצביע עליו ב-FETCH_POT_URL:\n"
+                "   docker run -d --name bgutil-provider -p 4416:4416 \\\n"
+                "     brainicism/bgutil-ytdlp-pot-provider\n"
+                "   FETCH_POT_URL=http://127.0.0.1:4416\n"
+                "3. לייצא עוגיות מדפדפן מחובר ולהצביע ב-FETCH_COOKIES")
     if "429" in low or "too many requests" in low:
         return ("יוטיוב חוסם זמנית את כתובת השרת (429). נסה שוב בעוד "
                 "כמה דקות, או הוסף קובץ עוגיות ב-FETCH_COOKIES.")

@@ -301,6 +301,14 @@ COBALT_QUALITY = os.getenv("COBALT_QUALITY", "1080")
 # aria2c מוריד בכמה חיבורים מקבילים ומנצל את הקו טוב יותר מההורדה
 # הפנימית של yt-dlp. ריק = לא בשימוש
 FETCH_ARIA2 = (os.getenv("FETCH_ARIA2") or "auto").strip().lower()
+# לקוחות הנגן שיוטיוב מגישה להם. הערכים משתנים מגרסה לגרסה של yt-dlp
+# ולכן אינם מוטבעים בקוד. ברירת המחדל מכסה את מה שעובד בלי PO token
+FETCH_CLIENTS = os.getenv("FETCH_CLIENTS", "default,tv,web_safari")
+# שרת PO token (bgutil-ytdlp-pot-provider). ריק = בלי
+FETCH_POT_URL = os.getenv("FETCH_POT_URL", "")
+# מפסק זרם: כמה כשלונות רצופים עד שעוצרים, ולכמה זמן
+FETCH_BREAKER_FAILS = _int("FETCH_BREAKER_FAILS", 5)
+FETCH_BREAKER_REST = float(os.getenv("FETCH_BREAKER_REST") or 3600)
 ARIA2_CONNECTIONS = _int("ARIA2_CONNECTIONS", 16)
 
 # כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
