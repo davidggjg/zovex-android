@@ -139,7 +139,8 @@ async def run(source: Path, work: Path, *, progress: Progress) -> Result:
         stage.stop()
     await stage.finish()
 
-    cues = srt.build_cues(transcript.segments, lines, speech=speech)
+    cues = srt.build_cues(transcript.segments, lines, speech=speech,
+                          accurate=native_times or align.available())
     if not cues:
         raise RuntimeError("התרגום חזר ריק.")
     srt_path = work / f"{source.stem}.he.srt"

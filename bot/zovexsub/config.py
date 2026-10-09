@@ -391,7 +391,13 @@ def validate() -> list[str]:
 # זיהוי דיבור. silencedetect מודד עוצמה ולכן סופר מוזיקת רקע כדיבור;
 # מודל VAD אמיתי מבדיל ביניהם. ריק או קובץ חסר = חוזרים לשיטה הישנה
 VAD_MODEL = os.getenv("VAD_MODEL") or "/opt/zovexsub/models/silero_vad.onnx"
-VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD") or 0.5)
+# סף זיהוי דיבור. 0.5 פספס דיבור שנאמר מעל מוזיקה — בדיוק המקרה שבו
+# כתוביות "צפות" מעל שקט לכאורה. 0.35 תופס אותו, במחיר זיהויי שווא
+# שההצמדה המוגבלת שלמעלה ממילא חוסמת
+VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD") or 0.35)
+# תקרת ההצמדה לדיבור, בשניות. ראו ההסבר ב-srt.py
+SNAP_RAW = float(os.getenv("SNAP_RAW") or 1.5)
+SNAP_ACCURATE = float(os.getenv("SNAP_ACCURATE") or 0.4)
 # ריפוד סביב כל קטע דיבור, כדי לא לחתוך הברה ראשונה או אחרונה
 VAD_PAD = float(os.getenv("VAD_PAD") or 0.15)
 # פער קצר בין שני קטעים הוא נשימה באמצע משפט, לא סוף דיבור

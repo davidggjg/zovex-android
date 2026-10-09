@@ -27,16 +27,22 @@ class Cue:
     text: str
 
 
-# כמה מותר להזיז כתובית כדי להצמיד אותה לדיבור שזוהה. Whisper עובד
-# בחלונות של 30 שניות, וכשחלון מלא מוזיקה הוא מחזיר כתובית שמתחילה
-# בתחילת החלון — סטייה שיכולה להגיע לעשרות שניות.
-MAX_SNAP = 25.0
+# כמה מותר להזיז כתובית כדי להצמיד אותה לדיבור שזוהה.
+#
+# היה כאן מספר אחד, 25 שניות, בנימוק ש-Whisper עובד בחלונות של 30 שניות
+# וחלון מלא מוזיקה מחזיר כתובית שמתחילה בתחילת החלון. הנימוק נכון לתמלול
+# גולמי בלבד — אבל כשהתזמונים כבר מדויקים (יישור כפוי, או חותמות מילים
+# מג'מיני) הוא הפך למסוכן: היתר להזיז כתובית נכונה עד 25 שניות הוא היתר
+# לזרוק אותה למקום אחר בסרט בגלל טעות זיהוי אחת של ה-VAD.
+#
+# לכן שני ערכים, לפי מידת הדיוק של המקור
 # מקדימים את הכתובית במעט כדי לא לחתוך את ההברה הראשונה
 LEAD_IN = 0.12
 
 
 def build_cues(segments: list[Segment], lines: list[str],
-               speech: list[tuple[float, float]] | None = None) -> list[Cue]:
+               speech: list[tuple[float, float]] | None = None,
+               accurate: bool = False) -> list[Cue]:
     cues: list[Cue] = []
     for seg, hebrew in zip(segments, lines):
         text = (hebrew or "").strip()
@@ -45,7 +51,7 @@ def build_cues(segments: list[Segment], lines: list[str],
         cues.append(Cue(0, seg.start, max(seg.end, seg.start + 0.3), text))
 
     if speech:
-        cues = _snap_to_speech(cues, speech)
+        cues = _snap_to_speech(cues, speech, accurate)
     cues = _fix_timing(cues)
     for i, cue in enumerate(cues, 1):
         cue.index = i
@@ -53,14 +59,17 @@ def build_cues(segments: list[Segment], lines: list[str],
     return cues
 
 
-def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]]) -> list[Cue]:
+def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]],
+                    accurate: bool = False) -> list[Cue]:
     """מצמיד כל כתובית לדיבור שבאמת נשמע בתוכה.
 
     כתובית שמתחילה באמצע שקט נדחפת קדימה לרגע שבו הדיבור מתחיל, וסופה
     נמשך אחורה לרגע שבו הדיבור נגמר. בלי זה כתובית שהמודל מתח על פני
     שקט מופיעה שניות לפני שמישהו פותח את הפה.
     """
+    limit = config.SNAP_ACCURATE if accurate else config.SNAP_RAW
     moved = 0
+    shifts: list[float] = []
     for cue in cues:
         inside = [(a, b) for a, b in speech if b > cue.start + 0.05 and a < cue.end - 0.05]
         if not inside:
@@ -69,15 +78,25 @@ def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]]) -> list[
         last = inside[-1][1]
 
         # הכתובית מתחילה בתוך שקט — דוחפים אותה לרגע שהדיבור מתחיל
-        if 0.15 < first - cue.start <= MAX_SNAP and first < cue.end - 0.3:
+        if 0.15 < first - cue.start <= limit and first < cue.end - 0.3:
             log.debug("כתובית הוזזה מ-%.2f ל-%.2f", cue.start, first)
+            shifts.append(first - cue.start)
             cue.start = first
             moved += 1
         # הכתובית נמשכת לתוך שקט — מושכים את סופה אחורה
-        if 0.15 < cue.end - last <= MAX_SNAP and last > cue.start + 0.4:
+        if 0.15 < cue.end - last <= limit and last > cue.start + 0.4:
             cue.end = last + 0.2
 
-    log.info("הוצמדו %d כתוביות לדיבור שזוהה", moved)
+    # מדד ולא רק ספירה: הזזה ממוצעת גדולה היא סימן שה-VAD טועה, או
+    # שהתזמונים גרועים — ובלי המספר הזה אי אפשר לדעת מי מהם
+    if shifts:
+        shifts.sort()
+        log.info("הוצמדו %d מתוך %d כתוביות · תקרה %.1fש · "
+                 "הזזה חציונית %.2fש · מרבית %.2fש",
+                 moved, len(cues), limit,
+                 shifts[len(shifts) // 2], shifts[-1])
+    else:
+        log.info("אף כתובית לא נזקקה להצמדה (תקרה %.1fש)", limit)
     return cues
 
 
