@@ -135,9 +135,12 @@ async def _resume_download(client, message, dst: Path, size: int, have: int,
 def _note(state: dict) -> str:
     """טקסט קצר שמסביר למה אין התקדמות ברגע זה."""
     left = state["until"] - time.monotonic()
-    if left > 1:
-        return f"טלגרם מגביל קצב · ממתינים {int(left) // 60}:{int(left) % 60:02d}"
-    return ""
+    if left <= 1:
+        return ""
+    clock = f"{int(left) // 60}:{int(left) % 60:02d}"
+    if state.get("premium"):
+        return f"טלגרם מגביל מהירות לחשבון ללא Premium · ממתינים {clock}"
+    return f"טלגרם מגביל קצב · ממתינים {clock}"
 
 
 def _parts(size: int) -> int:
@@ -274,7 +277,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # מה להציג למשתמש כשההורדה לא מתקדמת. בלי זה הבוט נראה מת בזמן
     # שהוא פשוט ממתין בציות להוראת FLOOD_WAIT של טלגרם — וזו בדיוק
     # ה"תקיעה של עשרים דקות" שדווחה
-    state = {"note": "", "until": 0.0}
+    state = {"note": "", "until": 0.0, "premium": False}
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
         pending.put_nowait(index)
@@ -294,6 +297,15 @@ async def _parallel_download(client, message, dst: Path, size: int,
                             location, offset=offset, limit=part)),
                         timeout=config.TG_READ_TIMEOUT)
             except FloodWaitError as flood:
+                # FLOOD_PREMIUM_WAIT הוא דבר אחר לגמרי מהגבלת קצב רגילה.
+                # התיעוד הרשמי של טלגרם אומר עליו במפורש: "מהירות
+                # ההורדה מוגבלת מכיוון שלחשבון אין מנוי Premium", והוא
+                # מופיע רק אחרי העברה של עשרות ג'יגה-בייט. זו תקרה
+                # שנקבעה בצד של טלגרם — שום שינוי בקוד לא יעקוף אותה,
+                # ולכן חשוב שהמשתמש יראה את זה ולא יחפש באג אצלנו
+                if "PREMIUM" in str(getattr(flood, "message", "") or
+                                    type(flood).__name__).upper():
+                    state["premium"] = True
                 # טלגרם אומר במפורש כמה להמתין. השהיה קצרה משלנו רק
                 # מאריכה את העונש, ולכן ממתינים בדיוק כמה שנדרש. זה
                 # נעשה קריטי ברגע שיש הרבה בקשות באוויר
@@ -428,7 +440,8 @@ async def _parallel_download(client, message, dst: Path, size: int,
              "תקרה סופית %d בקשות באוויר%s",
              size / 1048576, spent, size / 1048576 / spent,
              base + grown - shrunk,
-             " (טלגרם הגביל קצב)" if flooded else "")
+             " (תקרת מהירות של חשבון ללא Premium)" if state.get("premium")
+             else " (טלגרם הגביל קצב)" if flooded else "")
     return dst
 
 
