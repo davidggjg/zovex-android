@@ -127,7 +127,8 @@ LADDER = ("fast265", "balanced", "small")
 ALLOW_X264 = _int("ALLOW_X264", 0)
 
 
-def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
+def profile_for(source_bytes: int, duration: float = 0.0,
+                height: int = 0) -> dict:
     """בוחר הגדרות צריבה: מהירות כשאפשר, דחיסה כשחייבים.
 
     מקור קטן לא צריך דחיסה כבדה — גם פלט גדול פי כמה נשאר הרחק מתחת
@@ -151,7 +152,11 @@ def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
         settings = PROFILES[name]
         if duration <= 0:
             return settings
-        predicted = settings["mbps"] * 1_000_000 * duration / 8 / 1024 ** 2
+        # קצב הסיביות גדל בערך עם מספר הפיקסלים. הערכים בטבלה נמדדו
+        # על 1080p, ולכן מקור נמוך יותר מוכפל ביחס השטח
+        scale = (height / 1080.0) ** 2 if height else 1.0
+        scale = max(0.15, min(1.0, scale))
+        predicted = settings["mbps"] * scale * 1_000_000 * duration / 8 / 1024 ** 2
         if predicted <= UPLOAD_CEILING_MB:
             return settings
     return PROFILES["small"]

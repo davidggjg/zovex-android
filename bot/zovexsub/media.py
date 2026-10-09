@@ -77,6 +77,25 @@ async def probe(path: Path) -> dict:
     return json.loads(raw)
 
 
+async def video_height(path: Path) -> int:
+    """גובה הווידאו בפיקסלים, או 0 כשלא ניתן לקרוא.
+
+    B17: הערכת גודל הפלט הניחה קצב סיביות קבוע לכל פרופיל, בלי קשר
+    לרזולוציה. אותו פרופיל על 480p ועל 1080p מייצר קבצים שונים בסדר
+    גודל, ולכן הבחירה האוטומטית ירדה דרגה גם כשלא היה צורך
+    """
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=height", "-of", "default=nw=1:nk=1",
+            str(path),
+        ], timeout=60)
+    except (FFmpegError, OSError):
+        return 0
+    digits = "".join(c for c in out if c.isdigit())
+    return int(digits) if digits else 0
+
+
 async def duration_seconds(path: Path) -> float:
     info = await probe(path)
     try:
@@ -703,9 +722,13 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
             return await _burn_parallel(video, srt, dst, duration, segments,
                                         on_progress, style)
         except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
-            log.warning("הצריבה המקבילית נכשלה (%s), עוברים לצריבה רגילה", exc)
+            # B10: קודם נרשמה כאן שורה אחת בלי עקבות, והמסלול המקבילי
+            # נזנח בשקט. צריבה שלמה רצה אז פי שלושה לאט בלי שאיש ידע
+            # למה — exception מלא הוא ההבדל בין "קרה משהו" לבין סיבה
+            log.exception("הצריבה המקבילית נכשלה (%s: %s) — עוברים לתהליך יחיד",
+                          type(exc).__name__, exc)
             if on_progress:
-                await on_progress(0.0, "מתחיל מחדש בתהליך יחיד")
+                await on_progress(0.0, f"נפל למסלול יחיד: {type(exc).__name__}")
 
     return await _burn_single(video, srt, dst, duration, on_progress, style)
 
@@ -714,7 +737,8 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
                        on_progress=None, style: Style | None = None) -> Path:
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
-    settings = config.profile_for(video.stat().st_size, duration)
+    settings = config.profile_for(video.stat().st_size, duration,
+                                  await video_height(video))
     _describe_profile(settings, video, duration)
     threads = burn_threads()
 
@@ -761,7 +785,8 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     work.mkdir(parents=True, exist_ok=True)
     marked = rtl_copy(srt)
     credit = credit_file(work)
-    settings = config.profile_for(video.stat().st_size, duration)
+    settings = config.profile_for(video.stat().st_size, duration,
+                                  await video_height(video))
     _describe_profile(settings, video, duration)
 
     threads = config.BURN_SEGMENT_THREADS
