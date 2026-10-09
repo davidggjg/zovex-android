@@ -356,15 +356,51 @@ SUB_SIZES = {
     "גדול": {"font": 32, "outline": 2.8, "margin": 40},
 }
 
+# גופנים שאפשר לבחור. הערך הריק פירושו "מה שמוגדר ב-SUB_FONT"
+SUB_FONTS = {
+    "dejavu": "DejaVu Sans",
+    "free": "FreeSans",
+    "ברירת מחדל": "",
+}
 
-def sub_style(size: str = "") -> str:
+# מראה הכתוביות. ASS מגדיר את זה דרך BorderStyle: 1 הוא קו מתאר וצל,
+# 3 הוא קופסה אטומה מאחורי הטקסט
+SUB_LOOKS = ("קופסה", "לבן", "קו")
+
+
+@dataclass
+class Style:
+    """שלוש הבחירות של המשתמש, נוסעות יחד.
+
+    עדיף אובייקט אחד על שרשור שלושה פרמטרים דרך ארבע חתימות: כל תוספת
+    עתידית (צבע, מיקום) נכנסת כאן בלבד
+    """
+    size: str = ""
+    font: str = ""
+    look: str = ""
+
+
+def sub_style(size: str = "", font: str = "", look: str = "") -> str:
     values = SUB_SIZES.get(size or config.SUB_SIZE, SUB_SIZES["קטן"])
-    return (
-        f"FontName={config.SUB_FONT},FontSize={values['font']},"
-        "PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,"
-        f"Outline={values['outline']},Shadow=0,Alignment=2,"
-        f"MarginV={values['margin']}"
-    )
+    name = SUB_FONTS.get(font, "") or config.SUB_FONT
+    look = look or config.SUB_LOOK
+
+    if look == "קופסה":
+        # רקע שחור אטום מאחורי המילים. Outline קטן משמש כאן כמרווח
+        # פנימי של הקופסה ולא כקו מתאר
+        shape = ("OutlineColour=&H00000000,BackColour=&H00000000,"
+                 "BorderStyle=3,Outline=1.2,Shadow=0")
+    elif look == "לבן":
+        # אותיות בלבן בלבד. בלי קו ובלי צל — נקי, אבל על רקע בהיר
+        # הכתובית עלולה להיעלם, וזו בחירה של המשתמש
+        shape = "OutlineColour=&H00000000,BorderStyle=1,Outline=0,Shadow=0"
+    else:
+        shape = ("OutlineColour=&H00000000,BorderStyle=1,"
+                 f"Outline={values['outline']},Shadow=0")
+
+    return (f"FontName={name},FontSize={values['font']},"
+            f"PrimaryColour=&H00FFFFFF,{shape},"
+            f"Alignment=2,MarginV={values['margin']}")
 
 
 def burn_threads() -> int:
@@ -451,12 +487,15 @@ def _escape(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
-def _video_filters(srt: Path, credit: Path | None, size: str = "") -> str:
+def _video_filters(srt: Path, credit: Path | None,
+                   style: Style | None = None) -> str:
     filters = []
     if config.BURN_MAX_HEIGHT:
         # min() מבטיח שמקור נמוך מהתקרה נשאר כמו שהוא ולא מוגדל
         filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
-    filters.append(f"subtitles='{_escape(srt)}':force_style='{sub_style(size)}'")
+    style = style or Style()
+    look = sub_style(style.size, style.font, style.look)
+    filters.append(f"subtitles='{_escape(srt)}':force_style='{look}'")
     if credit:
         filters.append(f"subtitles='{_escape(credit)}'")
     return ",".join(filters)
@@ -634,7 +673,7 @@ def core_pool() -> CorePool:
 
 
 async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
-         size: str = "") -> Path:
+         style: Style | None = None) -> Path:
     """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
     duration = await duration_seconds(video)
     segments = config.burn_chunks(duration)
@@ -642,17 +681,17 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
     if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
         try:
             return await _burn_parallel(video, srt, dst, duration, segments,
-                                        on_progress, size)
+                                        on_progress, style)
         except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
             log.warning("הצריבה המקבילית נכשלה (%s), עוברים לצריבה רגילה", exc)
             if on_progress:
                 await on_progress(0.0, "מתחיל מחדש בתהליך יחיד")
 
-    return await _burn_single(video, srt, dst, duration, on_progress, size)
+    return await _burn_single(video, srt, dst, duration, on_progress, style)
 
 
 async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
-                       on_progress=None, size: str = "") -> Path:
+                       on_progress=None, style: Style | None = None) -> Path:
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
     settings = config.profile_for(video.stat().st_size, duration)
@@ -665,7 +704,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
         # מסנן הכתוביות ממשיך לעבוד כרגיל, וכשאין חומרה ffmpeg נופל חזרה
         # לתוכנה בלי להיכשל
         "-hwaccel", "auto",
-        "-i", str(video), "-vf", _video_filters(marked, credit, size),
+        "-i", str(video), "-vf", _video_filters(marked, credit, style),
     ] + _encoder_args(settings, threads, duration)
     cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
 
@@ -685,7 +724,8 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 
 
 async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
-                         segments: int, on_progress=None, size: str = "") -> Path:
+                         segments: int, on_progress=None,
+                         style: Style | None = None) -> Path:
     """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
 
     מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
@@ -722,7 +762,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         piece_srt = srt_tools.slice_file(marked, begin, begin + length,
                                          work / f"seg{index:02d}.srt")
         # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון
-        filters = _video_filters(piece_srt, credit if index == 0 else None, size)
+        filters = _video_filters(piece_srt, credit if index == 0 else None, style)
         piece = work / f"seg{index:02d}.mp4"
 
         cmd = [

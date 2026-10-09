@@ -58,8 +58,8 @@ TRANSLATE_PARALLEL = _int("TRANSLATE_PARALLEL", 0)
 # חותך תקיעה מהר
 RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
 
-MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 180)
-BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 10)
+MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 300)
+BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 300)
 # פרופילי צריבה. CRF הוא קידוד לפי איכות ולא לפי bitrate — הוא מוציא
 # ביטים בסצנות מורכבות וחוסך בפשוטות, כלומר מקטין בדיוק היכן שהעין
 # לא שמה לב.
@@ -349,6 +349,8 @@ STT_CHUNK_MIN_SECONDS = _int("STT_CHUNK_MIN_SECONDS", 150)
 REALIGN_MAX = _int("REALIGN_MAX", 60)
 
 # עיצוב כתוביות
+# מראה הכתוביות כברירת מחדל: קופסה / לבן / קו
+SUB_LOOK = (os.getenv("SUB_LOOK") or "קו").strip()
 SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
 SRT_MAX_LINES = 2
 SRT_MIN_DURATION = 1.0

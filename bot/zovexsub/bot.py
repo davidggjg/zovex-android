@@ -69,6 +69,36 @@ YES_WORDS = {"כן", "כן!", "yes", "y", "לצרוב", "צרוב", "צריבה"
 SIZE_WORDS = {"קטן": "קטן", "קטנות": "קטן", "small": "קטן",
               "בינוני": "בינוני", "בינוניות": "בינוני", "medium": "בינוני",
               "גדול": "גדול", "גדולות": "גדול", "large": "גדול", "big": "גדול"}
+NO_WORDS = {"לא", "no", "n", "בטל", "ביטול", "❌"}
+SKIP_WORDS = {"", "דלג", "skip", "ברירת מחדל", "-"}
+
+# שאלות התפריט. כל שלב: כותרת, אפשרויות, והערך שנשמר לכל מספר
+MENU = (
+    ("📏 **גודל הכתוביות**",
+     ("`1` קטן", "`2` בינוני", "`3` גדול"),
+     "size", {"1": "קטן", "2": "בינוני", "3": "גדול"}, "בינוני"),
+    ("🔤 **גופן**",
+     ("`1` DejaVu Sans — מומלץ, ברור בעברית",
+      "`2` FreeSans",
+      "`3` ברירת מחדל של השרת"),
+     "font", {"1": "dejavu", "2": "free", "3": "ברירת מחדל"}, "dejavu"),
+    ("🎨 **מראה**",
+     ("`1` רקע שחור מלא מאחורי המילים — סגנון יוטיוב",
+      "`2` אותיות לבנות בלבד — בלי רקע ובלי מסגרת",
+      "`3` לבן עם קו מתאר שחור עדין — קריא ונקי"),
+     "look", {"1": "קופסה", "2": "לבן", "3": "קו"}, "קו"),
+)
+
+
+def _menu_text(step: int) -> str:
+    title, options, _, _, _ = MENU[step]
+    lines = [f"{title}  ({step + 1}/{len(MENU)})", ""]
+    lines += list(options)
+    lines.append("")
+    lines.append("_השב בתגובה להודעה הזו. `דלג` לברירת מחדל._")
+    return "\n".join(lines)
+
+
 OFFER_TTL = 1800  # חצי שעה לענות להצעת הצריבה, ואז הקבצים נמחקים
 
 
@@ -82,7 +112,7 @@ class Job:
     diagnose: bool = False    # מפיק דוח תזמונים במקום כתוביות
     url: str = ""             # אם מוגדר — מורידים מהקישור במקום מטלגרם
     srt_message: object = None  # קובץ כתוביות שהמשתמש שלח, לצריבה ישירה
-    size: str = ""            # גודל כתוביות: קטן / בינוני / גדול
+    style: object = None      # media.Style: גודל, גופן ומראה
 
 
 @dataclass
@@ -96,13 +126,24 @@ class Pending:
 
 @dataclass
 class Offer:
-    """הצעת צריבה שממתינה ל"כן" של המשתמש."""
+    """שיחת בחירה שמלווה את המשתמש משאלה לשאלה עד לצריבה.
+
+    קודם זו הייתה שאלה אחת ("כן"), וכל השאר היה מוסתר בתוך מילה שנייה
+    אופציונלית. עכשיו ההצעה זוכרת באיזה שלב היא נמצאת ומה כבר נבחר,
+    וההודעה עצמה נערכת לשאלה הבאה — כך נשאר מזהה אחד לענות לו, בלי
+    ערימת הודעות בצ'אט
+    """
     work: Path
     source: Path
     srt_path: Path
     message: object
     user_id: int
     expires: float
+    prompt: object = None     # הודעת השאלה, נערכת בכל שלב
+    step: int = 0
+    size: str = ""
+    font: str = ""
+    look: str = ""
 
 
 # שני תורים נפרדים: צריבה של שעתיים לא תחסום בקשת כתוביות של דקה
@@ -383,29 +424,73 @@ async def on_subtitle_file(event: events.NewMessage.Event) -> None:
 
 
 async def on_yes(event: events.NewMessage.Event, text: str) -> None:
-    """תשובה "כן" בתגובה להצעת הצריבה — רק אז מתחילים לצרוב."""
+    """מנהל את שיחת הבחירות שעל הצעת הצריבה, שלב אחר שלב."""
     offer = offers.get(event.reply_to_msg_id)
     if offer is None:
-        return
-    # "כן", ואפשר גם "כן גדול" או "כן בינוני" כדי לבחור גודל כתוביות
-    words = text.strip(".!").split()
-    size = ""
-    if words and words[-1] in SIZE_WORDS:
-        size = SIZE_WORDS[words[-1]]
-        words = words[:-1]
-    if " ".join(words) not in YES_WORDS:
         return
     sender = _who(event.message)
     if sender != offer.user_id and sender != me_id:
         return
 
+    answer = text.strip(".!").strip()
+    low = answer.lower()
+
+    if low in NO_WORDS:
+        offers.pop(event.reply_to_msg_id, None)
+        await _safe_edit(offer.prompt, "בוטל. הכתוביות נשלחו ואפשר לצרוב מאוחר יותר.")
+        return
+
+    if offer.step == 0:
+        # "כן" לבד פותח את התפריט. "כן גדול" נשאר קיצור דרך למי
+        # שכבר יודע מה הוא רוצה ולא מעוניין בשלוש שאלות
+        words = low.split()
+        shortcut = ""
+        if words and words[-1] in SIZE_WORDS:
+            shortcut = SIZE_WORDS[words[-1]]
+            words = words[:-1]
+        if " ".join(words) not in YES_WORDS:
+            return
+        if shortcut:
+            offer.size = shortcut
+            await _start_burn(event, offer)
+            return
+        offer.step = 1
+        await _safe_edit(offer.prompt, _menu_text(0))
+        return
+
+    # שלבי התפריט: 1..len(MENU)
+    index = offer.step - 1
+    _, _, field, choices, default = MENU[index]
+    if low in SKIP_WORDS:
+        value = default
+    elif low in choices:
+        value = choices[low]
+    else:
+        # תשובה לא מוכרת: לא מתקדמים, אבל גם לא שותקים
+        await event.reply(f"לא הבנתי `{answer[:20]}`. בחר מספר מההודעה, או `דלג`.")
+        return
+    setattr(offer, field, value)
+
+    offer.step += 1
+    offer.expires = time.monotonic() + OFFER_TTL
+    if offer.step <= len(MENU):
+        await _safe_edit(offer.prompt, _menu_text(offer.step - 1))
+        return
+    await _start_burn(event, offer)
+
+
+async def _start_burn(event: events.NewMessage.Event, offer: Offer) -> None:
+    """סוגר את השיחה ומכניס את העבודה לתור הצריבה."""
     offers.pop(event.reply_to_msg_id, None)
-    label = f" ({size})" if size else ""
+    style = media.Style(size=offer.size, font=offer.font, look=offer.look)
+    chosen = " · ".join(x for x in (offer.size, offer.look) if x) or "ברירת מחדל"
+    await _safe_edit(offer.prompt, f"✅ נבחר: {chosen}")
     status = await event.reply(
-        f"🔥 בתור לצריבה{label}…" if _queued() else f"🔥 צורב{label}…")
+        f"🔥 בתור לצריבה ({chosen})…" if _queued() else f"🔥 צורב ({chosen})…")
     await burn_queue.put(Job(event, offer.message, status,
-                             srt_path=offer.srt_path, work=offer.work, size=size))
-    log.info("אושרה צריבה על ידי %s", sender)
+                             srt_path=offer.srt_path, work=offer.work,
+                             style=style))
+    log.info("אושרה צריבה על ידי %s: %s", _who(event.message), style)
 
 
 async def worker() -> None:
@@ -505,14 +590,16 @@ async def _subtitle(job: Job, work: Path) -> None:
 
     if result.burnable:
         offer_message = await job.event.reply(
-            "רוצה שאצרוב את הכתוביות על הסרטון?\n"
-            "**תשלח `כן` בתגובה להודעה הזו.**\n\n"
-            "לכתוביות גדולות יותר: `כן בינוני` או `כן גדול`"
+            "❓ **לצרוב את הכתוביות על הסרטון?**\n\n"
+            "`כן` — ואבחר איתך גודל, גופן ומראה\n"
+            "`לא` — הכתוביות כבר נשלחו למעלה\n\n"
+            "_השב בתגובה להודעה הזו._\n"
+            "_קיצור דרך: `כן גדול` מדלג על השאלות._"
         )
         offers[offer_message.id] = Offer(
             work=work, source=source, srt_path=result.srt_path,
             message=job.message, user_id=_who(job.event.message),
-            expires=time.monotonic() + OFFER_TTL,
+            expires=time.monotonic() + OFFER_TTL, prompt=offer_message,
         )
         log.info("הצעת צריבה פתוחה (הודעה %s)", offer_message.id)
     else:
@@ -571,7 +658,7 @@ async def _burn(job: Job, work: Path) -> None:
 
     try:
         burned = await pipeline.burn(source, job.srt_path, work,
-                                     on_progress=on_burn, size=job.size)
+                                     on_progress=on_burn, style=job.style)
     finally:
         stage.stop()
     await stage.finish()
