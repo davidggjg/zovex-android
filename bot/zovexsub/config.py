@@ -350,6 +350,8 @@ REALIGN_MAX = _int("REALIGN_MAX", 60)
 
 # עיצוב כתוביות
 # מראה הכתוביות כברירת מחדל: קופסה / לבן / קו
+# מעל כמה שניות של FLOOD_WAIT מוותרים על עדכון התקדמות במקום להמתין
+EDIT_FLOOD_MAX = float(os.getenv("EDIT_FLOOD_MAX") or 20)
 SUB_LOOK = (os.getenv("SUB_LOOK") or "קו").strip()
 SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
 SRT_MAX_LINES = 2

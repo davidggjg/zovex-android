@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
+import os
 import importlib.util
 import logging
 import re
@@ -171,7 +173,8 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
     log.info("מוריד מקישור: %s", url)
 
     proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        env=child_env(),
     )
 
     async def pump() -> None:
@@ -202,6 +205,40 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
     return files[0]
 
 
+# מקומות התקנה מקובלים של deno, מעבר למה שנמצא ב-PATH
+_DENO_DIRS = ("~/.deno/bin", "/usr/local/bin", "/opt/deno/bin", "/root/.deno/bin")
+
+
+def deno_dir() -> str:
+    """היכן נמצא deno, או מחרוזת ריקה אם אינו מותקן.
+
+    B15: deno מותקן כברירת מחדל ל-~/.deno/bin, וה-PATH של systemd אינו
+    כולל אותה. yt-dlp מדווח אז "אין סביבת JavaScript" אף שהכלי מותקן
+    ועובד מצוין מהטרמינל — תקלה שנראית כמו חסימה של יוטיוב ואינה כזו.
+    """
+    found = shutil.which("deno")
+    if found:
+        return str(pathlib.Path(found).parent)
+    for raw in _DENO_DIRS:
+        candidate = pathlib.Path(raw).expanduser() / "deno"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate.parent)
+    return ""
+
+
+def deno_ready() -> bool:
+    return bool(deno_dir())
+
+
+def child_env() -> dict:
+    """סביבה לתהליכי הבן, עם deno ב-PATH גם כשה-שירות לא יודע עליו."""
+    env = dict(os.environ)
+    extra = deno_dir()
+    if extra and extra not in env.get("PATH", "").split(os.pathsep):
+        env["PATH"] = extra + os.pathsep + env.get("PATH", "")
+    return env
+
+
 def _explain(stderr: str) -> str:
     """הופך את השגיאה של yt-dlp להסבר שאפשר לפעול לפיו.
 
@@ -223,8 +260,13 @@ def _explain(stderr: str) -> str:
                 "ישנה מדי.\n"
                 "עדכון: pip install -U --pre \"yt-dlp[default]\"")
     if "javascript runtime" in low:
-        return ("yt-dlp דורש סביבת JavaScript להורדה מיוטיוב.\n"
-                "התקנה: curl -fsSL https://deno.land/install.sh | sh")
+        if deno_ready():
+            return ("deno מותקן ב-" + deno_dir() + " אבל yt-dlp עדיין לא "
+                    "מצא סביבת JavaScript. ודא שהשירות הופעל מחדש אחרי "
+                    "ההתקנה.")
+        return ("yt-dlp דורש סביבת JavaScript להורדה מיוטיוב, ו-deno "
+                "אינו מותקן.\nהתקנה: curl -fsSL https://deno.land/install.sh | sh"
+                "\nואז: systemctl restart zovexsub")
     if "unsupported url" in low:
         return "הקישור הזה לא נתמך."
     if "private video" in low or "members-only" in low:

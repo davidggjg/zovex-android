@@ -572,6 +572,23 @@ class CorePool:
         self.cond = asyncio.Condition()
         self._next = 0
 
+    async def resize(self, slots: int) -> None:
+        """משנה את מספר המקומות תוך כדי ריצה.
+
+        B9: תקרת הזיכרון חושבה פעם אחת, בפעם הראשונה שנוצרה הבריכה.
+        מאז השרת מריץ דברים אחרים, הזיכרון הפנוי משתנה, והמספר שנקבע
+        בהפעלה כבר לא מתאר את המכונה. free עשוי לרדת מתחת לאפס כשמצמצמים
+        בזמן שקטעים רצים — וזה בסדר: ready כבר ממתין בכל מצב כזה, והמקום
+        יוחזר כשהם יסתיימו
+        """
+        async with self.cond:
+            if slots == self.slots:
+                return
+            self.free += slots - self.slots
+            log.info("מקומות הצריבה עודכנו מ-%d ל-%d", self.slots, slots)
+            self.slots = slots
+            self.cond.notify_all()
+
     def share(self) -> int:
         return max(1, self.slots // max(1, len(self.held)))
 
@@ -677,6 +694,9 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
     """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
     duration = await duration_seconds(video)
     segments = config.burn_chunks(duration)
+    # מחשבים מחדש לפי הזיכרון שפנוי עכשיו, ולא לפי זה שהיה בהפעלה
+    await core_pool().resize(
+        _memory_cap(config.burn_slots(os.cpu_count() or 2)))
 
     if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
         try:

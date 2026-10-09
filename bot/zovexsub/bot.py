@@ -14,6 +14,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from telethon.errors import FloodWaitError
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
@@ -721,10 +722,29 @@ async def expire_offers() -> None:
 
 
 async def _safe_edit(status, text: str) -> None:
+    """עריכה שלא מפילה כלום, אבל גם לא בולעת בשקט מה שחשוב.
+
+    B5: הבולען הקודם תפס גם FloodWaitError. טלגרם אומר שם במפורש כמה
+    להמתין, וכשזה נבלע כל עדכוני ההתקדמות פשוט מפסיקים להופיע — העבודה
+    רצה, המשתמש רואה מסך קפוא, ואין שום רמז בלוג.
+    """
     try:
         await status.edit(text)
-    except Exception:  # noqa: BLE001 — עריכה זהה/מהירה מדי זורקת, לא מעניין
-        pass
+        return
+    except FloodWaitError as flood:
+        wait = float(getattr(flood, "seconds", 0) or 0)
+        if wait > config.EDIT_FLOOD_MAX:
+            log.warning("טלגרם מגביל עריכות ל-%.0f שניות — מדלגים על העדכון", wait)
+            return
+        log.info("טלגרם מגביל עריכות, ממתינים %.0f שניות", wait)
+        await asyncio.sleep(wait + 1)
+    except Exception as exc:  # noqa: BLE001 — עריכה זהה או מהירה מדי
+        log.debug("עריכת הודעה נכשלה: %s", exc)
+        return
+    try:
+        await status.edit(text)
+    except Exception as exc:  # noqa: BLE001
+        log.debug("עריכה חוזרת נכשלה גם היא: %s", exc)
 
 
 async def _safe_delete(status) -> None:
@@ -752,6 +772,13 @@ async def main() -> None:
     if not fastio.crypto_ready():
         log.warning("cryptg לא מותקן — ההורדה וההעלאה יהיו איטיות פי עשרות! "
                     "התקנה: pip install cryptg")
+    # B15: עדיף לגלות את זה עכשיו מאשר באמצע הורדה מיוטיוב, כשההודעה
+    # נראית כאילו יוטיוב חוסם אותנו
+    if fetch.deno_ready():
+        log.info("deno נמצא ב-%s — הורדה מיוטיוב זמינה", fetch.deno_dir())
+    else:
+        log.warning("deno לא נמצא — הורדה מיוטיוב תיכשל. "
+                    "התקנה: curl -fsSL https://deno.land/install.sh | sh")
     log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
              me.username or me.first_name, me.id, len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
