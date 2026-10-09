@@ -354,7 +354,8 @@ TG_FLOOD_MAX = float(os.getenv("TG_FLOOD_MAX") or 120)
 # מגה־בייט בו-זמנית הרוו את הדיסק. 12 עדיין פי שלושה מנקודת ההתחלה
 TG_INFLIGHT_MAX = _int("TG_INFLIGHT_MAX", 12)
 # כל כמה בייטים לסנכרן לדיסק ולשחרר את מטמון העמודים
-TG_SYNC_EVERY = _int("TG_SYNC_EVERY", 32 * 1024 * 1024)
+# 0 = בלי סנכרון תקופתי כלל
+TG_SYNC_EVERY = _int("TG_SYNC_EVERY", 64 * 1024 * 1024)
 # מעל הגודל הזה מבקשים חלקים של 1MB — המרב שהתיעוד מתיר — במקום 512KB
 # שטלתון בוחר. ראו fastio._parts
 TG_BIG_PART_FROM = _int("TG_BIG_PART_FROM", 64 * 1024 * 1024)

@@ -132,14 +132,27 @@ async def _resume_download(client, message, dst: Path, size: int, have: int,
         watch.cancel()
 
 
-def _flush_cache(handle: int) -> None:
-    """מסנכרן לדיסק ומשחרר את מטמון העמודים של מה שכבר נכתב."""
+def _flush_cache(handle: int, start: int, length: int) -> None:
+    """דוחף לדיסק טווח אחד ומשחרר את המטמון שלו בלבד.
+
+    הגרסה הראשונה קראה ל-fdatasync ואז ל-posix_fadvise עם (0, 0) —
+    כלומר על כל הקובץ, בכל פעם. על קובץ שנכתב בהיסטים אקראיים זה כפה
+    כתיבה של כל הדפים המלוכלכים ומחק את המטמון כולו, שוב ושוב. זה לא
+    הקל על הלחץ אלא הוסיף עליו.
+
+    sync_file_range דוחף טווח מוגדר בלבד ואינו ממתין לסיום, ולכן הוא
+    מרסן את הצטברות הדפים בלי לעצור את ההורדה. כשאינו קיים פשוט
+    מוותרים: עדיף בלי מאשר fdatasync גורף.
+    """
     try:
-        os.fdatasync(handle)
-        if hasattr(os, "posix_fadvise"):
-            os.posix_fadvise(handle, 0, 0, os.POSIX_FADV_DONTNEED)
+        if hasattr(os, "sync_file_range"):
+            os.sync_file_range(handle, start, length,
+                               os.SYNC_FILE_RANGE_WRITE)
+            if hasattr(os, "posix_fadvise"):
+                os.posix_fadvise(handle, start, length,
+                                 os.POSIX_FADV_DONTNEED)
     except OSError as exc:
-        log.debug("סנכרון לדיסק נכשל: %s", exc)
+        log.debug("סנכרון טווח נכשל: %s", exc)
 
 
 def _note(state: dict) -> str:
@@ -304,6 +317,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # כפויה שמקפיאה את כל המכונה — כולל SSH. זה בדיוק מה שנראה כמו
     # "השרת קורס בזמן הורדה"
     since_sync = 0
+    sync_from = 0
     write_lock = asyncio.Lock()
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
@@ -420,15 +434,20 @@ async def _parallel_download(client, message, dst: Path, size: int,
         העמודים. אנחנו לא נקרא אותם שוב בקרוב, והחזקתם בזיכרון רק
         דוחפת את הקרנל לכתיבה כפויה בהמשך
         """
-        nonlocal since_sync
+        nonlocal since_sync, sync_from
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, os.pwrite, handle, block, offset)
+        if not config.TG_SYNC_EVERY:
+            return
         async with write_lock:
             since_sync += len(block)
             if since_sync < config.TG_SYNC_EVERY:
                 return
-            since_sync = 0
-        await loop.run_in_executor(None, _flush_cache, handle)
+            start, length, since_sync = sync_from, since_sync, 0
+            sync_from += length
+        # לא ממתינים לסנכרון: הוא נועד לרסן הצטברות דפים, לא לחסום
+        # את ההורדה. המתנה לו הפכה אותו לצוואר במקום לשסתום
+        loop.run_in_executor(None, _flush_cache, handle, start, length)
 
     async def watchdog() -> None:
         """מכריז על תקיעה אם אף בייט לא ירד זמן רב."""
