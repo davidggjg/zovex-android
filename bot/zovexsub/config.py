@@ -72,6 +72,10 @@ PROFILES = {
     # 1.53x מול 0.98x של H.265 — חיסכון קטן בזמן — אבל 632MB מול 21MB
     "quick": {"codec": "libx264", "preset": "ultrafast", "crf": 23,
               "pix_fmt": "yuv420p", "tune": "", "mbps": 7.0},
+    # H.265 מהיר, לקבצים קטנים. מחליף את quick בסולם האוטומטי כדי
+    # שגם קובץ קטן ייצא HEVC ולא יישבר אחידות הפלט של האתר
+    "fast265": {"codec": "libx265", "preset": "superfast", "crf": 28,
+                "pix_fmt": "yuv420p", "tune": "", "mbps": 2.0},
     # H.264 — נתמך בכל מקום
     "fast": {"codec": "libx264", "preset": "veryfast", "crf": 28,
              "pix_fmt": "yuv420p", "tune": "", "mbps": 2.2},
@@ -101,11 +105,18 @@ SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
 # ליבות יש. "fast" (H.264) חסר היה מהסולם לגמרי, וכל קובץ מעל 300MB
 # קפץ ישר ל-H.265. זה ההבדל בין פרק קטן שרץ 18x לסרט שזוחל.
 # סדר יורד של מהירות: הראשון הכי מהיר, האחרון הכי דחוס.
-# "small" יצא מהסולם האוטומטי בכוונה. לפי המדידה שלמעלה הוא קונה 9%
-# בגודל תמורת פי שניים בזמן הקידוד — על סרט של שעתיים זה עשרות דקות
-# שהמשתמש ממתין בשביל הבדל שאי אפשר לראות. הוא עדיין זמין ידנית
-# דרך BURN_PROFILE=small
-LADDER = ("quick", "fast", "balanced")
+#
+# הסולם הוא H.265 בלבד, בכוונה. x264 מהיר פי 2.2 (נמדד: 1.75x לקטע מול
+# 0.78x על 1080p בשני חוטים), אבל מוציא קובץ גדול בכ-45%, ו-HEVC הוא מה
+# שהאתר והטלגרם מגישים היום באופן אחיד. פלט מעורב משני קודקים הוא מחיר
+# גבוה יותר מהזמן שנחסך.
+#
+# קוד x264 לא נמחק — הוא נשאר בפרופילים quick ו-fast ונגיש דרך
+# BURN_PROFILE מפורש או ALLOW_X264=1, כדי שאפשר יהיה לחזור אליו בלי
+# לשכתב כלום
+LADDER = ("fast265", "balanced", "small")
+# 1 מחזיר את x264 לסולם האוטומטי. 0 = HEVC בלבד, וגם _verify יאכוף זאת
+ALLOW_X264 = _int("ALLOW_X264", 0)
 
 
 def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
@@ -126,7 +137,9 @@ def profile_for(source_bytes: int, duration: float = 0.0) -> dict:
     else:
         start = 1
 
-    for name in LADDER[start:]:
+    ladder = (("quick", "fast") + LADDER) if ALLOW_X264 else LADDER
+    start = min(start, len(ladder) - 1)
+    for name in ladder[start:]:
         settings = PROFILES[name]
         if duration <= 0:
             return settings
@@ -230,7 +243,10 @@ BURN_JOBS = _int("BURN_JOBS", 2)
 BURN_OVERSUBSCRIBE = _int("BURN_OVERSUBSCRIBE", 2)
 # הערכת זיכרון לכל קטע צריבה, בבתים. נמדד על 1080p veryfast; משמש רק
 # כדי להוריד מקומות כשהזיכרון הפנוי לא מספיק לכולם
-BURN_SEGMENT_MEMORY = _int("BURN_SEGMENT_MEMORY", 400 * 1024 * 1024)
+# נמדד בדגימת RSS על קטע 1080p עם כתוביות, x265 veryfast בשני חוטים:
+# שיא 491MB. ההערכה הקודמת (400MB) נגזרה מ-x264 והייתה נמוכה מדי —
+# x265 מחזיק יותר חוצצים. 640MB נותן מרווח מעל השיא שנמדד
+BURN_SEGMENT_MEMORY = _int("BURN_SEGMENT_MEMORY", 640 * 1024 * 1024)
 
 
 

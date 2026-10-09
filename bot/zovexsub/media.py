@@ -477,7 +477,11 @@ def _encoder_args(settings: dict, threads: int, duration: float) -> list[str]:
         args += ["-tune", tune]
     if codec == "libx265":
         # hvc1 מאפשר ניגון בנגנים של אפל ובטלגרם; pools מגביל את הליבות
-        args += ["-tag:v", "hvc1", "-x265-params", f"pools={threads}"]
+        # hvc1 מאפשר ניגון באפל ובטלגרם. frame-threads=2 מגדיל throughput
+        # בלי להעלות את מספר הליבות, ו-log-level משתיק את הפלט הרועש של
+        # x265 שמילא את צינור ה-stderr בצריבה ארוכה
+        args += ["-tag:v", "hvc1", "-x265-params",
+                 f"pools={threads}:frame-threads=2:log-level=error"]
     elif codec == "libx264":
         args += ["-x264-params", f"threads={threads}"]
 
@@ -675,6 +679,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
         else:
             await _run(cmd, timeout=limit)
 
+    await _check_codec(dst)
     log.info("הצריבה הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
     return dst
 
@@ -779,6 +784,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     if on_progress:
         await on_progress(1.0, "בודק")
     await _verify(dst, duration)
+    await _check_codec(dst)
     shutil.rmtree(work, ignore_errors=True)
     log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
     return dst
@@ -800,6 +806,36 @@ async def poster(video: Path, work: Path) -> Path | None:
         log.warning("יצירת התמונה הממוזערת נכשלה: %s", exc)
         return None
     return thumb if thumb.exists() and thumb.stat().st_size else None
+
+
+async def _check_codec(result: Path) -> None:
+    """מוודא שהפלט באמת HEVC כשזה מה שביקשנו.
+
+    בלי זה נפילה שקטה לפרופיל x264 — או דריסה ידנית שנשכחה ב-.env —
+    הייתה מגיעה לאתר כקובץ בקודק אחר, ומתגלה רק אצל צופה שלא מצליח
+    לנגן. ALLOW_X264=1 מכבה את הבדיקה במפורש.
+    """
+    if config.ALLOW_X264:
+        return
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,codec_tag_string",
+            "-of", "default=nw=1:nk=1", str(result),
+        ], timeout=60)
+    except (FFmpegError, OSError) as exc:
+        log.warning("בדיקת הקודק לא רצה: %s", exc)
+        return
+    fields = [line.strip() for line in out.splitlines() if line.strip()]
+    codec = fields[0] if fields else ""
+    tag = fields[1] if len(fields) > 1 else ""
+    if codec != "hevc":
+        raise FFmpegError(
+            f"הפלט יצא בקודק {codec or 'לא ידוע'} ולא HEVC. "
+            f"להתיר במפורש: ALLOW_X264=1 ב-.env")
+    if tag != "hvc1":
+        log.warning("תגית הווידאו היא %s ולא hvc1 — ניגון באפל עלול להיכשל", tag)
+    log.info("אימות קודק: %s/%s", codec, tag)
 
 
 async def _verify(result: Path, expected: float) -> None:
