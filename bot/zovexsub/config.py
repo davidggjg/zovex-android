@@ -57,6 +57,10 @@ TRANSLATE_PARALLEL = _int("TRANSLATE_PARALLEL", 0)
 # דקות לפני שמוותרים עליה. 60 נותן מרווח כפול מעל הזמן שנמדד ועדיין
 # חותך תקיעה מהר
 RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
+# מתחת לכמה תווים בתמליל מדלגים על חילוץ המונחים. הוא נועד לעקביות
+# לאורך פרק ארוך ועושה חיפוש באינטרנט; על קליפ קצר הוא רק מוסיף זמן.
+# 4000 תווים הם בערך שלוש דקות דיבור
+RESEARCH_FACTS_MIN = _int("RESEARCH_FACTS_MIN", 4000)
 
 MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 300)
 BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 300)

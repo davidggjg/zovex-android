@@ -323,9 +323,19 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
     שמאט), ובמקביל אליו חילוץ השמות והמונחים רץ מחולק לקטעים — כל קטע
     על מפתח אחר. הזמן הוא של הקריאה האיטית ביותר, לא של הסכום.
     """
-    chunks = [numbered[i:i + FACTS_CHUNK]
-              for i in range(0, min(len(numbered), FACTS_CHUNK * FACTS_CHUNKS_MAX),
-                             FACTS_CHUNK)] or [numbered]
+    # חילוץ השמות והמונחים קיים כדי לשמור עקביות לאורך פרק ארוך: שאותו
+    # שם ייכתב אותו דבר בדקה 3 ובדקה 50. הוא עושה לשם כך חיפוש באינטרנט,
+    # וזה החלק האיטי — נמדד 69 שניות על סרטון של 30 שניות. בתמליל קצר
+    # אין מה לשמור עליו עקבי, והמחיר הוא כל זמן ההמתנה של המשתמש.
+    # מיפוי הדוברים נשאר תמיד: מגדר חשוב גם בחמש שורות
+    if len(numbered) < config.RESEARCH_FACTS_MIN:
+        log.info("תמליל קצר (%d תווים) — מדלגים על חילוץ המונחים", len(numbered))
+        chunks = []
+    else:
+        chunks = [numbered[i:i + FACTS_CHUNK]
+                  for i in range(0, min(len(numbered),
+                                        FACTS_CHUNK * FACTS_CHUNKS_MAX),
+                                 FACTS_CHUNK)] or [numbered]
 
     done = 0
     total = len(chunks) + 1
