@@ -353,6 +353,11 @@ SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
 SRT_MAX_LINES = 2
 SRT_MIN_DURATION = 1.0
 SRT_MAX_DURATION = 7.0
+# מהירות קריאה בתווים לשנייה, ורווח מינימלי בין כתוביות. היו מוטבעים
+# בקוד כ-17 ו-0.08, ושלב מניעת החפיפה השתמש ב-0.04 — שלושה מספרים
+# שונים לאותו רעיון
+SRT_READ_SPEED = float(os.getenv("SRT_READ_SPEED") or 17.0)
+SRT_GAP = float(os.getenv("SRT_GAP") or 0.08)
 
 
 # תקרה עליונה למקביליות, לא משנה כמה מפתחות יש

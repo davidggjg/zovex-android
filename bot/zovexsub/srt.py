@@ -82,26 +82,75 @@ def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]]) -> list[
 
 
 def _fix_timing(cues: list[Cue]) -> list[Cue]:
-    """מונע חפיפות, אוכף אורך מינימלי/מקסימלי ומנצל שקט כדי להאריך קריאה."""
+    """מונע חפיפות, אוכף אורך מינימלי/מקסימלי ומנצל שקט כדי להאריך קריאה.
+
+    המעבר הזה נכתב מחדש כי סדר הפעולות הקודם לא היה יציב: כל שלב דרס את
+    קודמו. השלב האחרון, שתפקידו היה למנוע חפיפה, היה
+
+        cue.end = max(cue.start + 0.3, nxt.start - 0.04)
+
+    וכשהכתובית הבאה התחילה פחות מ-0.34 שנייה אחרי, הביטוי בחר דווקא את
+    cue.start + 0.3 — שהוא גדול מ-nxt.start. כלומר השורה שאמורה הייתה
+    למנוע חפיפה היא זו שיצרה אותה. בנוסף היא קבעה אורך של 0.3 שניות,
+    הרבה מתחת למינימום, ובכך ביטלה את האכיפה שנעשתה שני שלבים קודם.
+
+    עכשיו יש אילוץ קשיח אחד — לא לגעת בכתובית הבאה — ובתוכו נבחר הסוף
+    הרצוי פעם אחת, במעבר יחיד ובלי דריסות.
+    """
+    gap = config.SRT_GAP
+    dropped = 0
+    out: list[Cue] = []
     for i, cue in enumerate(cues):
         nxt = cues[i + 1] if i + 1 < len(cues) else None
+        # התקרה הקשיחה: לעולם לא נוגעים בכתובית הבאה
+        ceiling = (nxt.start - gap) if nxt else float("inf")
+        if ceiling <= cue.start:
+            # הקלט עצמו חופף. אין מה להציל כאן בלי לדרוס את הבאה
+            dropped += 1
+            continue
 
-        if cue.end - cue.start > config.SRT_MAX_DURATION:
-            cue.end = cue.start + config.SRT_MAX_DURATION
+        # מהירות קריאה, בתוך גבולות האורך. נמדד על התווים בלבד — שורה
+        # שנשברה לשתיים לא נקראת לאט יותר בגלל תו המעבר
+        letters = len(cue.text.replace("\n", " "))
+        needed = letters / max(1.0, config.SRT_READ_SPEED)
+        want = max(cue.end, cue.start + needed)
+        want = min(want, cue.start + config.SRT_MAX_DURATION)
+        want = max(want, cue.start + config.SRT_MIN_DURATION)
 
-        if cue.end - cue.start < config.SRT_MIN_DURATION:
-            room = (nxt.start - 0.08) if nxt else cue.start + config.SRT_MIN_DURATION
-            cue.end = min(cue.start + config.SRT_MIN_DURATION, max(room, cue.end))
+        cue.end = min(want, ceiling)
+        out.append(cue)
 
-        # מהירות קריאה: עד ~17 תווים לשנייה. אם יש שקט אחרי — מאריכים.
-        needed = len(cue.text) / 17.0
-        if cue.end - cue.start < needed and nxt:
-            cue.end = min(cue.start + needed, nxt.start - 0.08, cue.end + 2.0)
+    if dropped:
+        log.warning("%d כתוביות הושמטו כי הן חפפו לחלוטין את הבאה אחריהן", dropped)
+    return [c for c in out if c.end > c.start]
 
-        if nxt and cue.end > nxt.start - 0.04:
-            cue.end = max(cue.start + 0.3, nxt.start - 0.04)
 
-    return [c for c in cues if c.end > c.start]
+def _hard_wrap(words: list[str], limit: int) -> list[str]:
+    """שבירה חמדנית שמבטיחה שאף שורה לא תחרוג מהרוחב.
+
+    רשת הביטחון: קודם, כששום חלוקה מאוזנת לא נמצאה, הקוד החזיר את הטקסט
+    כשורה אחת ארוכה — עד 84 תווים, פי שניים מהרוחב המותר. על המסך זה
+    נחתך או נדחס.
+    """
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        while len(word) > limit:          # מילה בודדת ארוכה מהשורה
+            if current:
+                lines.append(current)
+                current = ""
+            lines.append(word[:limit])
+            word = word[limit:]
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= limit:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines
 
 
 def wrap(text: str) -> str:
@@ -116,7 +165,9 @@ def wrap(text: str) -> str:
     for cut in range(1, len(words)):
         first = " ".join(words[:cut])
         second = " ".join(words[cut:])
-        if len(first) > limit or len(second) > limit * config.SRT_MAX_LINES:
+        # שתי השורות חייבות להיכנס ברוחב. קודם נבדק כאן
+        # limit * SRT_MAX_LINES, כלומר שורה שנייה של עד 84 תווים הוכשרה
+        if len(first) > limit or len(second) > limit:
             continue
         score = abs(len(first) - len(second))
         if first.rstrip().endswith((",", ".", "!", "?", ":", "—", "–", ";")):
@@ -128,12 +179,11 @@ def wrap(text: str) -> str:
         if score < best_score:
             best, best_score = (first, second), score
 
-    if not best:
-        return text
-    first, second = best
-    if len(second) > limit:
-        return first + "\n" + wrap(second).replace("\n", " ")
-    return first + "\n" + second
+    if best:
+        return best[0] + "\n" + best[1]
+    # אין חלוקה מאוזנת לשתי שורות: שוברים חמדנית. עדיף שלוש שורות
+    # תקינות מאשר שורה אחת שחורגת מהמסך
+    return "\n".join(_hard_wrap(words, limit))
 
 
 def stamp(seconds: float) -> str:
