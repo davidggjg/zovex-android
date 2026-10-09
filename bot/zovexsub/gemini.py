@@ -17,7 +17,8 @@ log = logging.getLogger(__name__)
 BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # קירור קצר: הגבלת הקצב של גוגל מתאפסת בתוך שניות, וקירור ארוך
 # משבית את כל המפתחות בבת אחת ועוצר את העבודה לדקות
-_pool = KeyPool("gemini", config.GEMINI_API_KEYS, cooldown=15.0)
+_pool = KeyPool("gemini", config.GEMINI_API_KEYS, cooldown=15.0,
+                rpm=config.GEMINI_RPM_PER_KEY)
 
 # שמות מודלים אצל גוגל מתחלפים (2.5-pro הוסר, 3.1 נכנס). במקום לרדוף אחריהם
 # בקוד, אנחנו שואלים את ה-API מה זמין ובוחרים את הטוב ביותר, פעם אחת.
@@ -100,7 +101,9 @@ async def _resolve(model: str) -> str:
 
 # מודלים שהמפתח חסום מהם לגמרי (למשל pro בתוכנית החינמית, limit: 0)
 # מודלים שחסומים לתוכנית הזו לצמיתות ("limit: 0") — אין טעם לנסות שוב
-_dead: set[str] = set()
+# צמדי (מודל, מפתח) שחסומים בתוכנית. קודם זו הייתה קבוצת שמות מודלים
+# בלבד, ומפתח אחד בתוכנית מצומצמת היה פוסל מודל שעובד בכל השאר
+_dead: set[tuple[str, str]] = set()
 # מודלים שכל המפתחות מיצו אותם כרגע. זה זמני: מכסה לדקה מתאפסת תוך
 # דקה, ולכן הרשימה מתרוקנת בין סבבים
 _exhausted: set[str] = set()
@@ -148,13 +151,18 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
         available = [m for m in chain if _overloaded.get(m, 0.0) <= now]
         for wanted in (available or chain):
             name = await _resolve(wanted)
-            if name in _dead or name in _exhausted:
+            if name in _exhausted or all(
+                    (name, k) in _dead for k in config.GEMINI_API_KEYS):
                 continue
 
+            # ארבעה ניסיונות קבועים לא הספיקו לסבב על שבעה מפתחות:
+            # המודל ננטש לפני שחלקם בכלל נוסו. התקרה גדלה עם המאגר
             attempt, skipped = 0, 0
-            while attempt < 4:
+            budget = max(4, 2 * len(config.GEMINI_API_KEYS))
+            while attempt < budget:
                 key = await _pool.wait_for_free()
-                if _blocked.get((name, key), 0.0) > time.monotonic():
+                if (_blocked.get((name, key), 0.0) > time.monotonic()
+                        or (name, key) in _dead):
                     # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר. דילוג
                     # אינו ניסיון — קודם הוא שרף אחד מארבעת הניסיונות
                     # בלי לשלוח בקשה, והמודל ננטש אף שהיה מפתח פנוי
@@ -183,10 +191,16 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
                 if resp.status_code == 429:
                     # "limit: 0" = המודל חסום לתוכנית הזו, לא עומס רגעי
                     if "limit: 0" in text:
-                        _dead.add(name)
-                        log.warning("המודל %s חסום למפתחות האלה — יורד למודל הבא", name)
-                        last_error = f"{name} חסום בתוכנית"
-                        break
+                        _dead.add((name, key))
+                        log.warning("%s חסום עבור %s — מנסה מפתח אחר",
+                                    name, _pool.mask(key))
+                        if all((name, other) in _dead
+                               for other in config.GEMINI_API_KEYS):
+                            log.warning("%s חסום בכל המפתחות — למודל הבא", name)
+                            last_error = f"{name} חסום בתוכנית"
+                            break
+                        last_error = f"{name} חסום במפתח אחד"
+                        continue
 
                     wait = _retry_delay(resp.text)
                     if wait > LONG_WAIT:
@@ -202,7 +216,8 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
                     # לקרר את המפתח הרבה מעבר לזה
                     _pool.penalize(key, wait or 15)
                     last_error = f"{name}: מכסה לדקה"
-                    await asyncio.sleep(min(wait or 2, 10))
+                    # קודם ישנו כאן תמיד, גם כשמפתחות אחרים עמדו פנויים.
+                    # wait_for_free כבר ממתין רק כשאין אף מפתח זמין
                     continue
 
                 if resp.status_code >= 500:

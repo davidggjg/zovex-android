@@ -396,6 +396,10 @@ GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)
 GEMINI_STT = (os.getenv("GEMINI_STT") or "0").strip().lower() not in ("0", "off", "no", "")
 GEMINI_STT_SPEAKERS = (os.getenv("GEMINI_STT_SPEAKERS") or "1").strip() not in ("0", "off", "no")
 # עם תזמוני מילים המודל מקבל עד שלושים דקות לבקשה, אז עשרים בטוח
+# מכסת בקשות לדקה לכל מפתח ג'מיני. גוגל לא מפרסמת טבלה מחייבת והמספר
+# משתנה לפי שכבה, ולכן הוא נמדד ולא מנוחש. בלי מגביל יזום אנחנו יורים
+# בקשות עד שמתקבל 429 — ואז כבר שרפנו קריאה וקיבלנו קירור. 0 = ללא
+GEMINI_RPM_PER_KEY = _int("GEMINI_RPM_PER_KEY", 10)
 GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 1200)
 GEMINI_STT_OVERLAP = float(os.getenv("GEMINI_STT_OVERLAP") or 10)
 # איך לקבץ מילים לשורות כתוביות

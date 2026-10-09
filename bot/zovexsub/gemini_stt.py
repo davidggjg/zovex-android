@@ -14,6 +14,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+from .keypool import AllKeysBusy, KeyPool
 from . import config, media
 from .stt import Segment, Transcript, Word
 
@@ -111,15 +112,29 @@ def _one_chunk(path: Path, key: str, diarize: bool) -> list[dict]:
                 pass
 
 
+# מאגר מפתחות משותף לכל הקטעים, כדי שתמלול מקבילי יתחלק ולא יצטופף
+_pool = KeyPool("gemini-stt", config.GEMINI_API_KEYS, cooldown=20.0,
+                rpm=config.GEMINI_RPM_PER_KEY)
+
+
 async def _chunk_words(path: Path, diarize: bool) -> tuple[list[dict], bool, str]:
     """מתמלל קטע אחד, מסובב מפתחות, ומוותר על זיהוי דוברים אם הוא נדחה."""
     loop = asyncio.get_running_loop()
     last = None
-    for key in config.GEMINI_API_KEYS:
+    # קודם זה רץ על הרשימה מההתחלה בכל קטע. כשהקטעים רצים במקביל כולם
+    # פנו לאותו מפתח ראשון בבת אחת, שרפו אותו, ורק אז התקדמו — בזמן
+    # שכל השאר עמדו פנויים. המאגר מסובב ומכבד גם את המכסה לדקה
+    for _ in range(max(1, len(config.GEMINI_API_KEYS))):
+        try:
+            key = await _pool.wait_for_free()
+        except AllKeysBusy:
+            last = RuntimeError("כל מפתחות ג'מיני בקירור")
+            break
         try:
             words, tongue = await loop.run_in_executor(
                 None, _one_chunk, path, key, diarize)
             if words:
+                _pool.report_ok(key)
                 return words, diarize, tongue
             last = RuntimeError("התמלול חזר בלי תזמוני מילים")
         except Exception as exc:  # noqa: BLE001 — מנסים את המפתח הבא
@@ -132,8 +147,8 @@ async def _chunk_words(path: Path, diarize: bool) -> tuple[list[dict], bool, str
                 log.warning("זיהוי דוברים נדחה — ממשיכים בלעדיו")
                 diarize = False
                 continue
-            log.warning("מפתח נכשל בקטע: %s", str(exc)[:120])
-            await asyncio.sleep(1)
+            log.warning("%s נכשל בקטע: %s", _pool.mask(key), str(exc)[:120])
+            _pool.penalize(key, 20)
     raise RuntimeError(f"כל המפתחות נכשלו: {last}")
 
 
