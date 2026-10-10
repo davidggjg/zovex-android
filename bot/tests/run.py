@@ -367,6 +367,24 @@ def _one_request_per_connection():
 
 
 
+@check("לקוח הבוט אינו מבקש עדכונים — רק שרת ה-Bot API עושה זאת")
+def _bot_client_silent():
+    """תפס לולאת התחברות מחדש וניתוקים באמצע הורדה.
+
+    טלגרם מתיר צרכן עדכונים אחד לכל טוקן. שרת ה-Bot API המקומי הוא
+    הצרכן, ולקוח Telethon שני שביקש עדכונים לאותו טוקן נאבק איתו.
+    """
+    import inspect
+
+    from zovexsub import botapi
+
+    body = inspect.getsource(botapi._connect)
+    assert "receive_updates" in body, "לקוח הבוט שוב מבקש עדכונים"
+    assert "if bot_token else" in body, \
+        "ההשתקה חלה גם על חשבונות המשתמש, שכן צריכים עדכונים"
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

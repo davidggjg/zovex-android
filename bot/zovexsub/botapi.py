@@ -93,7 +93,15 @@ def _string_session(raw: str):
 
 async def _connect(session, *, bot_token: str = "",
                    label: str = "") -> TelegramClient | None:
-    candidate = TelegramClient(session, config.TG_API_ID, config.TG_API_HASH)
+    # לבוט: בלי קבלת עדכונים. טלגרם מתיר צרכן עדכונים אחד בלבד לכל
+    # טוקן, ושרת ה-Bot API המקומי כבר ממלא את התפקיד הזה. לקוח שני
+    # שמבקש עדכונים לאותו טוקן נאבק איתו, ושתי הסשנים מנתקים זה את
+    # זה שוב ושוב — זו לולאת ההתחברות מחדש שנראתה בלוג, וזה מקור
+    # ה-"Server disconnected without sending a response" בהורדה.
+    # בלי עדכונים הלקוח משמש רק להעברת קבצים, ואין על מה להתנגש
+    extra = {"receive_updates": False} if bot_token else {}
+    candidate = TelegramClient(session, config.TG_API_ID, config.TG_API_HASH,
+                               **extra)
     try:
         if bot_token:
             await candidate.start(bot_token=bot_token)
