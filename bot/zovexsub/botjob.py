@@ -92,20 +92,27 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
         return False
 
     began = time.monotonic()
+    workers = fastio._connections(size, max(1, config.TG_CONNECTIONS))
 
     async def on_progress(done: int, total: int, note: str) -> None:
         elapsed = max(0.1, time.monotonic() - began)
         rate = done / elapsed / 1048576
         await screen.show(
-            f"📥 מוריד · {done * 100 // max(1, total)}% · "
+            f"📥 מוריד ·{workers}× · {done * 100 // max(1, total)}% · "
             f"{rate:.1f}MB/s{' · ' + note if note else ''}")
 
+    # קוראים ל-_parallel_download ישירות ולא ל-download: האחרון בולע כשל
+    # מקבילי ועובר בשקט למסלול סדרתי, וזה בדיוק מה שהסתיר קצב של
+    # 1.2MB/s שנראה כאילו המקבול עובד. כאן כשל הוא כשל, והוא נאמר
+    carrier = _Carrier(_as_document(found, size, name))
     try:
-        await fastio.download(client, _Carrier(_as_document(found, size, name)),
-                              target, on_progress=on_progress)
+        await fastio._parallel_download(client, carrier, target, size,
+                                        workers, on_progress)
     except Exception as exc:  # noqa: BLE001 — נופלים לגיבוי, לא מפילים
         log.warning("המסלול המקבילי נכשל (%s: %s) — מסלול השרת",
                     type(exc).__name__, exc)
+        await screen.show(f"⚠️ המסלול המהיר נפל: {type(exc).__name__}: {exc}",
+                          force=True)
         target.unlink(missing_ok=True)
         return False
     if target.stat().st_size < size:
