@@ -350,6 +350,23 @@ def _crf_sane():
 
 
 
+@check("בקשה אחת לכל חיבור — יותר מזה מנתק את ההורדה")
+def _one_request_per_connection():
+    """תפס Server disconnected without sending a response.
+
+    16 חיבורים כפול 8 בקשות הם 128 באוויר, וטלגרם סגר את החיבורים בלי
+    לענות. המימוש שבוטי ההעברה המהירים משתמשים בו מחזיק בקשה אחת
+    לכל חיבור ומגיע לקצב דרך מספר החיבורים בלבד.
+    """
+    assert config.TG_PIPELINE == 1, (
+        f"TG_PIPELINE={config.TG_PIPELINE} — ערימת בקשות על חיבור אחד "
+        "היא בדיוק מה שגרם לניתוקים")
+    assert config.TG_INFLIGHT_MAX <= config.TG_CONNECTIONS, (
+        "התקרה גבוהה ממספר החיבורים, כלומר יותר מבקשה אחת לכל אחד")
+    assert config.TG_CONNECTIONS >= 16, "מעט מדי חיבורים לקובץ גדול"
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
