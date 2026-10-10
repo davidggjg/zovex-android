@@ -1041,6 +1041,9 @@ export default function HomeScreen({navigation, route}) {
   // ומעבירה focus לתיבה — כך המקלדת נפתחת דרך RN, שאמין יותר מפתיחה ידנית.
   const searchRef = useRef(null);
   const [searchTyping, setSearchTyping] = useState(false);
+  // דף חיפוש ייעודי לטלפון בלבד (ראה showSearchScreen למטה, ליד PhoneSearchScreen).
+  // בטלוויזיה הסרגל העליון נשאר כפי שהיה.
+  const [showSearchScreen, setShowSearchScreen] = useState(false);
   useEffect(() => {
     if (searchTyping) {
       const t = setTimeout(() => searchRef.current?.focus(), 50);
@@ -1460,6 +1463,11 @@ export default function HomeScreen({navigation, route}) {
       if (liveChannel) { setLiveChannel(null); return true; }
       if (showDonation) { setShowDonation(false); donationCallback.current = null; return true; }
       if (detailItem) { setDetailItem(null); return true; }
+      // דף החיפוש הייעודי (טלפון בלבד) הוא View רגיל ולא Modal — בכוונה,
+      // כדי שלא ייווצר שוב Modal-בתוך-Modal כשפותחים פריט מתוך תוצאות
+      // החיפוש (ראה ההסבר ליד seasonPickerWrap). בלי שורה זו "אחורה" היה
+      // מדלג ישר על הדף הזה אל ניקוי החיפוש/שינוי הקטגוריה.
+      if (showSearchScreen) { setShowSearchScreen(false); clearSearch(); return true; }
       if (showCatModal) { setShowCatModal(false); return true; }
       if (showUserMenu) { setShowUserMenu(false); return true; }
       if (showSupport) { setShowSupport(false); return true; }
@@ -1478,7 +1486,7 @@ export default function HomeScreen({navigation, route}) {
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, searchTyping, category, showExit]);
+  }, [isFocused, showDonation, detailItem, liveChannel, showCatModal, showUserMenu, showSupport, search, searchTyping, category, showExit, showSearchScreen]);
 
   // יציב, כי FreeBar עטוף ב-memo: פונקציה חדשה בכל רינדור הייתה מבטלת
   // את ה-memo ומצייר את הסרגל מחדש בכל לחיצה ובכל שינוי חיפוש.
@@ -1755,6 +1763,14 @@ export default function HomeScreen({navigation, route}) {
     () => (isNetflixMode || isLiveMode ? [] : getItemsForCategory(category)),
     [isNetflixMode, isLiveMode, category, getItemsForCategory]);
 
+  // דף החיפוש הייעודי (טלפון) מחפש תמיד על "הכל", בלי קשר לקטגוריה
+  // שנבחרה במסך הבית מתחתיו — זו בדיוק הנקודה ("חיפוש נקי" ולא המשך
+  // חיפוש-תוך-קטגוריה). חסם ל-showSearchScreen כדי לא לחשב את זה בכל
+  // הקשה כשהדף סגור.
+  const searchScreenItems = useMemo(
+    () => (showSearchScreen ? getItemsForCategory('הכל') : []),
+    [showSearchScreen, getItemsForCategory]);
+
   // ── First-launch sign-in screen ──
   if (!loading && showSignIn) {
     return (
@@ -1800,93 +1816,112 @@ export default function HomeScreen({navigation, route}) {
     );
   }
 
+  // משותף לטלוויזיה (שורה שטוחה בסרגל) ולטלפון (מקובץ עם כפתור החיפוש,
+  // ראה למטה) — בלי שינוי בהתנהגות, רק מקום אחד להגדיר אותו.
+  const UserAvatarBtn = user ? (
+    <TvFocusable
+      onPress={() => setShowUserMenu(true)}
+      style={styles.userBtn}>
+      {user.picture ? (
+        <Image source={{uri: user.picture}} style={styles.userAvatar} />
+      ) : (
+        <View style={styles.userAvatarFallback}>
+          <Text style={{color: '#fff', fontSize: 13, fontWeight: '700'}}>
+            {(user.given_name || user.name || '?')[0]}
+          </Text>
+        </View>
+      )}
+    </TvFocusable>
+  ) : (
+    <TvFocusable
+      onPress={startSignIn}
+      style={styles.signInBtn}>
+      <Text style={styles.signInTxt}>כניסה</Text>
+    </TvFocusable>
+  );
+
   const TopBar = (
     <View style={styles.topBar}>
       <Text style={styles.appTitle}>ZOVEX</Text>
 
-      {/* בטלוויזיה תיבת הטקסט עצמה לא מקבלת focus מה-D-pad (אחרת השלט נתקע
-          בתוכה); במקום זה המרובע נעצר על העטיפה, ולחיצה מרכזית מעבירה את
-          ה-focus פנימה ופותחת את המקלדת. בטלפון אין עטיפה ושום דבר לא משתנה. */}
-      <TvFocusable
-        style={styles.searchTvWrap}
-        allowChildFocus={searchTyping}
-        onPress={() => setSearchTyping(true)}>
-        <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
-          <TextInput
-            ref={searchRef}
-            style={styles.searchInput}
-            placeholder="חיפוש..."
-            placeholderTextColor="rgba(255,255,255,0.3)"
-            // [tv_perf] בטלוויזיה **לא מבוקרת**, ובטלפון כן.
-            //
-            // ‎value={search}‎ אומר: בכל תו, RN מחזיר את הטקסט הנייטיב למה
-            // ש-JS מחזיק. כשה-thread של JS עסוק — ובטלוויזיה הוא עסוק,
-            // כי כל הקלדה מפעילה סינון של הקטלוג ורינדור מחדש — הערך
-            // שחוזר הוא הערך הישן, והאות שהוקלדה בינתיים נמחקת.
-            // דווח מהשטח: "רק אות אחת".
-            //
-            // עם ‎defaultValue‎ הטקסט הנייטיב הוא מקור האמת בזמן הקלדה,
-            // ו-JS רק מאזין. ניקוי מ-JS עובר דרך ‎clearSearch‎, שקורא
-            // ל-‎clear()‎ על התיבה עצמה.
-            {...(IS_TV ? {defaultValue: ''} : {value: search})}
-            onChangeText={handleSearchChange}
-            onFocus={onSearchFocus}
-            // [tv_keyboard] מצב ההקלדה **אינו** נכבה כאן.
-            //
-            // דווח: "מקליד מילה אחת ואז צריך לסגור את המקלדת ולפתוח מחדש".
-            // זו הייתה השורה. המקלדת של אנדרואיד TV היא חלון נפרד שלוקח
-            // את ה-focus, ולכן היא מפיקה onBlur על התיבה תוך כדי הקלדה.
-            // כיבוי מצב ההקלדה שם מחזיר descendantFocusability ל-
-            // FOCUS_BLOCK_DESCENDANTS, ואנדרואיד **מנקה focus מילד ממוקד**
-            // ברגע שחוסמים — כלומר התיבה איבדה focus, ה-IME נסגר, והדרך
-            // היחידה חזרה הייתה לחיצה מרכזית נוספת. בדיוק מה שדווח.
-            //
-            // היציאה ממצב הקלדה נעשית עכשיו רק לפי כוונה מפורשת של
-            // המשתמש: "אישור" במקלדת, או "אחורה" (ראה מטפל ה-Back).
-            onBlur={() => { onSearchBlur && onSearchBlur(); }}
-            onSubmitEditing={() => setSearchTyping(false)}
-            returnKeyType="search"
-            blurOnSubmit
-            textAlign="right"
-          />
-        </Animated.View>
-      </TvFocusable>
+      {IS_TV ? (
+        <>
+          {/* תיבת הטקסט עצמה לא מקבלת focus מה-D-pad (אחרת השלט נתקע בתוכה);
+              במקום זה המרובע נעצר על העטיפה, ולחיצה מרכזית מעבירה את
+              ה-focus פנימה ופותחת את המקלדת. */}
+          <TvFocusable
+            style={styles.searchTvWrap}
+            allowChildFocus={searchTyping}
+            onPress={() => setSearchTyping(true)}>
+            <Animated.View style={[styles.searchWrapper, {borderColor: searchBorderColor}]}>
+              <TextInput
+                ref={searchRef}
+                style={styles.searchInput}
+                placeholder="חיפוש..."
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                // [tv_perf] בטלוויזיה **לא מבוקרת**.
+                //
+                // ‎value={search}‎ אומר: בכל תו, RN מחזיר את הטקסט הנייטיב למה
+                // ש-JS מחזיק. כשה-thread של JS עסוק — ובטלוויזיה הוא עסוק,
+                // כי כל הקלדה מפעילה סינון של הקטלוג ורינדור מחדש — הערך
+                // שחוזר הוא הערך הישן, והאות שהוקלדה בינתיים נמחקת.
+                // דווח מהשטח: "רק אות אחת".
+                //
+                // עם ‎defaultValue‎ הטקסט הנייטיב הוא מקור האמת בזמן הקלדה,
+                // ו-JS רק מאזין. ניקוי מ-JS עובר דרך ‎clearSearch‎, שקורא
+                // ל-‎clear()‎ על התיבה עצמה.
+                defaultValue=""
+                onChangeText={handleSearchChange}
+                onFocus={onSearchFocus}
+                // [tv_keyboard] מצב ההקלדה **אינו** נכבה כאן.
+                //
+                // דווח: "מקליד מילה אחת ואז צריך לסגור את המקלדת ולפתוח מחדש".
+                // זו הייתה השורה. המקלדת של אנדרואיד TV היא חלון נפרד שלוקח
+                // את ה-focus, ולכן היא מפיקה onBlur על התיבה תוך כדי הקלדה.
+                // כיבוי מצב ההקלדה שם מחזיר descendantFocusability ל-
+                // FOCUS_BLOCK_DESCENDANTS, ואנדרואיד **מנקה focus מילד ממוקד**
+                // ברגע שחוסמים — כלומר התיבה איבדה focus, ה-IME נסגר, והדרך
+                // היחידה חזרה הייתה לחיצה מרכזית נוספת. בדיוק מה שדווח.
+                //
+                // היציאה ממצב הקלדה נעשית עכשיו רק לפי כוונה מפורשת של
+                // המשתמש: "אישור" במקלדת, או "אחורה" (ראה מטפל ה-Back).
+                onBlur={() => { onSearchBlur && onSearchBlur(); }}
+                onSubmitEditing={() => setSearchTyping(false)}
+                returnKeyType="search"
+                blurOnSubmit
+                textAlign="right"
+              />
+            </Animated.View>
+          </TvFocusable>
 
-      {/* בטלוויזיה כפתור התמיכה יושב כאן ולא כבועה צפה.
-          הבועה היא View ממוקם מוחלט מעל הרשת, ומנוע ה-focus של אנדרואיד
-          בוחר את היעד הבא גאומטרית — הרשת בולעת כל לחיצה על ה-D-pad
-          והכפתור לא נבחר לעולם. דוד: "לא הצלחתי להגיע אליו בשום צורה".
-          כתבתי שם בהערה שהוא "נשאר נגיש בניווט", וזו הייתה הנחה שלי שלא
-          נבדקה. בסרגל העליון הוא חלק מהזרימה: חץ למעלה מהשורה הראשונה
-          מגיע לכאן, וימינה/שמאלה עובר בין חיפוש, תמיכה ומשתמש. */}
-      {IS_TV && (
-        <TvFocusable
-          onPress={() => setShowSupport(true)}
-          style={styles.tvSupportBtn}>
-          <Text style={styles.tvSupportTxt}>➤ {t('home.support')}</Text>
-        </TvFocusable>
-      )}
+          {/* כפתור התמיכה יושב כאן ולא כבועה צפה.
+              הבועה היא View ממוקם מוחלט מעל הרשת, ומנוע ה-focus של אנדרואיד
+              בוחר את היעד הבא גאומטרית — הרשת בולעת כל לחיצה על ה-D-pad
+              והכפתור לא נבחר לעולם. דוד: "לא הצלחתי להגיע אליו בשום צורה".
+              כתבתי שם בהערה שהוא "נשאר נגיש בניווט", וזו הייתה הנחה שלי שלא
+              נבדקה. בסרגל העליון הוא חלק מהזרימה: חץ למעלה מהשורה הראשונה
+              מגיע לכאן, וימינה/שמאלה עובר בין חיפוש, תמיכה ומשתמש. */}
+          <TvFocusable
+            onPress={() => setShowSupport(true)}
+            style={styles.tvSupportBtn}>
+            <Text style={styles.tvSupportTxt}>➤ {t('home.support')}</Text>
+          </TvFocusable>
 
-      {user ? (
-        <TvFocusable
-          onPress={() => setShowUserMenu(true)}
-          style={styles.userBtn}>
-          {user.picture ? (
-            <Image source={{uri: user.picture}} style={styles.userAvatar} />
-          ) : (
-            <View style={styles.userAvatarFallback}>
-              <Text style={{color: '#fff', fontSize: 13, fontWeight: '700'}}>
-                {(user.given_name || user.name || '?')[0]}
-              </Text>
-            </View>
-          )}
-        </TvFocusable>
+          {UserAvatarBtn}
+        </>
       ) : (
-        <TvFocusable
-          onPress={startSignIn}
-          style={styles.signInBtn}>
-          <Text style={styles.signInTxt}>כניסה</Text>
-        </TvFocusable>
+        // בטלפון: לא תיבת טקסט בסרגל העליון, אלא כפתור חיפוש שפותח דף
+        // חיפוש ייעודי במסך מלא (ראה PhoneSearchScreen למטה). דווח מדוד:
+        // "תוסיפי... ככה החיפוש יותר טוב יותר יפה". מקובץ עם האווטאר כדי
+        // שהשני יישבו יחד בקצה הסרגל, כמו שרגיל באפליקציות סטרימינג.
+        <View style={styles.topBarRightGroup}>
+          <TvFocusable
+            style={styles.searchIconBtn}
+            onPress={() => setShowSearchScreen(true)}>
+            <Text style={styles.searchIconTxt}>🔍</Text>
+          </TvFocusable>
+          {UserAvatarBtn}
+        </View>
       )}
     </View>
   );
@@ -1916,7 +1951,7 @@ export default function HomeScreen({navigation, route}) {
           <Text style={[styles.bottomNavLabel, isHomeActive && styles.bottomNavLabelActive]}>בית</Text>
         </TvFocusable>
         <TvFocusable style={styles.bottomNavItem}
-          onPress={() => searchRef.current && searchRef.current.focus()}>
+          onPress={() => setShowSearchScreen(true)}>
           <Text style={styles.bottomNavIcon}>🔍</Text>
           <Text style={styles.bottomNavLabel}>חיפוש</Text>
         </TvFocusable>
@@ -2055,6 +2090,68 @@ export default function HomeScreen({navigation, route}) {
         </View>
       </OverlayWrap>
     </Modal>
+  );
+
+  // ── דף חיפוש ייעודי (טלפון בלבד) ─────────────────────────────────────────
+  //
+  // דוד: "תוסיפי בטלפון... אין סרגל חיפוש למעלה שלוחצים על החיפוש זה מעביר
+  // כאילו לדף מיוחד לחיפוש ... ככה החיפוש יותר טוב יותר יפה". בטלוויזיה
+  // שום דבר לא השתנה — הסרגל העליון נשאר כפי שהיה.
+  //
+  // View רגיל ולא Modal, בכוונה: לחיצה על תוצאה פותחת את MovieDetailModal,
+  // שהוא Modal אמיתי. אם הדף הזה היה גם Modal, זה היה בדיוק אותו מחלקת
+  // באג שתוקנה עכשיו בבורר העונות — שני חלונות Dialog מוערמים זה על זה
+  // (ראה ההסבר המלא ליד seasonPickerWrap). כ-View, חלון ה-Dialog היחיד
+  // שנפתח הוא זה של MovieDetailModal עצמו, ודף החיפוש פשוט ממשיך להתקיים
+  // מתחתיו — כך שסגירת הפרטים מחזירה בדיוק לתוצאות החיפוש כפי שהיו.
+  const PhoneSearchScreen = !IS_TV && showSearchScreen && (
+    <View style={styles.searchScreen}>
+      <View style={styles.searchScreenHeader}>
+        <TvFocusable
+          style={styles.searchScreenCloseBtn}
+          onPress={() => { setShowSearchScreen(false); clearSearch(); }}>
+          <Text style={styles.searchScreenCloseTxt}>✕</Text>
+        </TvFocusable>
+        <View style={styles.searchScreenInputWrap}>
+          <TextInput
+            autoFocus
+            style={styles.searchScreenInput}
+            placeholder="מה בא לך לצפות בו?"
+            placeholderTextColor="rgba(255,255,255,0.35)"
+            value={search}
+            onChangeText={handleSearchChange}
+            returnKeyType="search"
+            textAlign="right"
+          />
+        </View>
+      </View>
+
+      <FlatList
+        key={`phone-search-${NUM_COLS}`}
+        data={Array.isArray(searchScreenItems) ? searchScreenItems.filter(item => item && item.id) : []}
+        keyExtractor={item => String(item?.id || '')}
+        numColumns={NUM_COLS}
+        contentContainerStyle={styles.grid}
+        keyboardShouldPersistTaps="handled"
+        renderItem={renderGridItem}
+        ListEmptyComponent={
+          qTokens.length ? (
+            <View style={styles.emptySearchWrap}>
+              <EmptyState emoji="🔍" title="לא נמצאו תוצאות"
+                desc={`לא מצאנו כלום בשביל "${search}". נסו מילה אחרת או בדקו את האיות.`} />
+              <TvFocusable style={styles.emptyClearBtn} onPress={clearSearch}>
+                <Text style={styles.emptyClearTxt}>נקה חיפוש</Text>
+              </TvFocusable>
+            </View>
+          ) : (
+            <View style={styles.emptySearchWrap}>
+              <EmptyState emoji="🔍" title="חפשו סרטים, סדרות וערוצים"
+                desc="התחילו להקליד כדי לראות תוצאות" />
+            </View>
+          )
+        }
+      />
+    </View>
   );
 
   return (
@@ -2315,6 +2412,11 @@ export default function HomeScreen({navigation, route}) {
           </View>
         </View>
       </Modal>
+
+      {/* אחרון בעץ בכוונה — כך הוא מצויר מעל כל שאר התוכן (כולל AdBanner,
+          BottomNav והבועה הצפה) בלי תלות ב-zIndex. ראה ההסבר המלא ליד
+          PhoneSearchScreen. */}
+      {PhoneSearchScreen}
     </View>
   );
 }
@@ -2419,6 +2521,36 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     color: '#fff', fontSize: 14, paddingHorizontal: 14, paddingVertical: 8,
+  },
+
+  // כפתור החיפוש בטלפון (מחליף את תיבת הטקסט) מקובץ עם האווטאר בקצה הסרגל.
+  topBarRightGroup: {flexDirection: 'row', alignItems: 'center', gap: 10},
+  searchIconBtn: {
+    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  searchIconTxt: {fontSize: 16},
+
+  // ── דף חיפוש ייעודי (טלפון) ──
+  // כיסוי מלא, לא Modal — ראה ההסבר המלא ליד PhoneSearchScreen.
+  searchScreen: {
+    ...StyleSheet.absoluteFillObject, zIndex: 100, backgroundColor: colors.bg,
+  },
+  searchScreenHeader: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10,
+  },
+  searchScreenCloseBtn: {
+    width: 34, height: 34, borderRadius: 17, justifyContent: 'center', alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  searchScreenCloseTxt: {color: colors.text, fontSize: 16, fontWeight: '700'},
+  searchScreenInputWrap: {
+    flex: 1, borderRadius: radius.button, borderWidth: 1, borderColor: colors.primary,
+    backgroundColor: colors.surfaceElevated,
+  },
+  searchScreenInput: {
+    color: colors.text, fontSize: font.body, paddingHorizontal: 16, paddingVertical: 12,
   },
 
   // ── Category button row ──
