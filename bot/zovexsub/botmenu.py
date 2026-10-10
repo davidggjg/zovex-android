@@ -153,7 +153,30 @@ async def _press(query: dict) -> None:
     picked = " · ".join(x for x in (choice.size, choice.look) if x)
     await localbot.edit(choice.chat_id, message_id, f"✅ נבחר: {picked}")
     if choice.done:
-        await choice.done(choice)
+        _detach(choice.done(choice), "עבודה מהבוט")
+
+
+# משימות רקע חיות. בלי החזקת הפניה אוסף הזבל של asyncio עלול לאסוף
+# משימה באמצע ריצה, והעבודה פשוט נעלמת
+_running: set = set()
+
+
+def _detach(coro, label: str) -> None:
+    """מריץ עבודה ארוכה ברקע כדי שלולאת העדכונים תישאר פנויה.
+
+    זה היה הבאג: _pump קרא לעבודה ב-await ישיר, ולכן מרגע הלחיצה על
+    הכפתור האחרון הבוט הפסיק להגיב לכל הודעה — הורדה, תרגום וצריבה
+    החזיקו את הלולאה היחידה. מהמשתמש זה נראה כמו בוט מת.
+    """
+    task = asyncio.ensure_future(coro)
+    _running.add(task)
+
+    def finished(done) -> None:
+        _running.discard(done)
+        if not done.cancelled() and done.exception():
+            log.error("%s נכשל: %s", label, done.exception())
+
+    task.add_done_callback(finished)
 
 
 async def _incoming(message: dict) -> None:
@@ -174,7 +197,7 @@ async def _incoming(message: dict) -> None:
         return
     if name.lower().endswith((".srt", ".ass", ".vtt", ".sub")):
         if on_subtitle:
-            await on_subtitle(chat, file_id, name)
+            _detach(on_subtitle(chat, file_id, name), "קובץ כתוביות")
         return
     await greet(chat, file_id, size, name)
 

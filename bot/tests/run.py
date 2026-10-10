@@ -282,6 +282,25 @@ def _fileid():
         raise AssertionError("סוג תמונה לא נדחה")
 
 
+@check("לולאת העדכונים של הבוט לא ממתינה לעבודה ארוכה")
+def _pump_stays_free():
+    """תפס בוט שהפסיק להגיב מרגע הלחיצה על הכפתור האחרון.
+
+    _pump קרא לעבודה ב-await ישיר, ולכן הורדה, תרגום וצריבה החזיקו את
+    הלולאה היחידה שמושכת עדכונים מטלגרם.
+    """
+    import inspect
+
+    from zovexsub import botmenu
+
+    body = inspect.getsource(botmenu)
+    assert "_detach(choice.done(choice)" in body, \
+        "העבודה מהכפתור חזרה להיקרא בתוך הלולאה"
+    assert "await choice.done(" not in body, "await ישיר על עבודה ארוכה"
+    assert "await on_subtitle(" not in body, "await ישיר על קובץ כתוביות"
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
