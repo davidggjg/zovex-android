@@ -863,7 +863,7 @@ function buildSeriesMap(movies) {
 
 // ── MovieCard ─────────────────────────────────────────────────────────────────
 
-const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = false}) {
+const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = false, showProgress = false}) {
   // בטלוויזיה חובה שיהיה סימון ברור לאן ה-focus הגיע — אחרת נראה כאילו השלט
   // "לא עובד". הסימון הזה מצויר עכשיו כולו בצד הנייטיב, ב-TvFocusableView.
   //
@@ -879,6 +879,13 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
     ? `עונה ${item.season_number || 1} · פרק ${item.episode_number}` : '';
   const borderColor = isLive ? colors.primary : 'transparent';
   const borderWidth = isLive ? 2 : 0;
+  // פס "המשך צפייה" (מהתמונות שדוד הביא). רק כשיש שני המספרים ממש —
+  // אין פה ברירת מחדל ל-0%, כי קו אדום בקצה כל כרטיס שאין לו נתון
+  // אמיתי הוא בדיוק סוג המצג-שווא שהמפרט אוסר ("אל תמציא נתון").
+  const dur = Number(item.duration) || 0;
+  const pos = Number(item.position) || 0;
+  const progressPct = (showProgress && dur > 0 && pos > 0)
+    ? Math.max(2, Math.min(100, (pos / dur) * 100)) : null;
   return (
     // עומק: צל על עטיפה חיצונית, רדיוס+חיתוך על הפנימית. על אותה תצוגה
     // Android מחתך את צל ה-elevation אם overflow:hidden יושב על אותו
@@ -908,6 +915,11 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
               מונח על התמונה ולא מתחת לשם, כדי שגובה הכרטיס לא ישתנה והשורה
               לא תצא עקומה. */}
           {epLabel ? <View style={styles.epBadge}><Text style={styles.epBadgeText} numberOfLines={1}>{epLabel}</Text></View> : null}
+          {progressPct != null && (
+            <View style={styles.progressTrack}>
+              <View style={[styles.progressFill, {width: `${progressPct}%`}]} />
+            </View>
+          )}
         </View>
         <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
       </TvFocusable>
@@ -917,7 +929,7 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
 
 // ── NetflixRow ────────────────────────────────────────────────────────────────
 
-const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, firstRow = false}) {
+const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, showProgress = false, firstRow = false}) {
   if (!items || items.length === 0) return null;
   return (
     <View style={styles.rowWrap}>
@@ -969,7 +981,8 @@ const NetflixRow = memo(function NetflixRow({title, items, onPress, isLiveRow, f
                                    offset: (CARD_W + 10) * i, index: i})}
         renderItem={({item, index}) => (
           <MovieCard item={item} onPress={onPress}
-            hasTVPreferredFocus={IS_TV && firstRow && index === 0} />
+            hasTVPreferredFocus={IS_TV && firstRow && index === 0}
+            showProgress={showProgress} />
         )}
       />
     </View>
@@ -1358,8 +1371,17 @@ export default function HomeScreen({navigation, route}) {
     const rows = [];
     if (liveChannels.length > 0)
       rows.push({title: t('common.live'), isLiveRow: true, items: liveChannels});
-    const histItems = history.map(h => movies.find(m => m.id === h.media_id)).filter(Boolean);
-    if (histItems.length > 0) rows.push({title: t('home.continueWatching'), items: histItems});
+    // /api/history כבר מצרף position/duration לכל שורה (ראה fix_history_resume
+    // בשרת) — אבל movies.find מחזיר את פריט ה**קטלוג** הנקי, בלי השדות האלה.
+    // בלעדי המיזוג כאן פס ההתקדמות תמיד null, כי שום מקום אחר לא מחזיק את
+    // שני המספרים יחד. עותק חדש ולא מוטציה על movies[i] — אותו פריט קטלוג
+    // מוצג גם בשורות אחרות (למשל "הכל"), בלי פס התקדמות שם.
+    const histItems = history.map(h => {
+      const m = movies.find(x => x.id === h.media_id);
+      return m ? {...m, position: h.position, duration: h.duration} : null;
+    }).filter(Boolean);
+    if (histItems.length > 0)
+      rows.push({title: t('home.continueWatching'), items: histItems, showProgress: true});
     const favItems = movies.filter(m => m && favIds.has(String(m.id)));
     if (favItems.length > 0) rows.push({title: t('home.myFavorites'), items: favItems});
     allCategories
@@ -1654,6 +1676,7 @@ export default function HomeScreen({navigation, route}) {
   const renderNetflixRow = useCallback(
     ({item: row, index}) => (
       <NetflixRow title={row.title} items={row.items} isLiveRow={row.isLiveRow}
+                  showProgress={row.showProgress}
                   onPress={handleItemPress} firstRow={index === 0} />
     ),
     [handleItemPress],
@@ -2388,6 +2411,11 @@ const styles = StyleSheet.create({
   // CARD_W+10 במילא (getItemLayout), כך שזה לא זז.
   cardShadow: {marginHorizontal: 5, borderRadius: radius.card, backgroundColor: colors.bg, ...elevation(3)},
   card: {borderRadius: radius.card, overflow: 'hidden'},
+  // פס "המשך צפייה" על התמונה (לא מתחתיה) — cardImg כבר חותך
+  // (overflow:hidden), אז flush לקצה התחתון נשאר בתוך הרדיוס המעוגל.
+  progressTrack: {position: 'absolute', left: 0, right: 0, bottom: 0, height: 3,
+                  backgroundColor: 'rgba(255,255,255,0.25)'},
+  progressFill: {height: '100%', backgroundColor: colors.primary},
   // cardFocused ו-tvFocusRing הוסרו: ההדגשה כולה מצוירת בנייטיב, מיד עם
   // תזוזת החץ. ה-elevation עבר ל-translationZ שם, וה-shadow* שהיה כאן הוא
   // iOS בלבד ומעולם לא צויר באנדרואיד.
