@@ -51,6 +51,7 @@ import {
 import {useIsFocused} from '@react-navigation/native';
 import {verifyPanelCode} from '../api/savedUpload';
 import TvFocusable from '../components/TvFocusable';
+import {colors, font} from '../theme/tokens';
 import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
@@ -2163,7 +2164,7 @@ export default function HomeScreen({navigation, route}) {
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#0a0a0a'},
+  container: {flex: 1, backgroundColor: colors.bg},
   exitCard: {
     backgroundColor: '#161616', borderRadius: 18, paddingVertical: 28,
     paddingHorizontal: 26, width: '86%', maxWidth: 460, alignItems: 'center',
@@ -2333,9 +2334,9 @@ const styles = StyleSheet.create({
   // מבטא אדום קטן ליד כותרת השורה — אותה שפה כמו הפס האדום שמסמן שידור חי,
   // רק כאן קבוע. באתר זה מגיע מ-gradient על הטקסט; כאן, בלי ליצור תלות
   // חדשה, פס צר ומעוגל נותן אפקט דומה בעלות אפסית.
-  rowTitleAccent: {width: 3, height: 15, borderRadius: 2, backgroundColor: '#e50914', marginLeft: 8},
+  rowTitleAccent: {width: 3, height: font.section, borderRadius: 2, backgroundColor: colors.primary, marginLeft: 8},
   liveIcon: {color: '#e50914', fontSize: 10, marginLeft: 6},
-  rowTitle: {color: '#fff', fontSize: 16, fontWeight: '800', textAlign: 'right'},
+  rowTitle: {color: colors.text, fontSize: font.section, fontWeight: font.weightBold, textAlign: 'right'},
   rowList: {paddingHorizontal: 10},
 
   // ── Card ──
@@ -2350,7 +2351,7 @@ const styles = StyleSheet.create({
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},
   noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1c1c1e'},
   thumbEmoji: {fontSize: 28},
-  cardTitle: {color: '#f2f2f2', fontSize: 11, fontWeight: '700', paddingTop: 5, paddingHorizontal: 2, textAlign: 'right'},
+  cardTitle: {color: colors.text, fontSize: font.cardTitle, fontWeight: '700', paddingTop: 5, paddingHorizontal: 2, textAlign: 'right'},
   badge: {position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2},
   liveBadge: {backgroundColor: '#e50914'},
   badgeText: {color: '#fff', fontSize: 9, fontWeight: '800'},
@@ -2360,10 +2361,10 @@ const styles = StyleSheet.create({
 
   // ── Grid ──
   grid: {paddingHorizontal: 8, paddingBottom: 20, paddingTop: 4},
-  empty: {color: '#555', textAlign: 'center', marginTop: 60, fontSize: 16},
+  empty: {color: colors.textSecondary, textAlign: 'center', marginTop: 60, fontSize: font.body},
   historyEmpty: {alignItems: 'center', marginTop: 80, paddingHorizontal: 30},
-  historyEmptyTitle: {color: '#aaa', fontSize: 18, fontWeight: '600', marginBottom: 8},
-  historyEmptyDesc: {color: '#555', fontSize: 13, textAlign: 'center'},
+  historyEmptyTitle: {color: colors.text, fontSize: font.section, fontWeight: font.weightMed, marginBottom: 8},
+  historyEmptyDesc: {color: colors.textMuted, fontSize: font.caption, textAlign: 'center'},
 
   // ── Offline-download playback prep overlay ──
   prepOverlay: {

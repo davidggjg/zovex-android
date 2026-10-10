@@ -56,7 +56,7 @@ export const font = {
   hero: tv(32, 44),       // כותרת ראשית
   screenTitle: tv(26, 34),
   section: tv(19, 26),    // כותרת שורה/מקטע
-  cardTitle: tv(15, 19),
+  cardTitle: tv(15, 17),
   body: tv(14, 18),
   label: tv(13, 16),
   caption: tv(12, 15),    // לא קטן מדי, גם בטלפון
