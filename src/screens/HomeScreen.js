@@ -52,7 +52,7 @@ import {useIsFocused} from '@react-navigation/native';
 import {verifyPanelCode} from '../api/savedUpload';
 import TvFocusable from '../components/TvFocusable';
 import {colors, font, elevation, radius} from '../theme/tokens';
-import {DarkGradient} from '../theme/components';
+import {DarkGradient, EmptyState} from '../theme/components';
 import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
@@ -137,7 +137,7 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
     const parts = [`מוריד ${pct}%`, mb, spd, eta ? `נותרו ${eta}` : null].filter(Boolean);
     return (
       <View style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}>
-        <ActivityIndicator size="small" color="#e50914" />
+        <ActivityIndicator size="small" color={colors.primary} />
         {!compact && (
           <Text style={mdStyles.dlBtnTxt}>{parts.join(' · ')}</Text>
         )}
@@ -1662,7 +1662,7 @@ export default function HomeScreen({navigation, route}) {
 
   const searchBorderColor = searchAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: ['rgba(255,255,255,0.08)', '#e50914'],
+    outputRange: ['rgba(255,255,255,0.08)', colors.primary],
   });
 
   // אלמנטים יציבים ל-FlatList. כשהם נכתבים inline הם נוצרים מחדש בכל רינדור,
@@ -1761,7 +1761,7 @@ export default function HomeScreen({navigation, route}) {
   if (loading) {
     return (
       <View style={styles.center}>
-        <ActivityIndicator size="large" color="#e50914" />
+        <ActivityIndicator size="large" color={colors.primary} />
         <Text style={styles.loadingText}>טוען...</Text>
       </View>
     );
@@ -2017,7 +2017,7 @@ export default function HomeScreen({navigation, route}) {
           <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); signOut(); }}>
-            <Text style={[styles.menuItemText, {color: '#e50914'}]}>🚪  יציאה מהחשבון</Text>
+            <Text style={[styles.menuItemText, {color: colors.primary}]}>🚪  יציאה מהחשבון</Text>
           </TvFocusable>
         </View>
       </OverlayWrap>
@@ -2075,7 +2075,7 @@ export default function HomeScreen({navigation, route}) {
           updateCellsBatchingPeriod={IS_TV ? 30 : 50}
           windowSize={IS_TV ? 3 : 5}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
+            <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor={colors.primary} />
           }
         />
       ) : (
@@ -2091,7 +2091,7 @@ export default function HomeScreen({navigation, route}) {
             windowSize={IS_TV ? 3 : 5}
             removeClippedSubviews={!IS_TV}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor="#e50914" />
+              <RefreshControl refreshing={refreshing} onRefresh={() => load(true, user)} tintColor={colors.primary} />
             }
             renderItem={renderGridItem}
             ListEmptyComponent={
@@ -2104,6 +2104,17 @@ export default function HomeScreen({navigation, route}) {
                 <View style={styles.historyEmpty}>
                   <Text style={styles.historyEmptyTitle}>עדיין לא הורדת שום דבר</Text>
                   <Text style={styles.historyEmptyDesc}>הורידו סרטים וסדרות ממסך הפרטים כדי לצפות גם בלי אינטרנט</Text>
+                </View>
+              ) : qTokens.length ? (
+                // SCREEN_BY_SCREEN §5: "הסבר קצר ואפשרות לשנות חיפוש" —
+                // לא רק "לא נמצאו תוצאות". clearSearch היא אותה פונקציה
+                // שכפתור ה-✕ בתיבת החיפוש כבר קורא לה.
+                <View style={styles.emptySearchWrap}>
+                  <EmptyState emoji="🔍" title="לא נמצאו תוצאות"
+                    desc={`לא מצאנו כלום בשביל "${search}". נסו מילה אחרת או בדקו את האיות.`} />
+                  <TvFocusable style={styles.emptyClearBtn} onPress={clearSearch}>
+                    <Text style={styles.emptyClearTxt}>נקה חיפוש</Text>
+                  </TvFocusable>
                 </View>
               ) : (
                 <Text style={styles.empty}>לא נמצאו תוצאות</Text>
@@ -2148,7 +2159,7 @@ export default function HomeScreen({navigation, route}) {
 
       {preparingPlaybackId && (
         <View style={styles.prepOverlay}>
-          <ActivityIndicator size="large" color="#e50914" />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.prepTxt}>מכין לצפייה...</Text>
         </View>
       )}
@@ -2283,7 +2294,7 @@ const styles = StyleSheet.create({
   },
   exitRow: {flexDirection: 'row-reverse', gap: 12, marginTop: 22},
   exitNoBtn: {
-    backgroundColor: '#e50914', borderRadius: 12,
+    backgroundColor: colors.primary, borderRadius: 12,
     paddingVertical: 14, paddingHorizontal: 26,
   },
   exitNoTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
@@ -2300,7 +2311,7 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: '#0a0a0a', justifyContent: 'center',
     alignItems: 'center', paddingHorizontal: 32,
   },
-  signInLogo: {color: '#e50914', fontSize: 42, fontWeight: '900', letterSpacing: 8, marginBottom: 28},
+  signInLogo: {color: colors.primary, fontSize: 42, fontWeight: '900', letterSpacing: 8, marginBottom: 28},
   signInTitle: {color: '#fff', fontSize: 26, fontWeight: '800', marginBottom: 8},
   signInSub: {color: '#666', fontSize: 14, marginBottom: 40, textAlign: 'center'},
   googleBtn: {
@@ -2318,7 +2329,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 16, paddingTop: 14, paddingBottom: 8,
   },
-  appTitle: {color: '#e50914', fontSize: 22, fontWeight: '900', letterSpacing: 6},
+  appTitle: {color: colors.primary, fontSize: 22, fontWeight: '900', letterSpacing: 6},
   // כפתור התמיכה בטלוויזיה — יושב בסרגל העליון, שם ה-D-pad מגיע אליו.
   tvSupportBtn: {
     backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
@@ -2334,7 +2345,7 @@ const styles = StyleSheet.create({
   userBtn: {padding: 2},
   userAvatar: {width: 34, height: 34, borderRadius: 17},
   userAvatarFallback: {
-    width: 34, height: 34, borderRadius: 17, backgroundColor: '#e50914',
+    width: 34, height: 34, borderRadius: 17, backgroundColor: colors.primary,
     justifyContent: 'center', alignItems: 'center',
   },
 
@@ -2383,10 +2394,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingBottom: 6, gap: 8,
   },
   activeCatChip: {
-    backgroundColor: 'rgba(229,9,20,0.18)', borderWidth: 1, borderColor: '#e50914',
+    backgroundColor: 'rgba(229,9,20,0.18)', borderWidth: 1, borderColor: colors.primary,
     borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6,
   },
-  activeCatChipTxt: {color: '#e50914', fontSize: 13, fontWeight: '700'},
+  activeCatChipTxt: {color: colors.primary, fontSize: 13, fontWeight: '700'},
   catsModalBtn: {
     backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333',
     borderRadius: 20, paddingHorizontal: 14, paddingVertical: 7,
@@ -2431,7 +2442,7 @@ const styles = StyleSheet.create({
   },
   menuAvatar: {width: 64, height: 64, borderRadius: 32, marginBottom: 10},
   menuAvatarFallback: {
-    width: 64, height: 64, borderRadius: 32, backgroundColor: '#e50914',
+    width: 64, height: 64, borderRadius: 32, backgroundColor: colors.primary,
     justifyContent: 'center', alignItems: 'center', marginBottom: 10,
   },
   menuName: {color: '#fff', fontSize: 16, fontWeight: '800', marginBottom: 2},
@@ -2447,7 +2458,7 @@ const styles = StyleSheet.create({
   // רק כאן קבוע. באתר זה מגיע מ-gradient על הטקסט; כאן, בלי ליצור תלות
   // חדשה, פס צר ומעוגל נותן אפקט דומה בעלות אפסית.
   rowTitleAccent: {width: 3, height: font.section, borderRadius: 2, backgroundColor: colors.primary, marginLeft: 8},
-  liveIcon: {color: '#e50914', fontSize: 10, marginLeft: 6},
+  liveIcon: {color: colors.primary, fontSize: 10, marginLeft: 6},
   rowTitle: {color: colors.text, fontSize: font.section, fontWeight: font.weightBold, textAlign: 'right'},
   rowList: {paddingHorizontal: 10},
 
@@ -2483,6 +2494,10 @@ const styles = StyleSheet.create({
   // ── Grid ──
   grid: {paddingHorizontal: 8, paddingBottom: 20, paddingTop: 4},
   empty: {color: colors.textSecondary, textAlign: 'center', marginTop: 60, fontSize: font.body},
+  emptySearchWrap: {marginTop: 30, alignItems: 'center'},
+  emptyClearBtn: {marginTop: 4, paddingVertical: 10, paddingHorizontal: 20,
+                  borderRadius: radius.pill, backgroundColor: colors.hairline},
+  emptyClearTxt: {color: colors.text, fontSize: 14, fontWeight: '700'},
   historyEmpty: {alignItems: 'center', marginTop: 80, paddingHorizontal: 30},
   historyEmptyTitle: {color: colors.text, fontSize: font.section, fontWeight: font.weightMed, marginBottom: 8},
   historyEmptyDesc: {color: colors.textMuted, fontSize: font.caption, textAlign: 'center'},
