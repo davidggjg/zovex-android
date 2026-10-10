@@ -74,3 +74,18 @@ async def send_video(chat_id, path: Path, *, caption: str = "",
         fields["thumbnail"] = thumb.resolve().as_uri()
     log.info("שולח %.0fMB דרך השרת המקומי", size / 1048576)
     return await call("sendVideo", **fields)
+
+
+async def find_chat() -> list[dict]:
+    """מי כבר לחץ /start אצל הבוט.
+
+    בוט אינו יכול לפתוח שיחה — רק לענות למי שפנה אליו. לכן צריך את
+    מזהה הצ'אט, והדרך להשיג אותו היא לקרוא את העדכונים האחרונים.
+    """
+    found: dict[int, dict] = {}
+    for update in await call("getUpdates", limit=100, timeout=0):
+        message = update.get("message") or update.get("edited_message") or {}
+        chat = message.get("chat") or {}
+        if chat.get("id"):
+            found[chat["id"]] = chat
+    return list(found.values())

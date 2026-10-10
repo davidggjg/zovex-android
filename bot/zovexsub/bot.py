@@ -18,8 +18,8 @@ from telethon.errors import FloodWaitError
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import (allowlist, botapi, config, diagnose, fastio, fetch, media,
-               pipeline, progress as prog)
+from . import (allowlist, botapi, config, diagnose, fastio, fetch,
+               localbot, media, pipeline, progress as prog)
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -729,6 +729,26 @@ async def _burn(job: Job, work: Path) -> None:
             return await client.send_file(where, handle, **common)
         return await client.send_file(where, str(burned),
                                       progress_callback=on_upload, **common)
+
+    # עד 2GB דרך השרת המקומי: הוא קורא את הקובץ מהדיסק, בלי העלאה
+    # בכלל. מעבר לתקרה הזאת גם שרת מקומי לא עוזר, ושם נדרש Premium
+    if (localbot.available() and config.BOT_CHAT
+            and size <= localbot.MAX_BYTES):
+        try:
+            await localbot.send_video(
+                config.BOT_CHAT, burned,
+                caption="🔥 וידאו עם כתוביות צרובות",
+                duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
+                width=int(stream.get("width", 0) or 0),
+                height=int(stream.get("height", 0) or 0),
+                thumb=thumb)
+            log.info("נמסר דרך הבוט המקומי (%.0fMB)", size / 1048576)
+            await _safe_delete(job.status)
+            pipeline.cleanup(work)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("המסירה דרך הבוט נכשלה (%s: %s) — שולחים כרגיל",
+                        type(exc).__name__, exc)
 
     uploader, which = botapi.uploader(size, user_client)
     log.info("הפלט %.2fGB — מועלה מחשבון %s", size / 1024 ** 3, which)

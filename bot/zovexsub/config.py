@@ -29,6 +29,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 # שרת Bot API מקומי. ריק = אין, והכל עובר דרך חשבון המשתמש כמו קודם.
 # השרת הזה הוא מה שמעלה את תקרת הבוט מ-50MB ל-2GB
 BOT_API_URL = os.getenv("BOT_API_URL", "").strip()
+# לאן הבוט מוסר את הפלט. בוט אינו יכול לפתוח שיחה, ולכן צריך מזהה של
+# מי שכבר לחץ /start אצלו. ריק = מוסרים כמו קודם, מחשבון המשתמש
+BOT_CHAT = os.getenv("BOT_CHAT", "").strip()
 # סשן של חשבון משתמש רגיל (לא Premium). ריק = הכל דרך ה-Premium
 TG_SESSION_LITE = os.getenv("TG_SESSION_LITE", "").strip()
 # מחרוזת סשן של החשבון הרגיל. עדיפה על קובץ — ראו botapi.start.
