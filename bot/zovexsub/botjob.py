@@ -45,9 +45,40 @@ class Screen:
             log.debug("עדכון מסך נכשל: %s", exc)
 
 
-async def _fetch(chat_id, file_id: str, name: str, work: Path) -> Path | None:
+def _folder_size(folder: str) -> int:
+    """כמה נתונים יש כבר בתיקיית השרת — סימן שההורדה מתקדמת."""
+    if not folder:
+        return 0
+    root = Path(folder)
+    if not root.exists():
+        return 0
+    try:
+        return sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+async def _fetch(chat_id, file_id: str, name: str, work: Path,
+                 screen: "Screen") -> Path | None:
     """מביא את הסרטון לתיקיית העבודה — בלי הורדה מטלגרם."""
-    found, why = await localbot.locate(file_id)
+    # getFile במצב --local מוריד את הקובץ מטלגרם לפני שהוא מחזיר נתיב.
+    # זו הורדה אמיתית שלוקחת זמן, ובלי דופק המסך נראה תקוע — בדיוק
+    # אותה תקלה שתוקנה כבר בשאר הצינור
+    async def beat() -> None:
+        began = time.monotonic()
+        while True:
+            await asyncio.sleep(config.BOT_EDIT_EVERY)
+            waited = int(time.monotonic() - began)
+            grown = _folder_size(config.BOT_API_DATA)
+            extra = f" · {grown / 1048576:.0f}MB בשרת" if grown else ""
+            await screen.show(f"📥 השרת מוריד את הסרטון · "
+                              f"{waited // 60}:{waited % 60:02d}{extra}")
+
+    pulse = asyncio.create_task(beat())
+    try:
+        found, why = await localbot.locate(file_id)
+    finally:
+        pulse.cancel()
     if found is None:
         # הסיבה נשלחת למשתמש ולא רק ללוג: בלעדיה כל כשל נראה זהה,
         # וההודעה הכללית הקודמת שלחה לחפש בכיוון הלא נכון
@@ -72,7 +103,8 @@ async def run(choice) -> None:
     screen = Screen(chat_id, note.get("message_id", 0))
 
     try:
-        source = await _fetch(chat_id, choice.file_id, choice.name, work)
+        source = await _fetch(chat_id, choice.file_id, choice.name,
+                              work, screen)
         if source is None:
             pipeline.cleanup(work)
             return
