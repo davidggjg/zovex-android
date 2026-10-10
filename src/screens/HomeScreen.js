@@ -1944,31 +1944,37 @@ export default function HomeScreen({navigation, route}) {
   const isFavActive = category === 'מועדפים';
   const BottomNav = !IS_TV && (
     <View style={styles.bottomNavWrap} pointerEvents="box-none">
-      <View style={styles.bottomNav}>
-        <TvFocusable style={styles.bottomNavItem}
-          onPress={() => { setCategory('הכל'); clearSearch(); }}>
-          <Text style={[styles.bottomNavIcon, isHomeActive && styles.bottomNavIconActive]}>🏠</Text>
-          <Text style={[styles.bottomNavLabel, isHomeActive && styles.bottomNavLabelActive]}>בית</Text>
-        </TvFocusable>
-        <TvFocusable style={styles.bottomNavItem}
-          onPress={() => setShowSearchScreen(true)}>
-          <Text style={styles.bottomNavIcon}>🔍</Text>
-          <Text style={styles.bottomNavLabel}>חיפוש</Text>
-        </TvFocusable>
-        <TvFocusable style={styles.bottomNavItem}
-          onPress={() => { setCategory('מועדפים'); clearSearch(); }}>
-          <Text style={[styles.bottomNavIcon, isFavActive && styles.bottomNavIconActive]}>❤️</Text>
-          <Text style={[styles.bottomNavLabel, isFavActive && styles.bottomNavLabelActive]}>מועדפים</Text>
-        </TvFocusable>
-        <TvFocusable style={styles.bottomNavItem}
-          onPress={() => (user ? setShowUserMenu(true) : startSignIn())}>
-          {user && user.picture ? (
-            <Image source={{uri: user.picture}} style={styles.bottomNavAvatar} />
-          ) : (
-            <Text style={styles.bottomNavIcon}>👤</Text>
-          )}
-          <Text style={styles.bottomNavLabel}>שלי</Text>
-        </TvFocusable>
+      {/* שכבת צל נפרדת מהמילוי — כמו cardShadow+card. רקע שקוף-למחצה על
+          אותו View שנושא elevation "מורח" את הצל ומחליש אותו; רקע אטום
+          בשכבה הנפרדת נותן צל חד שבאמת קורא "צף מעל התוכן", לא מדבקה
+          שטוחה. דוד: "נטפליקס עשה אותו תלת מימד מטורף, שלנו נראה זרוק". */}
+      <View style={styles.bottomNavShadow}>
+        <View style={styles.bottomNav}>
+          <TvFocusable style={[styles.bottomNavItem, isHomeActive && styles.bottomNavItemActive]}
+            onPress={() => { setCategory('הכל'); clearSearch(); }}>
+            <Text style={[styles.bottomNavIcon, isHomeActive && styles.bottomNavIconActive]}>🏠</Text>
+            <Text style={[styles.bottomNavLabel, isHomeActive && styles.bottomNavLabelActive]}>בית</Text>
+          </TvFocusable>
+          <TvFocusable style={styles.bottomNavItem}
+            onPress={() => setShowSearchScreen(true)}>
+            <Text style={styles.bottomNavIcon}>🔍</Text>
+            <Text style={styles.bottomNavLabel}>חיפוש</Text>
+          </TvFocusable>
+          <TvFocusable style={[styles.bottomNavItem, isFavActive && styles.bottomNavItemActive]}
+            onPress={() => { setCategory('מועדפים'); clearSearch(); }}>
+            <Text style={[styles.bottomNavIcon, isFavActive && styles.bottomNavIconActive]}>❤️</Text>
+            <Text style={[styles.bottomNavLabel, isFavActive && styles.bottomNavLabelActive]}>מועדפים</Text>
+          </TvFocusable>
+          <TvFocusable style={styles.bottomNavItem}
+            onPress={() => (user ? setShowUserMenu(true) : startSignIn())}>
+            {user && user.picture ? (
+              <Image source={{uri: user.picture}} style={styles.bottomNavAvatar} />
+            ) : (
+              <Text style={styles.bottomNavIcon}>👤</Text>
+            )}
+            <Text style={styles.bottomNavLabel}>שלי</Text>
+          </TvFocusable>
+        </View>
       </View>
     </View>
   );
@@ -2685,18 +2691,32 @@ const styles = StyleSheet.create({
     position: 'absolute', left: 0, right: 0, bottom: 58,
     alignItems: 'center', zIndex: 999,
   },
+  // צל נפרד מהמילוי, על רקע אטום — ראה ההסבר המלא ליד BottomNav. בלי
+  // השכבה הזאת elevation מצטייר על אותו View השקוף-למחצה של המילוי,
+  // והצל יוצא חלש ומטושטש במקום צל חד שבאמת "מרים" את הסרגל מהתוכן.
+  bottomNavShadow: {
+    borderRadius: radius.pill, backgroundColor: '#050507', ...elevation(14),
+  },
   bottomNav: {
-    flexDirection: 'row', backgroundColor: 'rgba(17,19,25,0.92)',
-    borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: 6,
-    borderWidth: 1, borderColor: colors.border, ...elevation(6),
+    flexDirection: 'row', backgroundColor: 'rgba(22,24,32,0.97)',
+    borderRadius: radius.pill, paddingVertical: 9, paddingHorizontal: 8,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.10)', overflow: 'hidden',
   },
   bottomNavItem: {alignItems: 'center', justifyContent: 'center',
-                  paddingHorizontal: 16, paddingVertical: 4, minWidth: 64},
-  bottomNavIcon: {fontSize: 20, opacity: 0.7},
-  bottomNavIconActive: {opacity: 1},
-  bottomNavLabel: {color: colors.textMuted, fontSize: 10, fontWeight: '600', marginTop: 2},
+                  paddingHorizontal: 16, paddingVertical: 6, minWidth: 64,
+                  borderRadius: radius.pill},
+  // "כרית" אדומה-עדינה מאחורי הפריט הפעיל — אותו טוקן focusTint שכבר
+  // משמש את activeCatChip. זה מה שהיה חסר ל"בית/מועדפים": בלי זה ההבדל
+  // בין פעיל ללא-פעיל היה רק עמעום אייקון, בלי שום תחושת עומק.
+  bottomNavItemActive: {backgroundColor: colors.focusTint},
+  bottomNavIcon: {fontSize: 21, opacity: 0.65},
+  bottomNavIconActive: {
+    opacity: 1, textShadowColor: 'rgba(255,61,82,0.7)',
+    textShadowRadius: 10, textShadowOffset: {width: 0, height: 0},
+  },
+  bottomNavLabel: {color: colors.textMuted, fontSize: 10, fontWeight: '600', marginTop: 3},
   bottomNavLabelActive: {color: colors.primaryHi, fontWeight: '800'},
-  bottomNavAvatar: {width: 20, height: 20, borderRadius: 10},
+  bottomNavAvatar: {width: 21, height: 21, borderRadius: 11},
   tgBubbleWrap: {
     // bottom מוגבה כדי לא להיחסם ע"י באנר הפרסומת (50) וכעת גם ע"י
     // הסרגל הצף (עוד ~64, ראה bottomNavWrap) — אותו נימוק בדיוק, שכבה
