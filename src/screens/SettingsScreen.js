@@ -2,6 +2,7 @@ import React, {useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, ScrollView, StatusBar} from 'react-native';
 import {LANGS, getLanguage, setLanguage, t} from '../i18n';
 import TvFocusable from '../components/TvFocusable';
+import {colors} from '../theme/tokens';
 import {APP_VERSION} from '../api/movies';
 
 // מסך הגדרות. כרגע שפה בלבד — נבנה כמסך ולא כחלון קופץ כדי שיהיה מקום
@@ -71,7 +72,7 @@ export default function SettingsScreen({navigation}) {
 }
 
 const s = StyleSheet.create({
-  wrap: {flex: 1, backgroundColor: '#0f1115'},
+  wrap: {flex: 1, backgroundColor: colors.bg},
   top: {flexDirection: 'row', alignItems: 'center', paddingTop: 14, paddingBottom: 12,
         paddingHorizontal: 12, borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: 'rgba(255,255,255,0.08)'},
@@ -81,7 +82,7 @@ const s = StyleSheet.create({
   body: {padding: 16, paddingBottom: 40},
   section: {color: '#9aa0a6', fontSize: 13, marginTop: 14, marginBottom: 8,
             marginHorizontal: 4},
-  card: {backgroundColor: '#15181f', borderRadius: 14, overflow: 'hidden'},
+  card: {backgroundColor: colors.surfaceElevated, borderRadius: 14, overflow: 'hidden'},
   row: {flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
         paddingVertical: 15, paddingHorizontal: 16},
   rowTxt: {color: '#e8eaed', fontSize: 16},
@@ -92,9 +93,9 @@ const s = StyleSheet.create({
   free: {borderTopWidth: StyleSheet.hairlineWidth,
          borderTopColor: 'rgba(255,255,255,0.08)',
          paddingVertical: 14, paddingHorizontal: 16},
-  freeTtl: {color: '#7ee2a0', fontSize: 14, fontWeight: '700', marginBottom: 6},
+  freeTtl: {color: colors.success, fontSize: 14, fontWeight: '700', marginBottom: 6},
   freeTxt: {color: '#9aa0a6', fontSize: 13, lineHeight: 19, marginBottom: 4},
   freeBtn: {alignSelf: 'flex-start', marginTop: 8, paddingVertical: 8,
-            paddingHorizontal: 14, borderRadius: 18, backgroundColor: '#e50914'},
+            paddingHorizontal: 14, borderRadius: 18, backgroundColor: colors.primary},
   freeBtnTxt: {color: '#fff', fontSize: 13, fontWeight: '700'},
 });

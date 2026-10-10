@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useRef, useMemo, useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
+import {colors} from '../theme/tokens';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
 import NativePlayer, {vtFallbackSrc} from '../components/NativePlayer';
@@ -1650,7 +1651,7 @@ const styles = StyleSheet.create({
   errorTitle: {color: '#fff', fontSize: 20, fontWeight: '800', marginBottom: 10, textAlign: 'center'},
   errorBody: {color: '#bbb', fontSize: 14, lineHeight: 21, textAlign: 'center', marginBottom: 20},
   errorBtn: {
-    backgroundColor: '#e50914', borderRadius: 10,
+    backgroundColor: colors.primary, borderRadius: 10,
     paddingHorizontal: 30, paddingVertical: 11, marginTop: 8,
   },
   errorBtnTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
