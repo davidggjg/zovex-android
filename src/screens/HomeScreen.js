@@ -289,21 +289,40 @@ function MovieDetailModal({
           <Text style={mdStyles.closeTxt}>✕</Text>
         </TvFocusable>
         <ScrollView showsVerticalScrollIndicator={false} bounces={false}>
+          {/* תמונת hero עם gradient מאחורי הכותרת (SCREEN_BY_SCREEN §3) —
+              רק כשיש תמונה: בלי גב, אין על מה לשים גרדיאנט, והכותרת חוזרת
+              לשבת בראש הגוף הרגיל, בלי להעמיד טקסט על רקע ריק. */}
           {item.thumbnail_url ? (
-            <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
+            <View style={mdStyles.thumbWrap}>
+              <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
+              <DarkGradient />
+              <View style={mdStyles.thumbTitleWrap}>
+                <Text style={mdStyles.title}>{displayTitle}</Text>
+                {tappedEp ? (
+                  <Text style={mdStyles.epHeading}>
+                    עונה {tappedEp.season_number || 1} · פרק {tappedEp.episode_number}
+                    {tappedEp.episode_title ? `  —  ${tappedEp.episode_title}` : ''}
+                  </Text>
+                ) : null}
+              </View>
+            </View>
           ) : (
             <View style={mdStyles.noThumb}>
               <Text style={{fontSize: 52}}>{item.is_live ? '📡' : '🎬'}</Text>
             </View>
           )}
           <View style={mdStyles.body}>
-            <Text style={mdStyles.title}>{displayTitle}</Text>
-            {tappedEp ? (
-              <Text style={mdStyles.epHeading}>
-                עונה {tappedEp.season_number || 1} · פרק {tappedEp.episode_number}
-                {tappedEp.episode_title ? `  —  ${tappedEp.episode_title}` : ''}
-              </Text>
-            ) : null}
+            {!item.thumbnail_url && (
+              <>
+                <Text style={mdStyles.title}>{displayTitle}</Text>
+                {tappedEp ? (
+                  <Text style={mdStyles.epHeading}>
+                    עונה {tappedEp.season_number || 1} · פרק {tappedEp.episode_number}
+                    {tappedEp.episode_title ? `  —  ${tappedEp.episode_title}` : ''}
+                  </Text>
+                ) : null}
+              </>
+            )}
             {!!description && (
               <Text style={mdStyles.desc} numberOfLines={5}>{description}</Text>
             )}
@@ -429,7 +448,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
               <Text style={mdStyles.epsHeader}>פרקים ({visibleEpisodes.length})</Text>
               {seasonLoading ? (
                 <View style={{alignItems: 'center', paddingVertical: 30}}>
-                  <ActivityIndicator size="large" color="#e50914" />
+                  <ActivityIndicator size="large" color={colors.primary} />
                 </View>
               ) : (
                 visibleEpisodes.map(ep => (
@@ -505,7 +524,7 @@ const mdStyles = StyleSheet.create({
   trailerHead: {flexDirection: 'row', alignItems: 'center',
                 justifyContent: 'space-between', marginBottom: 8},
   trailerTtl: {color: '#fff', fontSize: 14, fontWeight: '800'},
-  trailerClose: {color: '#888', fontSize: 12, fontWeight: '600'},
+  trailerClose: {color: colors.textMuted, fontSize: 12, fontWeight: '600'},
   // יחס 16:9 קבוע, כדי שהמסגרת לא תקפוץ בזמן הטעינה.
   // ברוחב מלא על מסך 16:9 הטריילר תופס כמעט את כל הגובה, דוחף את כפתורי
   // הניגון אל מחוץ לתצוגה, ומנוע ה-focus הגאומטרי מתקשה למצוא אותם. בטלוויזיה
@@ -515,73 +534,87 @@ const mdStyles = StyleSheet.create({
                  borderRadius: 12, overflow: 'hidden', backgroundColor: '#000'},
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#0a0a0a',
+    backgroundColor: colors.bg,
     zIndex: 100,
   },
   sheet: {flex: 1, overflow: 'hidden', backgroundColor: colors.bg},
   closeBtn: {
     position: 'absolute', top: 14, right: 14, zIndex: 10,
-    backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 20,
+    backgroundColor: colors.overlay, borderRadius: 20,
     width: 38, height: 38, justifyContent: 'center', alignItems: 'center',
   },
   closeTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
-  thumb: {width: '100%', height: 260, resizeMode: 'cover'},
+  // hero עם gradient (SCREEN_BY_SCREEN §3): thumbWrap הוא ה-view הממוקם,
+  // thumb ממלא אותו לגמרי, ו-thumbTitleWrap יושב מעליו בתחתית — בדיוק
+  // מבנה ה-hero שבמסך הבית, רק עם padding-bottom קטן יותר כי אין כאן
+  // שני כפתורים גדולים מתחת לכותרת.
+  thumbWrap: {width: '100%', height: 260},
+  thumb: {...StyleSheet.absoluteFillObject, resizeMode: 'cover'},
+  thumbTitleWrap: {position: 'absolute', left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 14},
   noThumb: {width: '100%', height: 200, backgroundColor: colors.surfaceElevated, justifyContent: 'center', alignItems: 'center'},
   body: {padding: 18},
-  title: {color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8},
-  epHeading: {color: '#ddd', fontSize: 14, fontWeight: '700', textAlign: 'right', marginTop: -4, marginBottom: 8},
-  desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
+  title: {
+    color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8,
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8,
+  },
+  epHeading: {
+    color: '#ddd', fontSize: 14, fontWeight: '700', textAlign: 'right', marginTop: -4, marginBottom: 8,
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 0, height: 1}, textShadowRadius: 6,
+  },
+  desc: {color: colors.textSecondary, fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
   actionsRow: {flexDirection: 'row', gap: 10},
   playBtn: {flex: 1, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
   // לב ריק/מלא. רוחב קבוע כדי שהמעבר בין ♡ ל-❤ לא יזיז את שאר הכפתורים.
   favBtn: {width: 52, marginRight: 8, borderRadius: 12, paddingVertical: 14,
            alignItems: 'center', justifyContent: 'center',
-           backgroundColor: 'rgba(255,255,255,0.10)'},
-  favBtnOn: {backgroundColor: 'rgba(229,9,20,0.18)'},
-  favTxt: {fontSize: 20, color: '#e8eaed'},
-  favTxtOn: {color: '#ff4d5e'},
+           backgroundColor: colors.hairline},
+  favBtnOn: {backgroundColor: colors.focusTint},
+  favTxt: {fontSize: 20, color: colors.text},
+  favTxtOn: {color: colors.primaryHi},
   rmBtn: {width: 52, borderRadius: 12, paddingVertical: 14,
           alignItems: 'center', justifyContent: 'center',
-          backgroundColor: 'rgba(255,255,255,0.10)'},
-  rmTxt: {fontSize: 18, color: '#e8eaed'},
+          backgroundColor: colors.hairline},
+  rmTxt: {fontSize: 18, color: colors.text},
   shareBtn: {
-    backgroundColor: '#1f1f1f', borderRadius: 12, paddingVertical: 14,
+    backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14,
     paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
   },
   shareTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
   dlBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-    backgroundColor: '#2a2a2a', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16,
+    backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16,
   },
   dlBtnCompact: {
     paddingVertical: 6, paddingHorizontal: 8, borderRadius: 16, marginHorizontal: 6, minWidth: 34,
   },
-  dlBtnTxt: {color: '#e5e5e5', fontSize: 13, fontWeight: '700'},
-  dlBtnDone: {backgroundColor: 'rgba(76,175,80,0.16)'},
-  dlBtnDoneTxt: {color: '#4caf50'},
+  dlBtnTxt: {color: colors.text, fontSize: 13, fontWeight: '700'},
+  // ירוק נשאר פונקציונלי (סטטוס "הורד") ולא הופך לאדום המותג — אדום כאן
+  // היה מתפרש כשגיאה/אזהרה, לא כהצלחה.
+  dlBtnDone: {backgroundColor: 'rgba(60,191,138,0.16)'},
+  dlBtnDoneTxt: {color: colors.success},
   epsSection: {paddingHorizontal: 16, paddingBottom: 24},
-  seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: '#222'},
-  seasonBtn: {backgroundColor: '#2a2a2a', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
+  seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: colors.border},
+  seasonBtn: {backgroundColor: colors.surfaceElevated, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
   // עונה יחידה — נראית כתווית ולא ככפתור, כדי שלא תזמין לחיצה שלא תעשה כלום
   seasonBtnStatic: {backgroundColor: colors.surfaceElevated, opacity: 0.85},
-  seasonBtnTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
+  seasonBtnTxt: {color: colors.text, fontSize: 14, fontWeight: '700'},
   seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
   seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180},
   seasonPickerItem: {paddingVertical: 18, paddingHorizontal: 28, alignItems: 'center'},
-  seasonPickerItemActive: {backgroundColor: '#2a2a2a'},
-  seasonPickerTxt: {color: '#ccc', fontSize: 16, fontWeight: '600'},
-  seasonPickerTxtActive: {color: '#e50914', fontSize: 17, fontWeight: '800'},
-  epsHeader: {color: '#fff', fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10, paddingTop: 10},
-  epRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#1a1a1a'},
+  seasonPickerItemActive: {backgroundColor: colors.focusTint},
+  seasonPickerTxt: {color: colors.textSecondary, fontSize: 16, fontWeight: '600'},
+  seasonPickerTxtActive: {color: colors.primaryHi, fontSize: 17, fontWeight: '800'},
+  epsHeader: {color: colors.text, fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10, paddingTop: 10},
+  epRow: {flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.border},
   // הפרק שממנו נפתח החלון. רק הדגשה עדינה של הרקע — הפלטה לא משתנה.
-  epRowCurrent: {backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8},
-  epThumb: {width: 110, height: 62, borderRadius: 6, resizeMode: 'cover'},
-  epThumbEmpty: {width: 110, height: 62, borderRadius: 6, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center'},
+  epRowCurrent: {backgroundColor: colors.focusTint, borderRadius: 8},
+  epThumb: {width: 110, height: 62, borderRadius: radius.sm, resizeMode: 'cover'},
+  epThumbEmpty: {width: 110, height: 62, borderRadius: radius.sm, backgroundColor: colors.surfaceElevated, justifyContent: 'center', alignItems: 'center'},
   epInfo: {flex: 1, marginHorizontal: 10},
-  epNum: {color: '#e50914', fontSize: 11, fontWeight: '700', textAlign: 'right'},
-  epTitle: {color: '#f2f2f2', fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 3},
-  epPlayIcon: {color: '#e50914', fontSize: 14},
+  epNum: {color: colors.primaryHi, fontSize: 11, fontWeight: '700', textAlign: 'right'},
+  epTitle: {color: colors.text, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 3},
+  epPlayIcon: {color: colors.primary, fontSize: 14},
 });
 
 // ── HeroBanner ────────────────────────────────────────────────────────────────
