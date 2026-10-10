@@ -182,7 +182,10 @@ def _ladder():
 def _mbps_scales():
     ceiling = config.UPLOAD_CEILING_MB
     try:
-        config.UPLOAD_CEILING_MB = 500
+        # התקרה גדלה יחד עם קצב הסיביות של הפרופילים אחרי הורדת
+        # ה-CRF. ערך נמוך מדי מפיל את כל הסולם לדרגה האחרונה,
+        # ואז הבדיקה לא בודקת כלום
+        config.UPLOAD_CEILING_MB = 1000
         low = config.profile_name(config.profile_for(2000 * 1024 ** 2, 6360, 720))
         high = config.profile_name(config.profile_for(2000 * 1024 ** 2, 6360, 1080))
         assert low != high, "הרזולוציה לא השפיעה על בחירת הפרופיל"
@@ -298,6 +301,52 @@ def _pump_stays_free():
         "העבודה מהכפתור חזרה להיקרא בתוך הלולאה"
     assert "await choice.done(" not in body, "await ישיר על עבודה ארוכה"
     assert "await on_subtitle(" not in body, "await ישיר על קובץ כתוביות"
+
+
+
+@check("שמע לא תואם מומר ל-AAC ולא מועתק כמו שהוא")
+def _audio_converted():
+    """תפס סרטון שיצא אילם ברוב המכשירים.
+
+    EAC3 הועתק פנימה ב--c:a copy, הווידאו התנגן והקול שתק. רצועת
+    השמע גם שקלה יותר מהווידאו, כי 640kbps עברו ללא נגיעה.
+    """
+    import inspect
+
+    from zovexsub import media
+
+    body = inspect.getsource(media)
+    assert '"-c:a", "copy", "-movflags"' not in body, "העתקה עיוורת חזרה"
+    assert "_audio_args" in body
+
+    async def pick(streams):
+        async def fake(_path):
+            return {"streams": streams}
+        real, media.probe = media.probe, fake
+        try:
+            return await media._audio_args(Path("x.mp4"))
+        finally:
+            media.probe = real
+
+    aac = asyncio.run(pick([{"codec_type": "audio", "codec_name": "aac",
+                             "channels": 2}]))
+    assert aac == ["-c:a", "copy"], aac
+
+    eac3 = asyncio.run(pick([{"codec_type": "audio", "codec_name": "eac3",
+                              "channels": 6}]))
+    assert "aac" in eac3 and "-ac" in eac3, eac3
+    assert eac3[eac3.index("-ac") + 1] == "2", "5.1 לא עורבל לסטריאו"
+
+    silent = asyncio.run(pick([{"codec_type": "video"}]))
+    assert silent == ["-an"], silent
+
+
+@check("ערכי ה-CRF בטווח שמתאים לצפייה ולא רק לגודל")
+def _crf_sane():
+    for name, settings in config.PROFILES.items():
+        crf = settings["crf"]
+        top = 24 if settings["codec"] == "libx265" else 21
+        assert crf <= top, f"{name}: CRF{crf} גבוה מדי ל-{settings['codec']}"
 
 
 

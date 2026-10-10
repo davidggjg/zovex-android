@@ -502,6 +502,44 @@ def rtl_copy(srt: Path) -> Path:
     return dst
 
 
+# קודקי שמע שנגנים ניידים ולקוחות טלגרם מנגנים בלי יוצא מן הכלל.
+# EAC3, DTS ו-TrueHD אינם ביניהם: הם עוברים בסרטון, הווידאו מתנגן,
+# והשמע שותק ברוב המכשירים — תקלה שקשה לאתר כי במחשב היא לא קיימת
+PORTABLE_AUDIO = {"aac", "mp3"}
+
+
+async def _audio_args(video: Path) -> list[str]:
+    """שומר שמע תואם כמו שהוא, וממיר כל השאר ל-AAC.
+
+    העתקה עיוורת הייתה הבאג: מקור EAC3 הועתק פנימה, ואצל רוב הצופים
+    הסרטון יצא אילם. היא גם הסבירה למה רצועת השמע שקלה יותר מהווידאו —
+    640kbps של EAC3 מול וידאו דחוס.
+
+    המרה רק כשצריך: קידוד מחדש של שמע תקין רק מאבד איכות.
+    """
+    try:
+        info = await probe(video)
+    except Exception as exc:  # noqa: BLE001 — בלי מידע ממירים, זה הבטוח
+        log.warning("לא ניתן לקרוא את רצועת השמע (%s) — ממירים ל-AAC", exc)
+        info = {}
+    tracks = [s for s in info.get("streams", [])
+              if s.get("codec_type") == "audio"]
+    if not tracks:
+        return ["-an"]
+    codec = (tracks[0].get("codec_name") or "").lower()
+    channels = int(tracks[0].get("channels") or 2)
+    if codec in PORTABLE_AUDIO:
+        log.info("שמע %s נשאר כמו שהוא", codec)
+        return ["-c:a", "copy"]
+    # ערבול ל-stereo: רצועת 5.1 שמומרת כמו שהיא יוצאת חלשה בדיבור
+    # בנגן שמנגן רק שני ערוצים, וזה בדיוק מה שחשוב בכתוביות
+    log.info("שמע %s (%d ערוצים) מומר ל-AAC — אחרת אין קול ברוב המכשירים",
+             codec or "לא ידוע", channels)
+    return ["-c:a", "aac", "-b:a", str(config.AUDIO_BITRATE),
+            "-ac", "2" if channels > 2 else str(max(1, channels)),
+            "-ar", "48000"]
+
+
 def _escape(path: Path) -> str:
     return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
@@ -750,7 +788,8 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
         "-hwaccel", "auto",
         "-i", str(video), "-vf", _video_filters(marked, credit, style),
     ] + _encoder_args(settings, threads, duration)
-    cmd += ["-c:a", "copy", "-movflags", "+faststart", str(dst)]
+    cmd += await _audio_args(video)
+    cmd += ["-movflags", "+faststart", str(dst)]
 
     limit = config.burn_timeout(duration)
     log.info("צריבה בתהליך אחד, %d חוטים, תקרת זמן %.0f דקות", threads, limit / 60)
@@ -862,7 +901,8 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     await _run_progress([
         "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
         "-i", str(listing), "-i", str(video),
-        "-map", "0:v:0", "-map", "1:a:0?", "-c", "copy",
+        "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy",
+    ] + await _audio_args(video) + [
         "-movflags", "+faststart", "-shortest", str(dst),
     ], duration, assembling, timeout=limit)
 

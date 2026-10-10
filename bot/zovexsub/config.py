@@ -107,24 +107,28 @@ BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 300)
 #   H.265 10bit            38s   4216KB   (לא הקטין כאן)
 #   H.265 tune grain       74s   9144KB   (משמר גרעיניות - מגדיל פי 2.4)
 #   AV1 svt preset 8       50s  10580KB   (איטי וגדול יותר)
+# קצב הסיביות של רצועת השמע אחרי המרה. 192k ב-AAC הוא שקוף כמעט
+# לחלוטין לדיבור ולמוזיקה בסטריאו, ושווה בערך לשליש ממה ש-EAC3 תפס
+AUDIO_BITRATE = os.getenv("AUDIO_BITRATE") or "192k"
+
 PROFILES = {
     # קידוד מהיר ככל האפשר, לסרטונים קצרים בלבד. נמדד על מקור גרעיני:
     # 1.53x מול 0.98x של H.265 — חיסכון קטן בזמן — אבל 632MB מול 21MB
-    "quick": {"codec": "libx264", "preset": "ultrafast", "crf": 23,
-              "pix_fmt": "yuv420p", "tune": "", "mbps": 7.0},
+    "quick": {"codec": "libx264", "preset": "ultrafast", "crf": 20,
+              "pix_fmt": "yuv420p", "tune": "", "mbps": 9.0},
     # H.265 מהיר, לקבצים קטנים. מחליף את quick בסולם האוטומטי כדי
     # שגם קובץ קטן ייצא HEVC ולא יישבר אחידות הפלט של האתר
-    "fast265": {"codec": "libx265", "preset": "superfast", "crf": 28,
-                "pix_fmt": "yuv420p", "tune": "", "mbps": 2.0},
+    "fast265": {"codec": "libx265", "preset": "superfast", "crf": 22,
+                "pix_fmt": "yuv420p", "tune": "", "mbps": 4.0},
     # H.264 — נתמך בכל מקום
-    "fast": {"codec": "libx264", "preset": "veryfast", "crf": 28,
-             "pix_fmt": "yuv420p", "tune": "", "mbps": 2.2},
+    "fast": {"codec": "libx264", "preset": "veryfast", "crf": 19,
+             "pix_fmt": "yuv420p", "tune": "", "mbps": 6.0},
     # H.265 — כמחצית הגודל, נתמך בטלגרם וברוב המכשירים המודרניים
-    "balanced": {"codec": "libx265", "preset": "veryfast", "crf": 30,
-                 "pix_fmt": "yuv420p", "tune": "", "mbps": 1.2},
+    "balanced": {"codec": "libx265", "preset": "veryfast", "crf": 23,
+                 "pix_fmt": "yuv420p", "tune": "", "mbps": 2.6},
     # H.265 עם preset איטי יותר — אותה איכות, קובץ קטן יותר, פי שניים מעבד
-    "small": {"codec": "libx265", "preset": "medium", "crf": 30,
-              "pix_fmt": "yuv420p", "tune": "", "mbps": 1.0},
+    "small": {"codec": "libx265", "preset": "medium", "crf": 23,
+              "pix_fmt": "yuv420p", "tune": "", "mbps": 2.2},
 }
 
 # auto בוחר פרופיל לפי גודל המקור: קובץ קטן לא צריך דחיסה כבדה, כי גם
