@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -27,29 +28,37 @@ except ModuleNotFoundError as missing:
     raise SystemExit(2)
 
 
-def main() -> int:
+async def main() -> int:
     if not config.TG_API_ID or not config.TG_API_HASH:
         print("חסרים TG_API_ID או TG_API_HASH ב-.env")
         return 2
 
-    print("יצירת מחרוזת סשן לחשבון הרגיל (לא Premium).")
+    print("יצירת מחרוזת סשן לחשבון משתמש.")
     print("טלגרם ישלח קוד לאפליקציה של אותו חשבון.\n")
 
-    # הסשן נוצר בזיכרון בלבד: אין קובץ שנשאר על הדיסק בטעות
-    with TelegramClient(StringSession(), config.TG_API_ID,
-                        config.TG_API_HASH) as client:
-        me = client.get_me()
+    # הסשן נוצר בזיכרון בלבד: אין קובץ שנשאר על הדיסק בטעות.
+    # הקריאות אסינכרוניות — גרסה קודמת השתמשה ב-with רגיל, ואז
+    # get_me החזיר coroutine והסקריפט קרס אחרי התחברות מוצלחת,
+    # כלומר הקוד נשרף לחינם
+    client = TelegramClient(StringSession(), config.TG_API_ID,
+                            config.TG_API_HASH)
+    await client.start()
+    try:
+        me = await client.get_me()
         value = client.session.save()
-        print("\n" + "=" * 60)
-        print(f"מחובר כ: {me.first_name} (id={me.id})")
-        print("=" * 60)
-        print("\nהוסף ל-/opt/zovexsub/repo/bot/.env את השורה:\n")
-        print(f"TG_STRING_LITE={value}\n")
-        print("=" * 60)
-        print("המחרוזת שווה לסיסמה של החשבון. אל תשלח אותה לאיש,")
-        print("ואל תכניס אותה לגיט. לביטול: טלגרם ← הגדרות ← מכשירים.")
+    finally:
+        await client.disconnect()
+
+    print("\n" + "=" * 60)
+    print(f"מחובר כ: {me.first_name} (id={me.id})")
+    print("=" * 60)
+    print("\nהוסף ל-/opt/zovexsub/repo/bot/.env את השורה:\n")
+    print(f"TG_STRING_LITE={value}\n")
+    print("=" * 60)
+    print("המחרוזת שווה לסיסמה של החשבון. אל תשלח אותה לאיש,")
+    print("ואל תכניס אותה לגיט. לביטול: טלגרם ← הגדרות ← מכשירים.")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(asyncio.run(main()))
