@@ -18,8 +18,9 @@ from telethon.errors import FloodWaitError
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import (allowlist, botapi, config, diagnose, fastio, fetch,
-               localbot, media, pipeline, progress as prog)
+from . import (allowlist, botapi, botjob, botmenu, config, diagnose,
+               fastio, fetch, localbot, media, pipeline,
+               progress as prog)
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -879,6 +880,16 @@ async def main() -> None:
     # הבוט והחשבון הרגיל עולים כאן. כשאחד מהם חסר או נכשל, הכל ממשיך
     # לעבוד בדיוק כמו קודם עם חשבון ה-Premium בלבד
     await botapi.start(client)
+    # מסלול הבוט: כפתורים, וקריאת הסרטון מהדיסק בלי הורדה. הוא נפרד
+    # לגמרי ממסלול חשבון המשתמש, שממשיך לעבוד כרגיל במקביל
+    if localbot.available():
+        try:
+            name = await localbot.probe()
+            botjob.install()
+            botmenu.start()
+            log.info("מסלול הבוט פעיל: @%s — שלח אליו סרטון ישירות", name)
+        except Exception as exc:  # noqa: BLE001
+            log.error("מסלול הבוט לא עלה (%s) — ממשיכים בלעדיו", exc)
     log.info("לולאת אירועים: %s", _loop_name)
     log.info("טריגר: %s · רשימת מורשים: %s · תיקיית עבודה: %s",
              T, config.ALLOWLIST_FILE, config.WORK_DIR)
