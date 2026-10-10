@@ -1858,6 +1858,53 @@ export default function HomeScreen({navigation, route}) {
     </View>
   );
 
+  // ── סרגל ניווט צף תחתון ──────────────────────────────────────────────
+  //
+  // דוד הביא צילומים מ-Netflix וביקש את זה בדיוק — עם הבדל אחד מכוון:
+  // אצלנו השם נשאר מתחת לכל כרטיס. "הבעיה של נטפליקס לא רושם את השמות,
+  // אנחנו כן צריכים" — ה-cardTitle לא נגע בכלל.
+  //
+  // טלפון/טאבלט בלבד. בטלוויזיה אין "מגע" לסרגל צף לנגוע בו, והניווט
+  // כבר קיים ועובד דרך TopBar + השלט — בדיוק כמו שהבועה הצפה של
+  // טלגרם כבר מוגבלת לטלפון, באותו נימוק.
+  //
+  // כל כפתור קורא לפעולה שכבר קיימת ונבדקה במקום אחר במסך הזה — "בית"
+  // ו"מועדפים" הם אותה קריאה בדיוק כמו ב-CatModal, "חיפוש" ממקד את
+  // אותה תיבת טקסט שב-TopBar, ו"שלי" הוא בדיוק מה שכפתור האווטאר למעלה
+  // כבר עושה. שום לוגיקת ניווט חדשה לא נוספה כאן.
+  const isHomeActive = category === 'הכל' && !search;
+  const isFavActive = category === 'מועדפים';
+  const BottomNav = !IS_TV && (
+    <View style={styles.bottomNavWrap} pointerEvents="box-none">
+      <View style={styles.bottomNav}>
+        <TvFocusable style={styles.bottomNavItem}
+          onPress={() => { setCategory('הכל'); clearSearch(); }}>
+          <Text style={[styles.bottomNavIcon, isHomeActive && styles.bottomNavIconActive]}>🏠</Text>
+          <Text style={[styles.bottomNavLabel, isHomeActive && styles.bottomNavLabelActive]}>בית</Text>
+        </TvFocusable>
+        <TvFocusable style={styles.bottomNavItem}
+          onPress={() => searchRef.current && searchRef.current.focus()}>
+          <Text style={styles.bottomNavIcon}>🔍</Text>
+          <Text style={styles.bottomNavLabel}>חיפוש</Text>
+        </TvFocusable>
+        <TvFocusable style={styles.bottomNavItem}
+          onPress={() => { setCategory('מועדפים'); clearSearch(); }}>
+          <Text style={[styles.bottomNavIcon, isFavActive && styles.bottomNavIconActive]}>❤️</Text>
+          <Text style={[styles.bottomNavLabel, isFavActive && styles.bottomNavLabelActive]}>מועדפים</Text>
+        </TvFocusable>
+        <TvFocusable style={styles.bottomNavItem}
+          onPress={() => (user ? setShowUserMenu(true) : startSignIn())}>
+          {user && user.picture ? (
+            <Image source={{uri: user.picture}} style={styles.bottomNavAvatar} />
+          ) : (
+            <Text style={styles.bottomNavIcon}>👤</Text>
+          )}
+          <Text style={styles.bottomNavLabel}>שלי</Text>
+        </TvFocusable>
+      </View>
+    </View>
+  );
+
   const CatsButton = (
     <View style={styles.catsRow}>
       {category !== 'הכל' && (
@@ -2110,6 +2157,7 @@ export default function HomeScreen({navigation, route}) {
       {UserMenu}
 
       <AdBanner />
+      {BottomNav}
 
       {/* הבועה הצפה נשארת לטלפון בלבד. בטלוויזיה הכפתור עבר לסרגל העליון
           (ראה TopBar) — שם אפשר להגיע אליו עם השלט, וכאן אי אפשר היה. */}
@@ -2451,9 +2499,29 @@ const styles = StyleSheet.create({
   // locale is RTL (unlike CSS on the web, where "left" always means the
   // physical left edge). Pick the side explicitly so this always ends up
   // in the bottom-left corner of the screen, regardless of RTL state.
+  // סרגל ניווט צף — רק טלפון/טאבלט. bottom:58 משאיר 8 פיקסלים מעל
+  // באנר הפרסומת (height:50 ב-AdBanner).
+  bottomNavWrap: {
+    position: 'absolute', left: 0, right: 0, bottom: 58,
+    alignItems: 'center', zIndex: 999,
+  },
+  bottomNav: {
+    flexDirection: 'row', backgroundColor: 'rgba(17,19,25,0.92)',
+    borderRadius: radius.pill, paddingVertical: 8, paddingHorizontal: 6,
+    borderWidth: 1, borderColor: colors.border, ...elevation(6),
+  },
+  bottomNavItem: {alignItems: 'center', justifyContent: 'center',
+                  paddingHorizontal: 16, paddingVertical: 4, minWidth: 64},
+  bottomNavIcon: {fontSize: 20, opacity: 0.7},
+  bottomNavIconActive: {opacity: 1},
+  bottomNavLabel: {color: colors.textMuted, fontSize: 10, fontWeight: '600', marginTop: 2},
+  bottomNavLabelActive: {color: colors.primaryHi, fontWeight: '800'},
+  bottomNavAvatar: {width: 20, height: 20, borderRadius: 10},
   tgBubbleWrap: {
-    // bottom מוגבה כדי לא להיחסם ע"י באנר הפרסומת הקבוע בתחתית (AdBanner)
-    position: 'absolute', bottom: 78, zIndex: 1000,
+    // bottom מוגבה כדי לא להיחסם ע"י באנר הפרסומת (50) וכעת גם ע"י
+    // הסרגל הצף (עוד ~64, ראה bottomNavWrap) — אותו נימוק בדיוק, שכבה
+    // שלישית על אותה ערימה.
+    position: 'absolute', bottom: 126, zIndex: 1000,
     flexDirection: 'row', alignItems: 'flex-end', gap: 8,
     // הצד נקבע בזמן הציור — ראה tgBubbleWrap ב-render.
   },
