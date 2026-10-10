@@ -158,15 +158,34 @@ async def local_path(file_id: str) -> Path | None:
     raw = info.get("file_path") or ""
     if not raw:
         return None
-    found = Path(raw)
+    found = _translate(Path(raw))
     if not found.is_absolute():
         # שרת ציבורי מחזיר נתיב יחסי להורדה, ולא קובץ מקומי
         log.info("הקובץ אינו מקומי (%s) — השרת כנראה אינו במצב --local", raw)
         return None
     if not found.exists():
-        log.warning("getFile הצביע על %s שאינו קיים", found)
+        log.warning("getFile הצביע על %s שאינו קיים. אם השרת רץ בדוקר, "
+                    "ודא ש-BOT_API_DATA מצביע על תיקיית הנתונים במארח",
+                    found)
         return None
     return found
+
+
+def _translate(path: Path) -> Path:
+    """מתרגם נתיב מתוך הקונטיינר לנתיב במארח.
+
+    השרת רץ בדוקר ומדווח את הנתיב כפי שהוא רואה אותו אצלו, למשל
+    /var/lib/telegram-bot-api/... . הפייתון שלנו רץ על המארח, ושם אותו
+    קובץ יושב בתיקייה שחוברה ב-volume. אותו קובץ, שני נתיבים — ובלי
+    התרגום הזה הקריאה נכשלת בשקט ונראית כאילו השרת אינו במצב --local.
+    """
+    if not config.BOT_API_DATA:
+        return path
+    inside = config.BOT_API_INSIDE.rstrip("/")
+    text = str(path)
+    if inside and text.startswith(inside):
+        return Path(config.BOT_API_DATA) / text[len(inside):].lstrip("/")
+    return path
 
 
 def media_of(message: dict) -> tuple[str, int, str]:

@@ -34,6 +34,11 @@ BOT_API_URL = os.getenv("BOT_API_URL", "").strip()
 BOT_CHAT = os.getenv("BOT_CHAT", "").strip()
 # כל כמה שניות לעדכן הודעת התקדמות בבוט. טלגרם חוסם עריכות תכופות
 BOT_EDIT_EVERY = float(os.getenv("BOT_EDIT_EVERY") or 5)
+# השרת המקומי רץ בדוקר ומדווח נתיבים כפי שהוא רואה אותם בתוכו.
+# BOT_API_DATA הוא אותה תיקייה כפי שהמארח רואה אותה, ו-BOT_API_INSIDE
+# היא כפי שהקונטיינר רואה אותה. ראו localbot._translate
+BOT_API_DATA = os.getenv("BOT_API_DATA", "").strip()
+BOT_API_INSIDE = os.getenv("BOT_API_INSIDE", "/var/lib/telegram-bot-api").strip()
 # סשן של חשבון משתמש רגיל (לא Premium). ריק = הכל דרך ה-Premium
 TG_SESSION_LITE = os.getenv("TG_SESSION_LITE", "").strip()
 # מחרוזת סשן של החשבון הרגיל. עדיפה על קובץ — ראו botapi.start.
