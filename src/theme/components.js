@@ -91,6 +91,23 @@ export function ErrorState({title = 'משהו השתבש', desc, onRetry, retryL
   );
 }
 
+// ── גרדיאנט כהה, בלי ספריית gradient ─────────────────────────────────────
+// גרדיאנט אמיתי דורש ספרייה נייטיבית (react-native-linear-gradient) שאינה
+// ב-package.json, והכלל של החבילה הוא לא להוסיף תלות לפני בדיקה שאי
+// אפשר עם מה שכבר קיים. ערימת שכבות שקיפות עולה בהדרגה היא הקירוב
+// המקובל בלי תלות, והיא מספיק טובה בתור מסך (scrim) מאחורי טקסט. סטטי
+// לגמרי — בלי JS, בלי focus — ולכן חינם לשים בכל מקום, כולל hero.
+const GRADIENT_STEPS = [0, 0.05, 0.15, 0.32, 0.55, 0.8];
+export function DarkGradient({style, tint = colors.bg}) {
+  return (
+    <View style={[StyleSheet.absoluteFill, s.gradientCol, style]} pointerEvents="none">
+      {GRADIENT_STEPS.map((op, i) => (
+        <View key={i} style={{flex: 1, backgroundColor: tint, opacity: op}} />
+      ))}
+    </View>
+  );
+}
+
 // ── Badge — רק כשיש נתון אמיתי (איכות/שנה/סוג) ──────────────────────────
 export function Badge({text, tone = 'default'}) {
   if (!text) return null;
@@ -102,6 +119,7 @@ export function Badge({text, tone = 'default'}) {
 }
 
 const s = StyleSheet.create({
+  gradientCol: {flexDirection: 'column'},
   primary: {
     backgroundColor: colors.primary, borderRadius: radius.button,
     paddingVertical: 14, paddingHorizontal: spacing.xl,
@@ -138,6 +156,6 @@ const s = StyleSheet.create({
 });
 
 export default {
-  PrimaryButton, SecondaryButton, SectionHeader,
+  PrimaryButton, SecondaryButton, SectionHeader, DarkGradient,
   EmptyState, LoadingState, ErrorState, Badge,
 };

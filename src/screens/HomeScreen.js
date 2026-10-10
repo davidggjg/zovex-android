@@ -51,7 +51,8 @@ import {
 import {useIsFocused} from '@react-navigation/native';
 import {verifyPanelCode} from '../api/savedUpload';
 import TvFocusable from '../components/TvFocusable';
-import {colors, font} from '../theme/tokens';
+import {colors, font, elevation, radius} from '../theme/tokens';
+import {DarkGradient} from '../theme/components';
 import LiveChannelModal from '../components/LiveChannelModal';
 import AdBanner from '../components/AdBanner';
 import SupportModal from '../components/SupportModal';
@@ -525,7 +526,7 @@ const mdStyles = StyleSheet.create({
   },
   closeTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
   thumb: {width: '100%', height: 260, resizeMode: 'cover'},
-  noThumb: {width: '100%', height: 200, backgroundColor: '#1c1c1e', justifyContent: 'center', alignItems: 'center'},
+  noThumb: {width: '100%', height: 200, backgroundColor: colors.surfaceElevated, justifyContent: 'center', alignItems: 'center'},
   body: {padding: 18},
   title: {color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8},
   epHeading: {color: '#ddd', fontSize: 14, fontWeight: '700', textAlign: 'right', marginTop: -4, marginBottom: 8},
@@ -563,10 +564,10 @@ const mdStyles = StyleSheet.create({
   seasonRow: {flexDirection: 'row', justifyContent: 'flex-end', paddingTop: 14, paddingBottom: 4, borderTopWidth: 1, borderTopColor: '#222'},
   seasonBtn: {backgroundColor: '#2a2a2a', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 8},
   // עונה יחידה — נראית כתווית ולא ככפתור, כדי שלא תזמין לחיצה שלא תעשה כלום
-  seasonBtnStatic: {backgroundColor: '#1c1c1e', opacity: 0.85},
+  seasonBtnStatic: {backgroundColor: colors.surfaceElevated, opacity: 0.85},
   seasonBtnTxt: {color: '#fff', fontSize: 14, fontWeight: '700'},
   seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
-  seasonPickerBox: {backgroundColor: '#1c1c1e', borderRadius: 16, overflow: 'hidden', minWidth: 180},
+  seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180},
   seasonPickerItem: {paddingVertical: 18, paddingHorizontal: 28, alignItems: 'center'},
   seasonPickerItemActive: {backgroundColor: '#2a2a2a'},
   seasonPickerTxt: {color: '#ccc', fontSize: 16, fontWeight: '600'},
@@ -745,7 +746,7 @@ const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
             style={StyleSheet.absoluteFill}
             resizeMode="contain"
           />
-          <View style={styles.heroGradient} />
+          <DarkGradient />
           <View style={styles.heroContent}>
             <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
             {!!movie.description && <Text style={styles.heroDesc} numberOfLines={2}>{movie.description}</Text>}
@@ -843,34 +844,41 @@ const MovieCard = memo(function MovieCard({item, onPress, hasTVPreferredFocus = 
   if (!displayTitle) return null;
   const epLabel = (!item.isSeries && item.series_name && item.episode_number)
     ? `עונה ${item.season_number || 1} · פרק ${item.episode_number}` : '';
-  const borderColor = isLive ? '#e50914' : 'transparent';
+  const borderColor = isLive ? colors.primary : 'transparent';
   const borderWidth = isLive ? 2 : 0;
   return (
-    <TvFocusable
-      style={[styles.card, {width: CARD_W}]}
-      onPress={() => onPress(item)}
-      hasFocus={hasTVPreferredFocus}>
-      <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
-        {item.thumbnail_url ? (
-          // [tv_perf] ‎resizeMethod="resize"‎ — נמדד: הפוסטרים הם 500x750
-          // ומוצגים ברוחב ~320px בטלוויזיה. בלי זה אנדרואיד מפענח את
-          // המקור במלואו, כלומר 1.5MB של bitmap לכרטיס; עם זה הפענוח
-          // עצמו יורד לגודל התצוגה — פחות מחצי. עם עשרות כרטיסים
-          // מחוברים בו-זמנית זה ההבדל בין לחץ זיכרון לבין שקט.
-          <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} resizeMethod="resize" fadeDuration={200} />
-        ) : (
-          <View style={styles.noThumb}><Text style={styles.thumbEmoji}>{isLive ? '📡' : '🎬'}</Text></View>
-        )}
-        {item.isSeries && <View style={styles.badge}><Text style={styles.badgeText}>סדרה</Text></View>}
-        {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
-        {/* פרק בודד — בהורדות, בהמשך צפייה ובמועדפים. השם שלו הוא שם הסדרה,
-            ולכן בלי השורה הזו עשרה פרקים שהורדו נראו כעשרה כרטיסים זהים.
-            מונח על התמונה ולא מתחת לשם, כדי שגובה הכרטיס לא ישתנה והשורה
-            לא תצא עקומה. */}
-        {epLabel ? <View style={styles.epBadge}><Text style={styles.epBadgeText} numberOfLines={1}>{epLabel}</Text></View> : null}
-      </View>
-      <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
-    </TvFocusable>
+    // עומק: צל על עטיפה חיצונית, רדיוס+חיתוך על הפנימית. על אותה תצוגה
+    // Android מחתך את צל ה-elevation אם overflow:hidden יושב על אותו
+    // view — לכן שתי שכבות ולא אחת. בטלוויזיה elevation() מחזיר {} (ראה
+    // theme/tokens), כך שהעטיפה כאן חסרת עלות — אפס שינוי להתנהגות
+    // המכוונת שתועדה למעלה.
+    <View style={[styles.cardShadow, {width: CARD_W}]}>
+      <TvFocusable
+        style={styles.card}
+        onPress={() => onPress(item)}
+        hasFocus={hasTVPreferredFocus}>
+        <View style={[styles.cardImg, {height: CARD_H, borderColor, borderWidth}]}>
+          {item.thumbnail_url ? (
+            // [tv_perf] ‎resizeMethod="resize"‎ — נמדד: הפוסטרים הם 500x750
+            // ומוצגים ברוחב ~320px בטלוויזיה. בלי זה אנדרואיד מפענח את
+            // המקור במלואו, כלומר 1.5MB של bitmap לכרטיס; עם זה הפענוח
+            // עצמו יורד לגודל התצוגה — פחות מחצי. עם עשרות כרטיסים
+            // מחוברים בו-זמנית זה ההבדל בין לחץ זיכרון לבין שקט.
+            <Image source={{uri: item.thumbnail_url}} style={isLive ? styles.cardImgLive : styles.cardImgInner} resizeMode={isLive ? 'contain' : 'cover'} resizeMethod="resize" fadeDuration={200} />
+          ) : (
+            <View style={styles.noThumb}><Text style={styles.thumbEmoji}>{isLive ? '📡' : '🎬'}</Text></View>
+          )}
+          {item.isSeries && <View style={styles.badge}><Text style={styles.badgeText}>סדרה</Text></View>}
+          {isLive && <View style={[styles.badge, styles.liveBadge]}><Text style={styles.badgeText}>🔴 LIVE</Text></View>}
+          {/* פרק בודד — בהורדות, בהמשך צפייה ובמועדפים. השם שלו הוא שם הסדרה,
+              ולכן בלי השורה הזו עשרה פרקים שהורדו נראו כעשרה כרטיסים זהים.
+              מונח על התמונה ולא מתחת לשם, כדי שגובה הכרטיס לא ישתנה והשורה
+              לא תצא עקומה. */}
+          {epLabel ? <View style={styles.epBadge}><Text style={styles.epBadgeText} numberOfLines={1}>{epLabel}</Text></View> : null}
+        </View>
+        <Text style={styles.cardTitle} numberOfLines={2}>{displayTitle}</Text>
+      </TvFocusable>
+    </View>
   );
 });
 
@@ -2227,31 +2235,31 @@ const styles = StyleSheet.create({
   },
 
   // ── HeroBanner ──
-  hero: {width: '100%', height: HERO_H, backgroundColor: '#0a0a0a'},
+  hero: {width: '100%', height: HERO_H, backgroundColor: colors.bg},
   heroBg: {width: '100%', height: HERO_H, justifyContent: 'flex-end'},
-  heroGradient: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-  },
   heroContent: {padding: 16, paddingBottom: 36},
   heroTitle: {
-    color: '#fff', fontSize: 26, fontWeight: '900', textAlign: 'right',
+    color: colors.text, fontSize: font.hero, fontWeight: '900', textAlign: 'right',
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 0, height: 2},
     textShadowRadius: 8, marginBottom: 6,
   },
   heroDesc: {
-    color: 'rgba(255,255,255,0.82)', fontSize: 13, textAlign: 'right',
+    color: 'rgba(255,255,255,0.82)', fontSize: font.body, textAlign: 'right',
     lineHeight: 20, marginBottom: 14,
     textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: {width: 0, height: 1}, textShadowRadius: 4,
   },
   heroBtns: {flexDirection: 'row', justifyContent: 'flex-end', gap: 10},
-  heroBtnPlay: {backgroundColor: '#fff', paddingVertical: 10, paddingHorizontal: 22, borderRadius: 8},
+  // לבן מכוון, לא token: הכפתור יושב על תמונה לא ידועה מראש (כל פוסטר),
+  // ולבן אטום על שחור הוא מה ששומר ניגודיות קריאה בוודאות בכל תמונה.
+  // אדום המותג נשאר ממוקד בכפתורים שיושבים על משטח קבוע (לא על תמונה) —
+  // ראה playBtn בחלון הפרטים.
+  heroBtnPlay: {backgroundColor: '#fff', paddingVertical: 10, paddingHorizontal: 22, borderRadius: radius.sm},
   heroBtnPlayText: {color: '#000', fontSize: 15, fontWeight: '800'},
-  heroBtnInfo: {backgroundColor: 'rgba(100,100,110,0.55)', paddingVertical: 10, paddingHorizontal: 18, borderRadius: 8},
-  heroBtnInfoText: {color: '#fff', fontSize: 15, fontWeight: '700'},
+  heroBtnInfo: {backgroundColor: colors.overlay, paddingVertical: 10, paddingHorizontal: 18, borderRadius: radius.sm},
+  heroBtnInfoText: {color: colors.text, fontSize: 15, fontWeight: '700'},
   heroDots: {position: 'absolute', bottom: 8, left: 0, right: 0, flexDirection: 'row', justifyContent: 'center', gap: 5},
   heroDot: {width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.35)'},
-  heroDotActive: {backgroundColor: '#fff', width: 18},
+  heroDotActive: {backgroundColor: colors.text, width: 18},
 
   // ── Top bar search ──
   // העטיפה יורשת את ה-flex של תיבת החיפוש כדי שהסרגל העליון יישאר בדיוק
@@ -2342,18 +2350,22 @@ const styles = StyleSheet.create({
   // ── Card ──
   // 14 ולא 10: אותו רדיוס עיגול שכבר כויל באתר (.zv-card__art), כדי
   // שהאפליקציה תרגיש כמו המשך של אותו עיצוב ולא כמו גרסה ישנה יותר.
-  card: {marginHorizontal: 5, borderRadius: 14, overflow: 'hidden'},
+  // עומק (DESIGN_SYSTEM_HE: "שכבות/צללים עדינים, לא מסגרות"). ה-margin
+  // עבר לעטיפה כי היא העוטפת החיצונית עכשיו — ה-FlatList מודד לפי
+  // CARD_W+10 במילא (getItemLayout), כך שזה לא זז.
+  cardShadow: {marginHorizontal: 5, borderRadius: radius.card, backgroundColor: colors.bg, ...elevation(3)},
+  card: {borderRadius: radius.card, overflow: 'hidden'},
   // cardFocused ו-tvFocusRing הוסרו: ההדגשה כולה מצוירת בנייטיב, מיד עם
   // תזוזת החץ. ה-elevation עבר ל-translationZ שם, וה-shadow* שהיה כאן הוא
   // iOS בלבד ומעולם לא צויר באנדרואיד.
-  cardImg: {width: '100%', borderRadius: 14, overflow: 'hidden', backgroundColor: '#1c1c1e'},
+  cardImg: {width: '100%', borderRadius: radius.card, overflow: 'hidden', backgroundColor: colors.surfaceElevated},
   cardImgInner: {width: '100%', height: '100%', resizeMode: 'cover'},
   cardImgLive: {width: '100%', height: '100%', resizeMode: 'contain', padding: 8},
-  noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#1c1c1e'},
+  noThumb: {width: '100%', height: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: colors.surfaceElevated},
   thumbEmoji: {fontSize: 28},
   cardTitle: {color: colors.text, fontSize: font.cardTitle, fontWeight: '700', paddingTop: 5, paddingHorizontal: 2, textAlign: 'right'},
-  badge: {position: 'absolute', top: 7, right: 7, backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2},
-  liveBadge: {backgroundColor: '#e50914'},
+  badge: {position: 'absolute', top: 7, right: 7, backgroundColor: colors.overlay, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2},
+  liveBadge: {backgroundColor: colors.primary},
   badgeText: {color: '#fff', fontSize: 9, fontWeight: '800'},
   epBadge: {position: 'absolute', bottom: 6, left: 6, right: 6, alignItems: 'center',
             backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 6, paddingVertical: 3},
