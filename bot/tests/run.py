@@ -385,6 +385,39 @@ def _bot_client_silent():
 
 
 
+@check("בחירת איכות הצריבה מגיעה עד הקודק בפועל")
+def _speed_choice():
+    import inspect
+
+    from zovexsub import botjob, botmenu, media, pipeline
+
+    fields = [step[2] for step in botmenu.STEPS]
+    assert "speed" in fields, f"אין שלב בחירת איכות: {fields}"
+    assert "speed" in botmenu.Choice.__dataclass_fields__
+
+    # הכפתורים חייבים לשלוח בדיוק את הערכים שהמיפוי מכיר
+    keys = next(step[1] for step in botmenu.STEPS if step[2] == "speed")
+    sent = {data.split(":", 1)[1] for row in keys for _, data in row}
+    assert sent == {"מהיר", "איכותי"}, sent
+
+    body = inspect.getsource(botjob._burn)
+    for value in sent:
+        assert f'"{value}"' in body, f"{value} לא ממופה לפרופיל"
+    assert "profile=profile" in body, "הבחירה לא מועברת ל-media.burn"
+
+    # והשרשרת כולה מקבלת את הפרמטר
+    for fn in (media.burn, pipeline.burn, media._burn_single,
+               media._burn_parallel):
+        assert "profile" in inspect.signature(fn).parameters, fn.__qualname__
+
+    # בחירה מפורשת גוברת גם כשהסולם האוטומטי אוסר על H.264
+    chosen = media._settings_for(Path(__file__), 600.0, 1080, "fast")
+    assert chosen["codec"] == "libx264", chosen
+    fine = media._settings_for(Path(__file__), 600.0, 1080, "balanced")
+    assert fine["codec"] == "libx265", fine
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

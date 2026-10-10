@@ -747,7 +747,7 @@ def core_pool() -> CorePool:
 
 
 async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
-         style: Style | None = None) -> Path:
+         style: Style | None = None, profile: str = "") -> Path:
     """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
     duration = await duration_seconds(video)
     segments = config.burn_chunks(duration)
@@ -758,7 +758,7 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
     if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
         try:
             return await _burn_parallel(video, srt, dst, duration, segments,
-                                        on_progress, style)
+                                        on_progress, style, profile)
         except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
             # B10: קודם נרשמה כאן שורה אחת בלי עקבות, והמסלול המקבילי
             # נזנח בשקט. צריבה שלמה רצה אז פי שלושה לאט בלי שאיש ידע
@@ -768,15 +768,26 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
             if on_progress:
                 await on_progress(0.0, f"נפל למסלול יחיד: {type(exc).__name__}")
 
-    return await _burn_single(video, srt, dst, duration, on_progress, style)
+    return await _burn_single(video, srt, dst, duration, on_progress, style,
+                              profile)
+
+
+def _settings_for(video: Path, duration: float, height: int,
+                  profile: str = "") -> dict:
+    """הגדרות הצריבה: בחירה מפורשת של המשתמש גוברת על הסולם האוטומטי."""
+    if profile and profile in config.PROFILES:
+        log.info("פרופיל נבחר ידנית: %s", profile)
+        return config.PROFILES[profile]
+    return config.profile_for(video.stat().st_size, duration, height)
 
 
 async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
-                       on_progress=None, style: Style | None = None) -> Path:
+                       on_progress=None, style: Style | None = None,
+                       profile: str = "") -> Path:
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
-    settings = config.profile_for(video.stat().st_size, duration,
-                                  await video_height(video))
+    settings = _settings_for(video, duration, await video_height(video),
+                             profile)
     _describe_profile(settings, video, duration)
     threads = burn_threads()
 
@@ -808,7 +819,8 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 
 async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                          segments: int, on_progress=None,
-                         style: Style | None = None) -> Path:
+                         style: Style | None = None,
+                         profile: str = "") -> Path:
     """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
 
     מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
@@ -824,8 +836,8 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     work.mkdir(parents=True, exist_ok=True)
     marked = rtl_copy(srt)
     credit = credit_file(work)
-    settings = config.profile_for(video.stat().st_size, duration,
-                                  await video_height(video))
+    settings = _settings_for(video, duration, await video_height(video),
+                             profile)
     _describe_profile(settings, video, duration)
 
     threads = config.BURN_SEGMENT_THREADS

@@ -37,6 +37,7 @@ class Choice:
     size_bytes: int = 0
     name: str = ""
     source: str = ""             # make / own
+    speed: str = ""              # מהיר (H.264) / איכותי (H.265)
 
 
 # כל שלב: כותרת, שורות כפתורים, והשדה שנשמר
@@ -53,6 +54,12 @@ STEPS = (
       [("⬜ לבן בלבד", "look:לבן")],
       [("✒️ לבן עם קו מתאר", "look:קו")]],
      "look"),
+    ("⚙️ <b>איכות הצריבה</b>\n\n"
+     "<b>איכותית</b> — H.265, קובץ קטן יותר באותה איכות.\n"
+     "<b>מהירה</b> — H.264, מסיימת מהר יותר, קובץ גדול יותר.",
+     [[("💎 איכותית (מומלץ)", "speed:איכותי")],
+      [("⚡ מהירה", "speed:מהיר")]],
+     "speed"),
 )
 
 ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
@@ -150,7 +157,7 @@ async def _press(query: dict) -> None:
         return
 
     _open.pop(message_id, None)
-    picked = " · ".join(x for x in (choice.size, choice.look) if x)
+    picked = " · ".join(x for x in (choice.size, choice.look, choice.speed) if x)
     await localbot.edit(choice.chat_id, message_id, f"✅ נבחר: {picked}")
     if choice.done:
         _detach(choice.done(choice), "עבודה מהבוט")

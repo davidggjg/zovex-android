@@ -282,8 +282,11 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
 
         style = media.Style(size=choice.size, font=choice.font,
                             look=choice.look)
+        # "מהיר" פורץ את הסולם האוטומטי, שהוא HEVC בלבד: H.264 מקודד
+        # מהר בהרבה ומנגן בכל מקום, במחיר קובץ גדול יותר
+        profile = {"מהיר": "fast", "איכותי": "balanced"}.get(choice.speed, "")
         await media.burn(source, srt_path, dst, on_progress=on_burn,
-                         style=style)
+                         style=style, profile=profile)
         await screen.show("📤 שולח…", force=True)
         info = await media.probe(dst)
         stream = next((s for s in info.get("streams", [])
