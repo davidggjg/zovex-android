@@ -200,6 +200,19 @@ function MovieDetailModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id]);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
+  // בורר העונות עבר מ-Modal שני לשכבת View רגילה (ראה ההסבר ליד
+  // seasonPickerWrap) — Modal נתן "חזור" אוטומטי בחינם, View לא. בלי
+  // זה "חזור" בזמן שהבורר פתוח היה נופל ישר ל-detailItem שבמסך הבית
+  // וסוגר את כל חלון הפרטים, לא רק את הבורר. אותו דפוס בדיוק כמו
+  // ה-BackHandler שכבר קיים ב-HomeScreen עצמו.
+  useEffect(() => {
+    const onBack = () => {
+      if (showSeasonPicker) { setShowSeasonPicker(false); return true; }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
+    return () => sub.remove();
+  }, [showSeasonPicker]);
   const [seasonLoading, setSeasonLoading] = useState(false);
   // ה-description לא נשלח ב-/content/lite (זה השדה הכבד). כשפותחים סרט
   // מושכים אותו לפי דרישה מ-/content/item/{id}. אם הפריט כבר מכיל description
@@ -489,19 +502,35 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
       </View>
 
       {showSeasonPicker && (
-        <Modal transparent animationType="fade" visible={showSeasonPicker} onRequestClose={() => setShowSeasonPicker(false)}>
+        // [fix_season_picker_nested_modal] זה היה <Modal> שני, מקונן
+        // בתוך ה-<Modal> החיצוני של MovieDetailModal עצמו. דווח מהשטח:
+        // "מעבר בין עונות לא עובד", ו"השלט קופץ רק בקצוות" — בדיוק
+        // התסמין שה-hasFocus למטה כבר ניסה לתקן באוגוסט, ועדיין קורה.
+        //
+        // התיקון ההוא נכון לעצמו, אבל הוא לא הבעיה: ב-react-native
+        // (ReactModalHostView) כל <Modal> פותח חלון Dialog native
+        // נפרד, עם FLAG_NOT_FOCUSABLE עד שהוא מוצג (ראה ההסבר המלא ב-
+        // TvFocusableViewManager.kt). שני Dialog-ים מוערמים זה על זה
+        // — וה-focus הטבעי שעדיין "תקוע" על כפתור "עונה X ▾" שבחלון
+        // הראשון לא עובר נכון לחלון השני. CatModal ו-UserMenu הם כל
+        // אחד Modal יחיד מתוך המסך הרגיל — לא Modal בתוך Modal — וזו
+        // בדיוק הסיבה שרק הבורר הזה נשבר.
+        //
+        // הפתרון: בלי Modal שני בכלל. View רגיל בתוך אותו חלון —
+        // אין שני Dialog-ים, אין race. אותה כיסוי מלא, אותו backdrop
+        // ללחיצה-לסגירה, אותו hasFocus — שום דבר בתוך הבורר לא השתנה.
+        //
+        // המחיר: Modal נתן "חזור" בחינם; View לא. ראה ה-BackHandler
+        // שנוסף למעלה, שסוגר רק את הבורר ולא את כל חלון הפרטים.
+        <View style={mdStyles.seasonPickerWrap}>
           <TouchableOpacity style={mdStyles.seasonPickerOverlay} activeOpacity={1} onPress={() => setShowSeasonPicker(false)}>
             <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
               {seasons.map((s, i) => (
                 <TvFocusable
                   key={s}
-                  // בלי זריעת focus אף פריט אינו ממוקד כשהחלון נפתח, ואז
-                  // בטלוויזיה אין מאיפה לזוז — הבודק תיאר את זה כ"השלט לא
-                  // מגיב". אותו דפוס בדיוק שמשמש את כפתור ההפעלה בחלון
-                  // הראשי, שם הוא כבר עובד.
                   // ה-fallback ל-i === 0 חשוב: אם activeSeason אינו ברשימה
-                  // (למשל עונה שנעלמה מהקטלוג) שום פריט לא היה מתאים, והחלון
-                  // היה נפתח שוב בלי focus — בדיוק התקלה שאנחנו מתקנים.
+                  // (למשל עונה שנעלמה מהקטלוג) שום פריט לא היה מתאים, והבורר
+                  // היה נפתח שוב בלי focus.
                   hasFocus={IS_TV && (s === activeSeason ||
                                       (!seasons.includes(activeSeason) && i === 0))}
                   style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]}
@@ -511,7 +540,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
               ))}
             </View>
           </TouchableOpacity>
-        </Modal>
+        </View>
       )}
     </View>
     </Modal>
@@ -599,6 +628,10 @@ const mdStyles = StyleSheet.create({
   // עונה יחידה — נראית כתווית ולא ככפתור, כדי שלא תזמין לחיצה שלא תעשה כלום
   seasonBtnStatic: {backgroundColor: colors.surfaceElevated, opacity: 0.85},
   seasonBtnTxt: {color: colors.text, fontSize: 14, fontWeight: '700'},
+  // תופס את מקום ה-Modal שהוסר (ראה fix_season_picker_nested_modal) —
+  // כיסוי מלא באותו חלון, לא Dialog נפרד. zIndex מעל sheet (שאין לו
+  // אחד, כלומר 0 כברירת מחדל) מבטיח סדר ציור גם בלי תלות בסדר ה-JSX.
+  seasonPickerWrap: {...StyleSheet.absoluteFillObject, zIndex: 50},
   seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
   seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180},
   seasonPickerItem: {paddingVertical: 18, paddingHorizontal: 28, alignItems: 'center'},
