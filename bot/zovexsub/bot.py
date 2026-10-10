@@ -883,13 +883,17 @@ async def main() -> None:
     # מסלול הבוט: כפתורים, וקריאת הסרטון מהדיסק בלי הורדה. הוא נפרד
     # לגמרי ממסלול חשבון המשתמש, שממשיך לעבוד כרגיל במקביל
     if localbot.available():
+        # ההאזנה עולה לפני הבדיקה ובלי תלות בה. קודם probe רץ ראשון,
+        # וכשהוא נכשל או תולה הבוט לא התחיל להאזין בכלל — למרות ששרת
+        # ה-Bot API היה חי והעדכונים הצטברו אצלו בלי שאיש קורא אותם
+        botjob.install()
+        botmenu.start()
         try:
-            name = await localbot.probe()
-            botjob.install()
-            botmenu.start()
-            log.info("מסלול הבוט פעיל: @%s — שלח אליו סרטון ישירות", name)
+            log.info("מסלול הבוט פעיל: @%s — שלח אליו סרטון ישירות",
+                     await localbot.probe())
         except Exception as exc:  # noqa: BLE001
-            log.error("מסלול הבוט לא עלה (%s) — ממשיכים בלעדיו", exc)
+            log.error("בדיקת שרת ה-Bot API נכשלה (%s) — "
+                      "ההאזנה בכל זאת פעילה ותנסה שוב", exc)
     log.info("לולאת אירועים: %s", _loop_name)
     log.info("טריגר: %s · רשימת מורשים: %s · תיקיית עבודה: %s",
              T, config.ALLOWLIST_FILE, config.WORK_DIR)

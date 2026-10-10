@@ -35,19 +35,32 @@ def _url(method: str) -> str:
     return f"{config.BOT_API_URL.rstrip('/')}/bot{config.BOT_TOKEN}/{method}"
 
 
-async def call(method: str, **fields) -> dict:
-    """קריאה אחת לשרת המקומי. מחזירה את ה-result או זורקת."""
-    async with httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=15.0)) as web:
+async def call(method: str, read: float = 600.0, **fields):
+    """קריאה אחת לשרת המקומי. מחזירה את ה-result או זורקת.
+
+    read ניתן לכוונון כי לא כל הקריאות שוות: העלאת קובץ של שני ג'יגה
+    מצדיקה המתנה ארוכה, אבל getMe בהפעלה לא — ושם המתנה של עשר דקות
+    פירושה שירות שתקוע ולא עולה בכלל
+    """
+    async with httpx.AsyncClient(timeout=httpx.Timeout(read, connect=15.0)) as web:
         reply = await web.post(_url(method), data=fields)
     body = reply.json()
     if not body.get("ok"):
         raise RuntimeError(f"{method}: {body.get('description', reply.text[:200])}")
-    return body.get("result") or {}
+    # "or {}" הפך רשימה ריקה למילון, כלומר getUpdates בלי עדכונים החזיר
+    # טיפוס אחר מ-getUpdates עם עדכונים. כאן נשמר הטיפוס כמו שהוא
+    result = body.get("result")
+    return {} if result is None else result
 
 
 async def probe() -> str:
-    """מוודא שהשרת חי ושהטוקן תקף. מחזיר את שם הבוט."""
-    me = await call("getMe")
+    """מוודא שהשרת חי ושהטוקן תקף. מחזיר את שם הבוט.
+
+    תקרה קצרה בכוונה: הקריאה הזאת רצה בהפעלה, ולפניה botmenu.start
+    עוד לא נקרא. אם היא תולה, הבוט לא מתחיל להאזין בכלל — ואין שום
+    שורה בלוג שמסבירה למה
+    """
+    me = await call("getMe", read=20.0)
     return me.get("username") or str(me.get("id", ""))
 
 
@@ -144,9 +157,15 @@ async def tap(callback_id: str, note: str = "") -> None:
 
 
 async def updates(offset: int, timeout: int = 25) -> list[dict]:
-    """משיכת עדכונים ארוכה. timeout בצד השרת חוסך סיבובים מיותרים."""
-    return await call("getUpdates", offset=offset, timeout=timeout,
-                      allowed_updates=json.dumps(["message", "callback_query"]))
+    """משיכת עדכונים ארוכה. timeout בצד השרת חוסך סיבובים מיותרים.
+
+    תקרת הקריאה גדולה רק במעט מהמתנת השרת: בלעדיה משיכה שלא נענית
+    תולה את הלולאה עשר דקות, והבוט נראה מת בלי שום שגיאה
+    """
+    got = await call("getUpdates", read=timeout + 20, offset=offset,
+                     timeout=timeout,
+                     allowed_updates=json.dumps(["message", "callback_query"]))
+    return got if isinstance(got, list) else []
 
 
 async def local_path(file_id: str) -> Path | None:
