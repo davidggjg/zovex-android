@@ -82,12 +82,12 @@ class _Carrier:
 async def _fast(file_id: str, size: int, name: str, target: Path,
                 screen: "Screen") -> bool:
     """מנסה להוריד במסלול המקבילי. מחזיר False כדי ליפול לגיבוי."""
-    # חשבון משתמש ולא הבוט: פתיחת חיבור ל-DC מרוחק דורשת
-    # auth.exportAuthorization, וזו קריאה של משתמש. access_hash של
-    # מסמך אינו תלוי חשבון, ולכן אותו file_id עובד גם כאן
-    client, which = botapi.downloader(size, botapi.premium())
-    if client is None:
-        client, which = botapi.bot(), "בוט"
+    # הבוט ולא חשבון משתמש. file_id קשור לבוט שקיבל אותו ואינו ניתן
+    # להעברה — חשבון אחר שמנסה להשתמש בו מקבל אפס בייטים, וזה בדיוק
+    # מה שנמדד. ההנחה שבוט אינו יכול auth.exportAuthorization הייתה
+    # שגויה: התיעוד הרשמי מתיר אותה גם לבוטים, והתקיעה שנראתה אז
+    # נגרמה מלולאת העדכונים החסומה. כך בנויים בוטי ההזרמה המהירים
+    client, which = botapi.bot(), "בוט"
     if client is None or not size:
         return False
     try:
@@ -167,11 +167,14 @@ async def _fetch(chat_id, file_id: str, name: str, work: Path,
     # אותה תקלה שתוקנה כבר בשאר הצינור
     async def beat() -> None:
         began = time.monotonic()
+        # מדידת גידול ולא גודל מוחלט: התיקייה מחזיקה גם הורדות קודמות,
+        # ולכן המונה הראה 1555MB לקובץ של 949MB. ההפרש הוא מה שירד עכשיו
+        before = _folder_size(config.BOT_API_DATA)
         while True:
             await asyncio.sleep(config.BOT_EDIT_EVERY)
             waited = int(time.monotonic() - began)
-            grown = _folder_size(config.BOT_API_DATA)
-            extra = f" · {grown / 1048576:.0f}MB בשרת" if grown else ""
+            grown = max(0, _folder_size(config.BOT_API_DATA) - before)
+            extra = f" · {grown / 1048576:.0f}MB" if grown else ""
             await screen.show(f"📥 השרת מוריד את הסרטון · "
                               f"{waited // 60}:{waited % 60:02d}{extra}")
 
