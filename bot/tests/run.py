@@ -55,6 +55,35 @@ def _signatures():
 
 
 # ---------------------------------------------------------------- תזמונים
+@check("אין פונקציה שקוראת לעצמה בלי תנאי עצירה")
+def _no_runaway_recursion():
+    """תפס רקורסיה אינסופית אמיתית ב-pipeline.make.
+
+    החלפה גורפת של קריאה אחת בשמה של הפונקציה העוטפת פגעה גם בגוף
+    שלה, והפכה את הנפילה-לאחור לקריאה עצמית. זה לא התפוצץ עד שהגיע
+    מסלול שלא העביר את הפרמטר שעוקף אותה
+    """
+    import ast
+    root = Path(__file__).resolve().parents[1] / "zovexsub"
+    bad = []
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for inner in ast.walk(node):
+                target = getattr(inner, "func", None)
+                # רק קריאה בשם חשוף. x.name() הוא מודול אחר ולא רקורסיה
+                if getattr(target, "id", None) != node.name:
+                    continue
+                # רקורסיה מכוונת מותרת כשיש בפונקציה חסם עומק מפורש
+                body = ast.unparse(node)
+                if "depth" in body or "limit" in body:
+                    continue
+                bad.append(f"{path.name}:{inner.lineno} {node.name}")
+    assert not bad, "רקורסיה בלי חסם: " + ", ".join(bad)
+
+
 @check("תזמונים: אין חפיפות ואין אורך שלילי")
 def _timing_overlaps():
     cues = srt._fix_timing([srt.Cue(i, i * 0.25, i * 0.25 + 1.5, f"שורה {i}")

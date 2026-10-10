@@ -40,9 +40,13 @@ async def run(source: Path, work: Path, *, progress: Progress,
     במקום להידרס על ידי הבא אחריו
     """
     def make(title: str, **kwargs) -> prog.Stage:
+        # בלי כרטיס חוזרים לשלב רגיל שכותב ישירות. כאן הייתה רקורסיה
+        # אינסופית: ההחלפה שהכניסה את make פגעה גם בגוף שלה עצמה והפכה
+        # את הנפילה-לאחור לקריאה עצמית. זה לא התפוצץ עד שהגיע מסלול
+        # שאינו מעביר כרטיס
         if card is not None:
             return card.stage(title, **kwargs)
-        return make(title, **kwargs)
+        return prog.Stage(progress, title, **kwargs)
 
     started = time.monotonic()
     work.mkdir(parents=True, exist_ok=True)
