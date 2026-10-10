@@ -143,6 +143,11 @@ async def updates(offset: int, timeout: int = 25) -> list[dict]:
 
 
 async def local_path(file_id: str) -> Path | None:
+    found, _ = await locate(file_id)
+    return found
+
+
+async def locate(file_id: str) -> tuple[Path | None, str]:
     """הנתיב בדיסק של קובץ שנשלח לבוט.
 
     זה היתרון הגדול של השרת המקומי, ולא רק בהעלאה: במצב --local הוא
@@ -153,22 +158,18 @@ async def local_path(file_id: str) -> Path | None:
     try:
         info = await call("getFile", file_id=file_id)
     except RuntimeError as exc:
-        log.warning("getFile נכשל: %s", exc)
-        return None
+        return None, f"getFile נכשל: {exc}"
     raw = info.get("file_path") or ""
     if not raw:
-        return None
+        return None, "getFile לא החזיר נתיב כלל"
     found = _translate(Path(raw))
     if not found.is_absolute():
-        # שרת ציבורי מחזיר נתיב יחסי להורדה, ולא קובץ מקומי
-        log.info("הקובץ אינו מקומי (%s) — השרת כנראה אינו במצב --local", raw)
-        return None
+        return None, (f"הנתיב שחזר יחסי ({raw}) — השרת אינו במצב --local")
     if not found.exists():
-        log.warning("getFile הצביע על %s שאינו קיים. אם השרת רץ בדוקר, "
-                    "ודא ש-BOT_API_DATA מצביע על תיקיית הנתונים במארח",
-                    found)
-        return None
-    return found
+        hint = ("" if config.BOT_API_DATA else
+                " · BOT_API_DATA אינו מוגדר, וכשהשרת בדוקר הוא נדרש")
+        return None, f"השרת הצביע על {found} שאינו קיים{hint}"
+    return found, ""
 
 
 def _translate(path: Path) -> Path:

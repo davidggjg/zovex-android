@@ -47,11 +47,12 @@ class Screen:
 
 async def _fetch(chat_id, file_id: str, name: str, work: Path) -> Path | None:
     """מביא את הסרטון לתיקיית העבודה — בלי הורדה מטלגרם."""
-    found = await localbot.local_path(file_id)
+    found, why = await localbot.locate(file_id)
     if found is None:
-        await localbot.say(chat_id,
-                           "לא הצלחתי לקרוא את הקובץ מהשרת המקומי.\n"
-                           "ודא שהוא רץ עם --local.")
+        # הסיבה נשלחת למשתמש ולא רק ללוג: בלעדיה כל כשל נראה זהה,
+        # וההודעה הכללית הקודמת שלחה לחפש בכיוון הלא נכון
+        log.warning("קריאת הסרטון נכשלה: %s", why)
+        await localbot.say(chat_id, f"לא הצלחתי לקרוא את הסרטון.\n<code>{why}</code>")
         return None
     target = work / f"source{Path(name).suffix or '.mp4'}"
     # העתקה ולא הזזה: הקובץ שייך לשרת, והוא עשוי להידרש לו שוב
@@ -104,9 +105,10 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     if source is None:
         await localbot.say(chat_id, "אין עבודה שממתינה לקובץ. שלח קודם סרטון.")
         return
-    found = await localbot.local_path(file_id)
+    found, why = await localbot.locate(file_id)
     if found is None:
-        await localbot.say(chat_id, "לא הצלחתי לקרוא את קובץ הכתוביות.")
+        await localbot.say(chat_id,
+                           f"לא הצלחתי לקרוא את קובץ הכתוביות.\n<code>{why}</code>")
         return
     work = source.parent
     srt_path = work / "given.srt"
