@@ -98,6 +98,12 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
 
     began = time.monotonic()
     workers = fastio._connections(size, max(1, config.TG_CONNECTIONS))
+    # הערכים שבאמת בתוקף, לא אלה שבקוד: .env גובר על ברירות המחדל,
+    # ודריסה ישנה של TG_CONNECTIONS הסתירה שעות של כוונון
+    log.info("הורדה מקבילית: %d חיבורים (תקרה %d), %d בקשות לחיבור, "
+             "תקרת באוויר %d",
+             workers, config.TG_CONNECTIONS, config.TG_PIPELINE,
+             config.TG_INFLIGHT_MAX)
     moved = {"at": 0}
 
     async def on_progress(done: int, total: int, note: str) -> None:
