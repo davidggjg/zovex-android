@@ -175,6 +175,30 @@ export async function fetchHistory(userId) {
   return Array.isArray(res) ? res : [];
 }
 
+// מחיקה מהיסטוריה ומ"המשך צפייה" — מעדכנת את השרת, לא רק את ה-UI,
+// אחרת הפריט חוזר ברענון הבא. מחזירות false בכישלון (כמו removeFavorite)
+// כדי שנדע להחזיר את הכרטיס למסך במקום להעמיד פנים שהמחיקה הצליחה.
+export async function removeFromHistory(mediaId, userId) {
+  if (!userId || !mediaId) return false;
+  const res = await apiCall(
+    `/api/history/${encodeURIComponent(String(mediaId))}`, 'DELETE', null, userId);
+  return !!res;
+}
+
+export async function clearHistory(userId) {
+  if (!userId) return false;
+  const res = await apiCall('/api/history', 'DELETE', null, userId);
+  return !!res;
+}
+
+// "המשך צפייה" מגיע מ-progress, ולכן ההסרה ממנו היא מחיקת ההתקדמות.
+export async function removeProgress(mediaId, userId) {
+  if (!userId || !mediaId) return false;
+  const res = await apiCall(
+    `/api/progress/${encodeURIComponent(String(mediaId))}`, 'DELETE', null, userId);
+  return !!res;
+}
+
 // ── טריילרים ─────────────────────────────────────────────────────────────────
 // מחזיר מפתח יוטיוב, או null כשאין. השרת מחזיק את מפתח ה-TMDB ואת המטמון —
 // ראה fix_add_trailers.py. null הוא תשובה תקינה ולא שגיאה: לחצי מהקטלוג אין

@@ -27,6 +27,9 @@ import {
   fetchMoviesFast,
   fetchItemDetail,
   fetchHistory,
+  removeFromHistory,
+  clearHistory,
+  removeProgress,
   fetchTrailerKey,
   fetchFavoriteIds,
   addFavorite,
@@ -163,6 +166,7 @@ function MovieDetailModal({
   item, allMovies, onClose, onPlayDirect,
   downloadedIds, downloadingId, downloadProgress, onDownload, onDeleteDownload,
   isFavorite, onToggleFavorite,
+  isInHistory, onRemoveFromHistory,
 }) {
   // ── טריילר ────────────────────────────────────────────────────────────
   // מנוגן במקום הפוסטר כשיש. הפוסטר נשאר ברירת המחדל ולא מוחלף עד שהמפתח
@@ -370,6 +374,19 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                   </Text>
                 </TvFocusable>
               )}
+              {/* הסרה מ"המשך צפייה" / היסטוריה. מופיע רק כשהפריט שם, ולא
+                  לשידור חי (שאינו נשמר בהיסטוריה). הפעולה מסירה מהרשימה
+                  בלבד — התוכן נשאר בקטלוג, ואפשר לצפות בו שוב. כאן בתוך
+                  חלון הפרטים, שכפתוריו כבר נגישים בשלט, ולא כ-overlay על
+                  הכרטיס — שם קינון focusable בטלוויזיה אינו מובטח. */}
+              {isInHistory && onRemoveFromHistory && !item.is_live && (
+                <TvFocusable
+                  style={mdStyles.rmBtn}
+                  activeOpacity={0.8}
+                  onPress={() => { onRemoveFromHistory(item); onClose(); }}>
+                  <Text style={mdStyles.rmTxt}>🗑</Text>
+                </TvFocusable>
+              )}
               <DownloadControl
                 item={tappedEp || firstEp || item}
                 downloadedIds={downloadedIds}
@@ -521,6 +538,10 @@ const mdStyles = StyleSheet.create({
   favBtnOn: {backgroundColor: 'rgba(229,9,20,0.18)'},
   favTxt: {fontSize: 20, color: '#e8eaed'},
   favTxtOn: {color: '#ff4d5e'},
+  rmBtn: {width: 52, borderRadius: 12, paddingVertical: 14,
+          alignItems: 'center', justifyContent: 'center',
+          backgroundColor: 'rgba(255,255,255,0.10)'},
+  rmTxt: {fontSize: 18, color: '#e8eaed'},
   shareBtn: {
     backgroundColor: '#1f1f1f', borderRadius: 12, paddingVertical: 14,
     paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center',
@@ -958,6 +979,42 @@ export default function HomeScreen({navigation, route}) {
     const ok = had ? await removeFavorite(id, uid) : await addFavorite(item, uid);
     if (!ok) flip(had);            // החזרה למצב הקודם
   }, [favIds, user]);
+
+  // הסרת פריט בודד מ"המשך צפייה"/היסטוריה. אותה תבנית כמו המועדפים:
+  // מורידים מהמסך מיד, ואם השרת נכשל — מחזירים את הפריט ומודיעים, במקום
+  // להעמיד פנים שנמחק. גם מנקים את ה-progress כדי שלא יישאר מיקום שמור
+  // (best-effort; ההצלחה נקבעת לפי הסרה מההיסטוריה עצמה).
+  const handleRemoveFromHistory = useCallback(async item => {
+    const uid = user?.id;
+    const id = item?.media_id != null ? String(item.media_id)
+             : item?.id != null ? String(item.id) : '';
+    if (!uid || !id) return;
+    let prev;
+    setHistory(cur => { prev = cur; return cur.filter(h => String(h.media_id) !== id); });
+    removeProgress(id, uid);       // best-effort, לא חוסם
+    const ok = await removeFromHistory(id, uid);
+    if (!ok && prev) {
+      setHistory(prev);            // החזרה למצב הקודם
+      Alert.alert('ההסרה נכשלה', 'לא הצלחנו להסיר את הפריט. נסה שוב.');
+    }
+  }, [user]);
+
+  const handleClearHistory = useCallback(() => {
+    const uid = user?.id;
+    if (!uid) return;
+    Alert.alert('ניקוי היסטוריה',
+      'להסיר את כל פריטי ההיסטוריה? התוכן עצמו יישאר בקטלוג.',
+      [{text: 'ביטול', style: 'cancel'},
+       {text: 'נקה', style: 'destructive', onPress: async () => {
+          let prev;
+          setHistory(cur => { prev = cur; return []; });
+          const ok = await clearHistory(uid);
+          if (!ok && prev) {
+            setHistory(prev);
+            Alert.alert('הניקוי נכשל', 'לא הצלחנו לנקות את ההיסטוריה. נסה שוב.');
+          }
+       }}]);
+  }, [user]);
   const [showSignIn, setShowSignIn] = useState(false);
   const [showCatModal, setShowCatModal] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -1822,6 +1879,14 @@ export default function HomeScreen({navigation, route}) {
             onPress={() => { setShowUserMenu(false); setCategory('היסטוריה'); clearSearch(); }}>
             <Text style={styles.menuItemText}>📋  היסטוריית צפייה</Text>
           </TvFocusable>
+          {/* נקה היסטוריה — מופיע רק כשיש מה לנקות, ודורש אישור. */}
+          {user?.id && history.length > 0 && (
+            <TvFocusable
+              style={styles.menuItem}
+              onPress={() => { setShowUserMenu(false); handleClearHistory(); }}>
+              <Text style={styles.menuItemText}>🧹  נקה היסטוריה</Text>
+            </TvFocusable>
+          )}
           <TvFocusable
             style={styles.menuItem}
             onPress={() => { setShowUserMenu(false); navigation.navigate('Settings'); }}>
@@ -1964,6 +2029,8 @@ export default function HomeScreen({navigation, route}) {
           onDeleteDownload={handleDeleteDownload}
           isFavorite={favIds.has(String(detailItem.id))}
           onToggleFavorite={user?.id ? toggleFavorite : null}
+          isInHistory={user?.id ? history.some(h => String(h.media_id) === String(detailItem.id)) : false}
+          onRemoveFromHistory={user?.id ? handleRemoveFromHistory : null}
         />
       )}
 
