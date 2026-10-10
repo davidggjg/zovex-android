@@ -33,6 +33,10 @@ class Choice:
     look: str = ""
     done: object = None          # נקרא עם Choice כשהמשתמש סיים
     cancelled: bool = False
+    file_id: str = ""            # הסרטון שהתקבל, כשהשיחה התחילה ממנו
+    size_bytes: int = 0
+    name: str = ""
+    source: str = ""             # make / own
 
 
 # כל שלב: כותרת, שורות כפתורים, והשדה שנשמר
@@ -55,6 +59,17 @@ ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
        "הכתוביות כבר נשלחו למעלה.")
 ASK_KEYS = [[("✅ כן", "burn:yes"), ("❌ לא", "burn:no")]]
 
+# השאלה הראשונה, מיד אחרי שהסרטון מתקבל ולפני שמתחיל עיבוד כלשהו
+SOURCE = "🎬 <b>הסרטון התקבל</b>\n\nמה לעשות עם הכתוביות?"
+SOURCE_KEYS = [[("🤖 תייצר לי כתוביות", "src:make")],
+               [("📄 יש לי קובץ כתוביות", "src:own")],
+               [("❌ ביטול", "cancel")]]
+
+# נקראים מבחוץ. on_choice כשהמשתמש בחר מה לעשות עם סרטון,
+# on_subtitle כששלח קובץ כתוביות משלו
+on_choice = None
+on_subtitle = None
+
 
 def _menu(index: int) -> tuple[str, str]:
     title, rows, _ = STEPS[index]
@@ -74,6 +89,19 @@ async def offer(chat_id, on_done) -> None:
     log.info("הצעת צריבה עם כפתורים (הודעה %s)", message_id)
 
 
+async def greet(chat_id, file_id: str, size: int, name: str) -> None:
+    """שואל מה לעשות עם סרטון שהתקבל, לפני שמתחיל עיבוד."""
+    sent = await localbot.say(chat_id, SOURCE,
+                              buttons=localbot.keyboard(SOURCE_KEYS))
+    message_id = sent.get("message_id")
+    if not message_id:
+        return
+    choice = Choice(chat_id=int(chat_id), message_id=message_id)
+    choice.file_id, choice.size_bytes, choice.name = file_id, size, name
+    _open[message_id] = choice
+    log.info("סרטון התקבל בבוט: %s (%.0fMB)", name, size / 1048576)
+
+
 async def _press(query: dict) -> None:
     """מטפל בלחיצה אחת."""
     data = query.get("data") or ""
@@ -89,6 +117,16 @@ async def _press(query: dict) -> None:
         choice.cancelled = True
         await localbot.edit(choice.chat_id, message_id,
                             "בוטל. הכתוביות נשלחו למעלה.")
+        return
+
+    if data.startswith("src:"):
+        choice.source = data.split(":", 1)[1]
+        label = ("מייצר כתוביות…" if choice.source == "make"
+                 else "שלח עכשיו את קובץ הכתוביות (SRT).")
+        await localbot.edit(choice.chat_id, message_id, f"✅ {label}")
+        _open.pop(message_id, None)
+        if on_choice:
+            await on_choice(choice)
         return
 
     if data == "burn:yes":
@@ -118,6 +156,29 @@ async def _press(query: dict) -> None:
         await choice.done(choice)
 
 
+async def _incoming(message: dict) -> None:
+    """הודעה שנכנסה לבוט.
+
+    בוט ייעודי אינו צריך פקודות: סרטון שנשלח אליו מתחיל את התהליך,
+    וכל השאר קורה בכפתורים. קובץ כתוביות נשלח כשהמשתמש בחר לצרוב
+    קובץ משלו, ומטופל על ידי מי שמחזיק את העבודה הפתוחה.
+    """
+    chat = (message.get("chat") or {}).get("id")
+    if not chat:
+        return
+    file_id, size, name = localbot.media_of(message)
+    if not file_id:
+        text = (message.get("text") or "").strip()
+        if text:
+            await localbot.say(chat, "שלח סרטון ואתחיל. אין צורך בפקודות.")
+        return
+    if name.lower().endswith((".srt", ".ass", ".vtt", ".sub")):
+        if on_subtitle:
+            await on_subtitle(chat, file_id, name)
+        return
+    await greet(chat, file_id, size, name)
+
+
 async def _pump() -> None:
     """מושך עדכונים מהבוט ומטפל בלחיצות."""
     offset = 0
@@ -132,12 +193,16 @@ async def _pump() -> None:
             continue
         for update in batch:
             offset = max(offset, int(update.get("update_id", 0)) + 1)
-            query = update.get("callback_query")
-            if query:
-                try:
+            try:
+                query = update.get("callback_query")
+                if query:
                     await _press(query)
-                except Exception as exc:  # noqa: BLE001
-                    log.exception("טיפול בלחיצה נכשל: %s", exc)
+                    continue
+                message = update.get("message")
+                if message:
+                    await _incoming(message)
+            except Exception as exc:  # noqa: BLE001 — עדכון אחד לא מפיל
+                log.exception("טיפול בעדכון נכשל: %s", exc)
 
 
 def start() -> None:

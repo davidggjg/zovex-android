@@ -140,3 +140,41 @@ async def updates(offset: int, timeout: int = 25) -> list[dict]:
     """משיכת עדכונים ארוכה. timeout בצד השרת חוסך סיבובים מיותרים."""
     return await call("getUpdates", offset=offset, timeout=timeout,
                       allowed_updates=json.dumps(["message", "callback_query"]))
+
+
+async def local_path(file_id: str) -> Path | None:
+    """הנתיב בדיסק של קובץ שנשלח לבוט.
+
+    זה היתרון הגדול של השרת המקומי, ולא רק בהעלאה: במצב --local הוא
+    שומר את הקובץ הנכנס אצלו, ו-getFile מחזיר נתיב מוחלט במקום כתובת
+    להורדה. כלומר סרטון שנשלח לבוט כבר נמצא על הדיסק — אין מה להוריד
+    מטלגרם, וכל שאלת מהירות ההורדה פשוט לא רלוונטית למסלול הזה.
+    """
+    try:
+        info = await call("getFile", file_id=file_id)
+    except RuntimeError as exc:
+        log.warning("getFile נכשל: %s", exc)
+        return None
+    raw = info.get("file_path") or ""
+    if not raw:
+        return None
+    found = Path(raw)
+    if not found.is_absolute():
+        # שרת ציבורי מחזיר נתיב יחסי להורדה, ולא קובץ מקומי
+        log.info("הקובץ אינו מקומי (%s) — השרת כנראה אינו במצב --local", raw)
+        return None
+    if not found.exists():
+        log.warning("getFile הצביע על %s שאינו קיים", found)
+        return None
+    return found
+
+
+def media_of(message: dict) -> tuple[str, int, str]:
+    """מחלץ (file_id, גודל, שם) מהודעה, או ריק כשאין מדיה."""
+    for key in ("video", "document", "animation"):
+        item = message.get(key)
+        if item:
+            return (item.get("file_id", ""),
+                    int(item.get("file_size", 0) or 0),
+                    item.get("file_name", "") or f"{key}.mp4")
+    return "", 0, ""
