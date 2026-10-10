@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from . import localbot
+from . import config, localbot
 
 log = logging.getLogger(__name__)
 
@@ -228,13 +228,40 @@ async def _pump() -> None:
                 log.exception("טיפול בעדכון נכשל: %s", exc)
 
 
+async def _supervise() -> None:
+    """מחזיק את לולאת העדכונים חיה.
+
+    _pump יוצא רק על חריגה שאינה מהרשת, ואז הבוט חי אבל חירש לנצח —
+    אין קריסה, אין restart של systemd, ואין שום סימן חיצוני. כאן כל
+    יציאה נרשמת והלולאה קמה מחדש.
+    """
+    while True:
+        try:
+            await _pump()
+        except asyncio.CancelledError:
+            raise
+        except Exception:           # noqa: BLE001 — חירשות גרועה מקריסה
+            log.exception("לולאת העדכונים נפלה — מרימים מחדש")
+        else:
+            log.error("לולאת העדכונים יצאה בלי שגיאה — מרימים מחדש")
+        await asyncio.sleep(5)
+
+
 def start() -> None:
     """מפעיל את ההאזנה ללחיצות, אם יש בוט."""
     global _loop
-    if _loop is not None or not localbot.available():
+    if _loop is not None:
+        log.info("לולאת הכפתורים כבר רצה")
         return
-    _loop = asyncio.create_task(_pump())
-    log.info("מאזין ללחיצות כפתורים בבוט")
+    # שתיקה כאן הייתה בלתי ניתנת לאבחון: בלי טוקן או בלי כתובת שרת
+    # הבוט פשוט לא הקשיב, ושום שורה בלוג לא אמרה למה
+    if not localbot.available():
+        log.error("ממשק הכפתורים כבוי: BOT_TOKEN=%s, BOT_API_URL=%s",
+                  "יש" if config.BOT_TOKEN else "חסר",
+                  config.BOT_API_URL or "חסר")
+        return
+    _loop = asyncio.create_task(_supervise())
+    log.info("מאזין ללחיצות כפתורים בבוט · %s", config.BOT_API_URL)
 
 
 def stop() -> None:

@@ -331,6 +331,9 @@ async def _parallel_download(client, message, dst: Path, size: int,
     for index in range(total_parts):
         pending.put_nowait(index)
     last_progress = time.monotonic()
+    # השגיאה הראשונה מטלגרם. בלעדיה הודעת הסיום אומרת רק "ירדו 0
+    # בייט", וזה מסתיר את הסיבה האמיתית מאחורי סיכום חשבונאי
+    first_error: list = []
 
     async def fetch(sender, offset: int):
         """בקשה אחת, עם תקרת זמן וניסיונות חוזרים.
@@ -376,6 +379,8 @@ async def _parallel_download(client, message, dst: Path, size: int,
                             offset, config.TG_READ_TIMEOUT, attempt,
                             config.TG_READ_RETRIES)
             except Exception as exc:  # noqa: BLE001
+                if not first_error:
+                    first_error.append(f"{type(exc).__name__}: {exc}")
                 log.warning("חלק ב-%d נכשל: %s (ניסיון %d/%d)",
                             offset, exc, attempt, config.TG_READ_RETRIES)
             if attempt == config.TG_READ_RETRIES:
@@ -508,7 +513,8 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # באמצע הקובץ היה עובר בשקט ומגיע למשתמש כווידאו פגום. נספרים
     # הבייטים שבאמת נכתבו
     if done != size:
-        raise RuntimeError(f"ירדו {done} בייט מתוך {size} — הקובץ חסר")
+        why = f" · {first_error[0]}" if first_error else ""
+        raise RuntimeError(f"ירדו {done} בייט מתוך {size} — הקובץ חסר{why}")
     # המספר שאי אפשר לנחש במקומו: כמה באמת יצא מהקו הזה
     spent = max(0.001, time.monotonic() - started)
     log.info("ההורדה הסתיימה: %.0fMB ב-%.0f שניות = %.1f MB/s · "
