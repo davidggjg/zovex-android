@@ -4,8 +4,9 @@
 Telethon, והבוט עובד מול שרת HTTP מקומי. במקום לכופף אחד לשני, לכל
 אחד נהג משלו — וכך תקלה בחדש אינה נוגעת בישן.
 
-היתרון המרכזי כאן הוא שאין הורדה: השרת המקומי כבר שמר את הסרטון על
-הדיסק, ו-getFile מחזיר את נתיבו. אנחנו רק קוראים אותו.
+את הסרטון מביאים במסלול המקבילי שלנו ולא דרך getFile: שרת ה-Bot API
+מוריד בחיבור סדרתי אחד, ועל מכונה שמושכת 80MB/s מהאינטרנט הוא נתן
+1.2MB/s. getFile נשאר כגיבוי.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
-from . import botmenu, config, localbot, media, pipeline
+from . import botapi, botmenu, config, fastio, fileid, localbot, media, pipeline
 
 log = logging.getLogger(__name__)
 
@@ -58,9 +59,69 @@ def _folder_size(folder: str) -> int:
         return 0
 
 
+def _as_document(found: "fileid.Located", size: int, name: str):
+    """עוטף את המיקום המפוענח בצורה שהצינור המקבילי כבר יודע לקרוא."""
+    from telethon.tl import types
+
+    return types.Document(
+        id=found.id, access_hash=found.access_hash,
+        file_reference=found.file_reference,
+        date=None, mime_type="video/mp4", size=size,
+        dc_id=found.dc_id, attributes=[types.DocumentAttributeFilename(name)])
+
+
+class _Carrier:
+    """הודעה מדומה — fastio קורא ממנה רק media וגודל."""
+
+    def __init__(self, document):
+        self.media = document
+        self.document = document
+        self.file = type("F", (), {"size": document.size})()
+
+
+async def _fast(file_id: str, size: int, name: str, target: Path,
+                screen: "Screen") -> bool:
+    """מנסה להוריד במסלול המקבילי. מחזיר False כדי ליפול לגיבוי."""
+    client = botapi.bot()
+    if client is None or not size:
+        return False
+    try:
+        found = fileid.decode(file_id)
+    except ValueError as exc:
+        log.info("file_id לא נפענח (%s) — מסלול השרת", exc)
+        return False
+
+    began = time.monotonic()
+
+    async def on_progress(done: int, total: int, note: str) -> None:
+        elapsed = max(0.1, time.monotonic() - began)
+        rate = done / elapsed / 1048576
+        await screen.show(
+            f"📥 מוריד · {done * 100 // max(1, total)}% · "
+            f"{rate:.1f}MB/s{' · ' + note if note else ''}")
+
+    try:
+        await fastio.download(client, _Carrier(_as_document(found, size, name)),
+                              target, on_progress=on_progress)
+    except Exception as exc:  # noqa: BLE001 — נופלים לגיבוי, לא מפילים
+        log.warning("המסלול המקבילי נכשל (%s: %s) — מסלול השרת",
+                    type(exc).__name__, exc)
+        target.unlink(missing_ok=True)
+        return False
+    if target.stat().st_size < size:
+        target.unlink(missing_ok=True)
+        return False
+    log.info("ירד במסלול המקבילי: %.0fMB ב-%.0f שניות",
+             size / 1048576, time.monotonic() - began)
+    return True
+
+
 async def _fetch(chat_id, file_id: str, name: str, work: Path,
-                 screen: "Screen") -> Path | None:
-    """מביא את הסרטון לתיקיית העבודה — בלי הורדה מטלגרם."""
+                 screen: "Screen", size: int = 0) -> Path | None:
+    """מביא את הסרטון לתיקיית העבודה."""
+    target = work / f"source{Path(name).suffix or '.mp4'}"
+    if await _fast(file_id, size, name, target, screen):
+        return target
     # getFile במצב --local מוריד את הקובץ מטלגרם לפני שהוא מחזיר נתיב.
     # זו הורדה אמיתית שלוקחת זמן, ובלי דופק המסך נראה תקוע — בדיוק
     # אותה תקלה שתוקנה כבר בשאר הצינור
@@ -85,7 +146,6 @@ async def _fetch(chat_id, file_id: str, name: str, work: Path,
         log.warning("קריאת הסרטון נכשלה: %s", why)
         await localbot.say(chat_id, f"לא הצלחתי לקרוא את הסרטון.\n<code>{why}</code>")
         return None
-    target = work / f"source{Path(name).suffix or '.mp4'}"
     # העתקה ולא הזזה: הקובץ שייך לשרת, והוא עשוי להידרש לו שוב
     await asyncio.get_running_loop().run_in_executor(
         None, shutil.copy2, found, target)
@@ -104,7 +164,7 @@ async def run(choice) -> None:
 
     try:
         source = await _fetch(chat_id, choice.file_id, choice.name,
-                              work, screen)
+                              work, screen, choice.size_bytes)
         if source is None:
             pipeline.cleanup(work)
             return

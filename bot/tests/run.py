@@ -245,6 +245,43 @@ def _breaker():
     assert fetch._breaker_open() == 0, "הצלחה לא פתחה את המפסק"
 
 
+@check("פענוח file_id למיקום MTProto")
+def _fileid():
+    """המסלול שמחליף את ההורדה הסדרתית של שרת הבוט."""
+    from zovexsub import fileid
+
+    sample = fileid.Located(dc_id=2, id=5295129377295024127,
+                            access_hash=-7126845109898138049,
+                            file_reference=bytes(range(1, 19)), file_type=4)
+    packed = fileid.encode(sample)
+    assert packed.startswith("BAACAgI"), packed
+    assert fileid.decode(packed) == sample
+
+    bare = fileid.Located(dc_id=5, id=1, access_hash=2,
+                          file_reference=b"", file_type=5)
+    assert fileid.decode(fileid.encode(bare)) == bare
+
+    raw = bytes(300) + b"ab" + bytes(5)
+    assert fileid.rle_decode(fileid.rle_encode(raw)) == raw
+
+    for bad in ("", "!!!!", "AAAA"):
+        try:
+            fileid.decode(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad!r} היה אמור להידחות")
+
+    # תמונה אינה מסמך ואין לה מיקום כזה — חייב ליפול לגיבוי
+    photo = fileid.Located(dc_id=2, id=1, access_hash=2,
+                           file_reference=b"", file_type=2)
+    try:
+        fileid.decode(fileid.encode(photo))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("סוג תמונה לא נדחה")
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
