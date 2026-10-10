@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 
 from telethon import TelegramClient
+from telethon.sessions import StringSession
 
 from . import config
 
@@ -45,13 +46,20 @@ async def start(premium: TelegramClient) -> None:
     else:
         log.info("אין טוקן בוט — ממשק הכפתורים מושבת")
 
-    if config.TG_SESSION_LITE:
+    # מחרוזת סשן עדיפה על קובץ: היא נוצרת פעם אחת עם טלפון וקוד, ואחר
+    # כך היא רק שורה ב-.env — בלי התחברות אינטראקטיבית בשרת ובלי קובץ
+    # שצריך להעתיק. זה מה שבוטים אחרים עושים, ומה שנראה כאילו הכל
+    # מחובר דרך הטוקן
+    if config.TG_STRING_LITE:
+        _lite = await _connect(StringSession(config.TG_STRING_LITE),
+                               label="חשבון רגיל (מחרוזת)")
+    elif config.TG_SESSION_LITE:
         _lite = await _connect(config.TG_SESSION_LITE, label="חשבון רגיל")
     if _lite is None:
         log.info("אין חשבון רגיל — כל ההעלאות דרך חשבון ה-Premium")
 
 
-async def _connect(session: str, *, bot_token: str = "",
+async def _connect(session, *, bot_token: str = "",
                    label: str = "") -> TelegramClient | None:
     candidate = TelegramClient(session, config.TG_API_ID, config.TG_API_HASH)
     try:
@@ -60,7 +68,9 @@ async def _connect(session: str, *, bot_token: str = "",
         else:
             await candidate.connect()
             if not await candidate.is_user_authorized():
-                raise RuntimeError("הסשן אינו מחובר — צריך התחברות חד-פעמית")
+                raise RuntimeError(
+                    "הסשן אינו מחובר. ליצירת מחרוזת סשן חד-פעמית: "
+                    "python3 bot/tests/mksession.py")
         me = await candidate.get_me()
     except Exception as exc:  # noqa: BLE001 — חיבור שבור לא מפיל את השירות
         log.error("%s לא התחבר (%s) — ממשיכים בלעדיו", label, exc)

@@ -28,6 +28,9 @@ TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 # סשן של חשבון משתמש רגיל (לא Premium). ריק = הכל דרך ה-Premium
 TG_SESSION_LITE = os.getenv("TG_SESSION_LITE", "").strip()
+# מחרוזת סשן של החשבון הרגיל. עדיפה על קובץ — ראו botapi.start.
+# זהירות: המחרוזת נותנת גישה מלאה לחשבון. ב-.env בלבד, לעולם לא בגיט
+TG_STRING_LITE = os.getenv("TG_STRING_LITE", "").strip()
 # תקרת ההעלאה של חשבון רגיל. מעליה נדרש Premium
 LITE_UPLOAD_MAX = _int("LITE_UPLOAD_MAX", 2000 * 1024 * 1024)
 # ערוץ אחסון פרטי שבו נמצאים הבוט ושני החשבונות. החשבון מעלה לשם
