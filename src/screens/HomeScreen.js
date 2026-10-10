@@ -19,6 +19,7 @@ import {
   Platform,
   BackHandler,
   Share,
+  PanResponder,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -217,10 +218,18 @@ function MovieDetailModal({
   // ה-description לא נשלח ב-/content/lite (זה השדה הכבד). כשפותחים סרט
   // מושכים אותו לפי דרישה מ-/content/item/{id}. אם הפריט כבר מכיל description
   // (למשל מ-cache ישן) — משתמשים בו כמו שהוא.
+  //
+  // cast נמשך באותה קריאה בדיוק — לא עוד fetch נפרד. הוא גם לא נשלח
+  // ב-lite מאותה סיבה (ראה _LITE_DROP בשרת).
   const [fetchedDesc, setFetchedDesc] = useState(null);
+  const [fetchedCast, setFetchedCast] = useState(null);
   useEffect(() => {
     setFetchedDesc(null);
-    if (!item || item.description) return;
+    setFetchedCast(null);
+    if (!item) return;
+    // דרוש fetch גם כשיש כבר description אבל אין עדיין cast (תוכן שנוסף
+    // לפני התכונה) — ממשיכים רק אם *שניהם* כבר קיימים על הפריט עצמו.
+    if (item.description && item.cast) return;
     // לסדרה הפריט הוא פסאודו (id "series_..." בלי description); מושכים את
     // התיאור מהפרק הראשון האמיתי. לסרט — לפי ה-id של הפריט עצמו.
     let detailId = item.id;
@@ -231,11 +240,14 @@ function MovieDetailModal({
     if (!detailId || String(detailId).startsWith('series_')) return;
     let alive = true;
     fetchItemDetail(detailId).then(full => {
-      if (alive && full && full.description) setFetchedDesc(full.description);
+      if (!alive || !full) return;
+      if (full.description) setFetchedDesc(full.description);
+      if (Array.isArray(full.cast) && full.cast.length) setFetchedCast(full.cast);
     });
     return () => { alive = false; };
   }, [item, allMovies]);
   const description = item?.description || fetchedDesc || '';
+  const cast = (item?.cast && item.cast.length ? item.cast : fetchedCast) || [];
 
   const episodes = useMemo(() => {
     if (!item?.series_name) return [];
@@ -310,6 +322,7 @@ function MovieDetailModal({
               <Image source={{uri: item.thumbnail_url}} style={mdStyles.thumb} />
               <DarkGradient />
               <View style={mdStyles.thumbTitleWrap}>
+                {!!item.year && <Text style={mdStyles.year}>{item.year}</Text>}
                 <Text style={mdStyles.title}>{displayTitle}</Text>
                 {tappedEp ? (
                   <Text style={mdStyles.epHeading}>
@@ -327,6 +340,7 @@ function MovieDetailModal({
           <View style={mdStyles.body}>
             {!item.thumbnail_url && (
               <>
+                {!!item.year && <Text style={mdStyles.year}>{item.year}</Text>}
                 <Text style={mdStyles.title}>{displayTitle}</Text>
                 {tappedEp ? (
                   <Text style={mdStyles.epHeading}>
@@ -437,6 +451,30 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                 </TvFocusable>
               )}
             </View>
+            {/* שחקנים — מתחת לכפתור ההפעלה, כמו שביקש דוד. ריק כשאין נתוני
+                TMDB (תוכן ישן, או לא זוהה) — מוסתר כליל, לא מציג משבצות
+                ריקות. גלילה אופקית פשוטה בטלפון; בטלוויזיה מוצג סטטי
+                (בלי focus לשלט) — זה תוכן נלווה, לא פעולה. */}
+            {cast.length > 0 && (
+              <View style={mdStyles.castSection}>
+                <Text style={mdStyles.castHeader}>שחקנים</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={mdStyles.castRow}>
+                  {cast.map((c, i) => (
+                    <View key={i} style={mdStyles.castItem}>
+                      {c.photo ? (
+                        <Image source={{uri: c.photo}} style={mdStyles.castPhoto} />
+                      ) : (
+                        <View style={mdStyles.castPhotoEmpty}>
+                          <Text style={{fontSize: 20}}>🎭</Text>
+                        </View>
+                      )}
+                      <Text style={mdStyles.castName} numberOfLines={2}>{c.name}</Text>
+                    </View>
+                  ))}
+                </ScrollView>
+              </View>
+            )}
           </View>
           {episodes.length > 1 && (
             <View style={mdStyles.epsSection}>
@@ -582,6 +620,11 @@ const mdStyles = StyleSheet.create({
   thumbTitleWrap: {position: 'absolute', left: 0, right: 0, bottom: 0, padding: 18, paddingBottom: 14},
   noThumb: {width: '100%', height: 200, backgroundColor: colors.surfaceElevated, justifyContent: 'center', alignItems: 'center'},
   body: {padding: 18},
+  year: {
+    color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: '700', textAlign: 'right',
+    marginBottom: 2, textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 0, height: 1},
+    textShadowRadius: 6,
+  },
   title: {
     color: '#fff', fontSize: 20, fontWeight: '800', textAlign: 'right', marginBottom: 8,
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 0, height: 2}, textShadowRadius: 8,
@@ -610,6 +653,17 @@ const mdStyles = StyleSheet.create({
   },
   shareTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   playTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
+  // ── שחקנים ──
+  castSection: {marginTop: 18},
+  castHeader: {color: colors.text, fontSize: 15, fontWeight: '800', textAlign: 'right', marginBottom: 10},
+  castRow: {flexDirection: 'row', gap: 12, paddingBottom: 4},
+  castItem: {width: 68, alignItems: 'center'},
+  castPhoto: {width: 60, height: 60, borderRadius: 30, backgroundColor: colors.surfaceElevated},
+  castPhotoEmpty: {
+    width: 60, height: 60, borderRadius: 30, backgroundColor: colors.surfaceElevated,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  castName: {color: colors.textSecondary, fontSize: 11, fontWeight: '600', textAlign: 'center', marginTop: 6},
   dlBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
     backgroundColor: colors.surfaceElevated, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16,
@@ -777,43 +831,82 @@ const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
   const [index, setIndex] = useState(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
 
+  // מעבר אחיד בין קרוסלה אוטומטית להחלקה ידנית — שתיהן קוראות לזה, כדי
+  // שלא תהיינה שתי אנימציות מעבר שונות תלוי מי הפעיל את המעבר.
+  const goToIndex = useCallback(next => {
+    Animated.timing(fadeAnim, {toValue: 0, duration: 400, useNativeDriver: true}).start(() => {
+      setIndex(next);
+      Animated.timing(fadeAnim, {toValue: 1, duration: 400, useNativeDriver: true}).start();
+    });
+  }, [fadeAnim]);
+
+  // הטיימר מתאפס בכל שינוי index — גם כשהוא עצמו גרם לשינוי, וגם כשההחלקה
+  // הידנית למטה גרמה לו. בלי התלות ב-index (setInterval חופשי במקום) החלקה
+  // ידנית הייתה "מתחרה" עם הסיבוב האוטומטי שיכול לירות רגע אחרי.
   useEffect(() => {
     if (heroMovies.length < 2) return;
-    const t = setInterval(() => {
-      Animated.timing(fadeAnim, {toValue: 0, duration: 400, useNativeDriver: true}).start(() => {
-        setIndex(i => (i + 1) % heroMovies.length);
-        Animated.timing(fadeAnim, {toValue: 1, duration: 400, useNativeDriver: true}).start();
-      });
-    }, 8000);
-    return () => clearInterval(t);
-  }, [heroMovies.length, fadeAnim]);
+    const t = setTimeout(() => goToIndex((index + 1) % heroMovies.length), 8000);
+    return () => clearTimeout(t);
+  }, [heroMovies.length, index, goToIndex]);
+
+  // החלקה באצבע — PanResponder מהליבה של RN, בלי ספריית מחוות נוספת.
+  // קורא ל-release בלבד, לא עוקב חי אחרי האצבע: כך אין אנימציית-גרירה
+  // שנייה שמתחרה עם ה-fade שכבר קיים ב-goToIndex. הסף על dx (לא dy) +
+  // דרישה ש-dx יהיה דומיננטי משמעותית מבטיחה שגלילה אנכית של הרשימה
+  // שעוטפת את הבאנר לא נחטפת, וש-TvFocusable (לחיצה בלי תזוזה) עובר חופשי.
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) =>
+      Math.abs(g.dx) > 14 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+    onPanResponderRelease: (_, g) => {
+      if (heroMovies.length < 2) return;
+      const threshold = Math.min(80, SW * 0.15);
+      if (g.dx <= -threshold) goToIndex((index + 1) % heroMovies.length);
+      else if (g.dx >= threshold) goToIndex((index - 1 + heroMovies.length) % heroMovies.length);
+    },
+  }), [heroMovies.length, index, goToIndex]);
 
   if (heroMovies.length === 0) return null;
   const movie = heroMovies[index % heroMovies.length];
 
   return (
-    <Animated.View style={[styles.hero, {opacity: fadeAnim}]}>
-      {movie.thumbnail_url ? (
+    <Animated.View style={[styles.hero, {opacity: fadeAnim}]} {...panResponder.panHandlers}>
+      {(movie.backdrop_url || movie.thumbnail_url) ? (
         <View style={styles.heroBg}>
-          {/* שתי שכבות של אותה תמונה, וזה מכוון.
-              המסגרת בגובה קבוע, ולכן contain לבדו מצייר תמונת פוסטר (צרה
-              וגבוהה) קטנה במרכז בעוד תמונה רוחבית ממלאת את הרוחב — כלומר
-              האריח נראה בגודל אחר לכל פריט בקרוסלה. השכבה המטושטשת ב-cover
-              ממלאת תמיד את המסגרת, וה-contain מעליה מציג את התמונה בשלמותה
-              בלי חיתוך. כך הגודל קבוע והתוכן עדיין שלם. */}
-          <Image
-            source={{uri: movie.thumbnail_url}}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-            blurRadius={14}
-          />
-          <Image
-            source={{uri: movie.thumbnail_url}}
-            style={StyleSheet.absoluteFill}
-            resizeMode="contain"
-          />
+          {movie.backdrop_url ? (
+            // תמונה רוחבית אמיתית (TMDB backdrop, לא פוסטר) — שכבת cover
+            // אחת ונקייה. זה בדיוק מה שהיה חסר וגרם למראה ה"מדבקה": פוסטר
+            // צר שנדחס לתוך מסגרת רחבה (ראה ה-fallback למטה). ההסבר המלא
+            // ב-add_movie_entry/TMDB_IMG_BACKDROP בשרת.
+            <Image
+              source={{uri: movie.backdrop_url}}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+            />
+          ) : (
+            <>
+              {/* נפילה חזרה: תוכן ישן/בלי tmdb_id, עדיין רק עם פוסטר צר.
+                  שתי שכבות של אותה תמונה, וזה מכוון.
+                  המסגרת בגובה קבוע, ולכן contain לבדו מצייר תמונת פוסטר (צרה
+                  וגבוהה) קטנה במרכז בעוד תמונה רוחבית ממלאת את הרוחב — כלומר
+                  האריח נראה בגודל אחר לכל פריט בקרוסלה. השכבה המטושטשת ב-cover
+                  ממלאת תמיד את המסגרת, וה-contain מעליה מציג את התמונה בשלמותה
+                  בלי חיתוך. כך הגודל קבוע והתוכן עדיין שלם. */}
+              <Image
+                source={{uri: movie.thumbnail_url}}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+                blurRadius={14}
+              />
+              <Image
+                source={{uri: movie.thumbnail_url}}
+                style={StyleSheet.absoluteFill}
+                resizeMode="contain"
+              />
+            </>
+          )}
           <DarkGradient />
           <View style={styles.heroContent}>
+            {!!movie.year && <Text style={styles.heroYear}>{movie.year}</Text>}
             <Text style={styles.heroTitle} numberOfLines={2}>{movie.series_name || movie.title}</Text>
             {!!movie.description && <Text style={styles.heroDesc} numberOfLines={2}>{movie.description}</Text>}
             <View style={styles.heroBtns}>
@@ -841,7 +934,10 @@ const HeroBanner = memo(function HeroBanner({movies, onPlay, onInfo}) {
       {heroMovies.length > 1 && (
         <View style={styles.heroDots}>
           {heroMovies.map((_, i) => (
-            <View key={i} style={[styles.heroDot, i === index && styles.heroDotActive]} />
+            <TouchableOpacity key={i} onPress={() => goToIndex(i)}
+              hitSlop={{top: 10, bottom: 10, left: 6, right: 6}}>
+              <View style={[styles.heroDot, i === index && styles.heroDotActive]} />
+            </TouchableOpacity>
           ))}
         </View>
       )}
@@ -887,6 +983,11 @@ function buildSeriesMap(movies) {
       name: n,
       title: n,
       thumbnail_url: m.thumbnail_url,
+      // כל הפרקים של אותה סדרה חולקים backdrop_url/cast/year — ה-meta
+      // ברמת הסדרה נמשך פעם אחת ב-_series_tmdb (ראה השרת), לא לכל פרק.
+      backdrop_url: m.backdrop_url,
+      cast: m.cast,
+      year: m.year,
       description: m.description,
       category: dominant,
     };
@@ -2494,6 +2595,11 @@ const styles = StyleSheet.create({
   hero: {width: '100%', height: HERO_H, backgroundColor: colors.bg},
   heroBg: {width: '100%', height: HERO_H, justifyContent: 'flex-end'},
   heroContent: {padding: 16, paddingBottom: 36},
+  heroYear: {
+    color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '700', textAlign: 'right',
+    marginBottom: 4, textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: {width: 0, height: 1},
+    textShadowRadius: 4,
+  },
   heroTitle: {
     color: colors.text, fontSize: font.hero, fontWeight: '900', textAlign: 'right',
     textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: {width: 0, height: 2},
