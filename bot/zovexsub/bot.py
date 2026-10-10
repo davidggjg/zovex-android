@@ -702,7 +702,6 @@ async def _burn(job: Job, work: Path) -> None:
         await upload.show(sent / total if total else 0, done_bytes=sent)
 
     user_client = job.event.client
-    chat = await job.event.get_input_chat()
 
     # התכונות נקבעות פעם אחת ונשלחות בכל מסלול. בלעדיהן טלגרם לא יודע
     # את אורך הסרטון ואת מידותיו, מציג "0 מתוך 0" ולא מנגן בתצוגה
@@ -717,39 +716,27 @@ async def _burn(job: Job, work: Path) -> None:
     thumb = await media.poster(burned, work)
     size = burned.stat().st_size
 
-    async def deliver(client) -> None:
-        """מעלה ושולח באותו חשבון.
+    async def send_with(client) -> None:
+        """מעלה ושולח באותו חשבון, אחרי שהוא פתר את היעד בעצמו.
 
-        קובץ שהועלה בחשבון אחד אינו ניתן לשליחה מהשני — ההעלאה קשורה
-        לחיבור שביצע אותה. לכן שני השלבים חייבים לרוץ יחד
+        access_hash של צ'אט הוא ייחודי לכל חשבון. peer שחשבון אחד פתר
+        אינו תקף אצל חשבון אחר, וטלגרם מחזיר על כך "invalid Peer".
+        לכן כל חשבון קורא ל-get_input_entity בעצמו, לפי מזהה מספרי.
+
+        גם ההעלאה והשליחה חייבות לרוץ באותו חשבון: הקובץ שהועלה קשור
+        לחיבור שביצע אותו
         """
-        sent_file = await fastio.upload(client, burned, on_progress=on_upload)
-        common = dict(caption="🔥 וידאו עם כתוביות צרובות",
-                      supports_streaming=True,
-                      reply_to=job.event.message.id,
-                      attributes=attributes,
-                      thumb=str(thumb) if thumb else None)
-        if sent_file is not None:
-            await client.send_file(chat, sent_file, **common)
-        else:
-            await client.send_file(chat, str(burned),
-                                   progress_callback=on_upload, **common)
-
-    async def send_with(client, where) -> object:
-        """מעלה ושולח באותו חשבון.
-
-        קובץ שהועלה בחשבון אחד אינו ניתן לשליחה מהשני — ההעלאה קשורה
-        לחיבור שביצע אותה, ולכן שני השלבים חייבים לרוץ יחד
-        """
+        where = await client.get_input_entity(job.event.chat_id)
         handle = await fastio.upload(client, burned, on_progress=on_upload)
         common = dict(caption="🔥 וידאו עם כתוביות צרובות",
                       supports_streaming=True,
                       attributes=attributes,
                       thumb=str(thumb) if thumb else None)
         if handle is not None:
-            return await client.send_file(where, handle, **common)
-        return await client.send_file(where, str(burned),
-                                      progress_callback=on_upload, **common)
+            await client.send_file(where, handle, **common)
+        else:
+            await client.send_file(where, str(burned),
+                                   progress_callback=on_upload, **common)
 
     # עד 2GB דרך השרת המקומי: הוא קורא את הקובץ מהדיסק, בלי העלאה
     # בכלל. מעבר לתקרה הזאת גם שרת מקומי לא עוזר, ושם נדרש Premium
@@ -772,25 +759,20 @@ async def _burn(job: Job, work: Path) -> None:
                         type(exc).__name__, exc)
 
     uploader, which = botapi.uploader(size, user_client)
-    log.info("הפלט %.2fGB — מועלה מחשבון %s", size / 1024 ** 3, which)
-
-    relayed = False
-    if botapi.ready_for_relay():
-        # החשבון מעלה לערוץ האחסון, והבוט מעביר משם. ההעברה אינה
-        # העלאה — הקובץ כבר אצל טלגרם — ולכן מגבלת הגודל של הבוט לא
-        # חלה עליה, וכך אפשר למסור גם קבצים שהבוט לא היה יכול להעלות
+    if uploader is not user_client:
+        log.info("הפלט %.2fGB — מועלה מחשבון %s", size / 1024 ** 3, which)
         try:
-            vault = await botapi.storage(uploader)
-            stored = await send_with(uploader, vault)
-            await botapi.bot().forward_messages(chat, stored)
-            relayed = True
+            await send_with(uploader)
+            await _safe_delete(job.status)
+            pipeline.cleanup(work)
+            return
         except Exception as exc:  # noqa: BLE001
-            log.warning("המסירה דרך הבוט נכשלה (%s: %s) — שולחים ישירות",
-                        type(exc).__name__, exc)
+            # החשבון הרגיל אינו בהכרח בצ'אט הזה, ואז אין לו דרך לכתוב
+            # אליו. זה לא כשל אמיתי — פשוט שולחים מהחשבון שכן נמצא בו
+            log.warning("השליחה מחשבון ה%s נכשלה (%s) — חוזרים לראשי",
+                        which, type(exc).__name__)
 
-    if not relayed:
-        # בלי בוט או בלי ערוץ אחסון, החשבון שולח ישירות לצ'אט כמו תמיד
-        await send_with(uploader, chat)
+    await send_with(user_client)
 
     await _safe_delete(job.status)
     pipeline.cleanup(work)
