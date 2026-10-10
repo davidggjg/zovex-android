@@ -122,8 +122,12 @@ async def run(choice) -> None:
         await screen.show(
             f"✅ <b>{result.cues} כתוביות</b> · {result.duration / 60:.1f} דק׳ · "
             f"שפת מקור: {result.language}", force=True)
-        await localbot.call("sendDocument", chat_id=str(chat_id),
-                            document=Path(result.srt_path).resolve().as_uri())
+        srt_file = Path(result.srt_path)
+        try:
+            await localbot.call("sendDocument", chat_id=str(chat_id),
+                                document=localbot._to_container(srt_file))
+        finally:
+            localbot.clear_outbox(srt_file.name)
         await _offer_burn(chat_id, source, Path(result.srt_path), work)
     except Exception as exc:  # noqa: BLE001 — מדווחים ולא מפילים את הבוט
         log.exception("עבודת הבוט נכשלה")

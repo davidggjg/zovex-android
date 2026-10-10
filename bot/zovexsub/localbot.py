@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 from pathlib import Path
 
 import httpx
@@ -63,7 +65,7 @@ async def send_video(chat_id, path: Path, *, caption: str = "",
             f"{size / 1024 ** 3:.2f}GB מעל תקרת הבוט — נדרש חשבון Premium")
     fields = {
         "chat_id": str(chat_id),
-        "video": path.resolve().as_uri(),      # file:// — בלי העלאה
+        "video": _to_container(path),          # file:// — בלי העלאה
         "caption": caption,
         "supports_streaming": "true",
     }
@@ -72,9 +74,14 @@ async def send_video(chat_id, path: Path, *, caption: str = "",
         if value:
             fields[name] = str(value)
     if thumb and thumb.exists():
-        fields["thumbnail"] = thumb.resolve().as_uri()
+        fields["thumbnail"] = _to_container(thumb)
     log.info("שולח %.0fMB דרך השרת המקומי", size / 1048576)
-    return await call("sendVideo", **fields)
+    try:
+        return await call("sendVideo", **fields)
+    finally:
+        clear_outbox(path.name)
+        if thumb:
+            clear_outbox(thumb.name)
 
 
 async def find_chat() -> list[dict]:
@@ -187,6 +194,43 @@ def _translate(path: Path) -> Path:
     if inside and text.startswith(inside):
         return Path(config.BOT_API_DATA) / text[len(inside):].lstrip("/")
     return path
+
+
+def _to_container(path: Path) -> str:
+    """נתיב file:// שהשרת יוכל לפתוח.
+
+    התמונה המראה של _translate. הקובץ שלנו יושב במארח, והשרת רץ
+    בקונטיינר שרואה רק את תיקיית הנתונים שחוברה לו — נתיב אחר הוא
+    "can't find real file path" מבחינתו.
+
+    לכן הקובץ מונח בתוך התיקייה המשותפת, ועדיף בקישור קשיח: אותה
+    מחיצה, ולכן זה מיידי גם לקובץ של ג'יגה־בייטים, ובלי להכפיל מקום.
+    כשהקישור אינו אפשרי מעתיקים.
+    """
+    if not config.BOT_API_DATA:
+        return path.resolve().as_uri()
+    outbox = Path(config.BOT_API_DATA) / "outbox"
+    outbox.mkdir(parents=True, exist_ok=True)
+    staged = outbox / path.name
+    if staged.exists():
+        staged.unlink()
+    try:
+        os.link(path, staged)
+    except OSError:
+        shutil.copy2(path, staged)
+    inside = config.BOT_API_INSIDE.rstrip("/")
+    return f"file://{inside}/outbox/{staged.name}"
+
+
+def clear_outbox(name: str) -> None:
+    """מסיר את הקישור שהונח לשליחה."""
+    if not config.BOT_API_DATA:
+        return
+    staged = Path(config.BOT_API_DATA) / "outbox" / name
+    try:
+        staged.unlink(missing_ok=True)
+    except OSError as exc:
+        log.debug("ניקוי outbox נכשל: %s", exc)
 
 
 def media_of(message: dict) -> tuple[str, int, str]:
