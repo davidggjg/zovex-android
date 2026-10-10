@@ -82,7 +82,12 @@ class _Carrier:
 async def _fast(file_id: str, size: int, name: str, target: Path,
                 screen: "Screen") -> bool:
     """מנסה להוריד במסלול המקבילי. מחזיר False כדי ליפול לגיבוי."""
-    client = botapi.bot()
+    # חשבון משתמש ולא הבוט: פתיחת חיבור ל-DC מרוחק דורשת
+    # auth.exportAuthorization, וזו קריאה של משתמש. access_hash של
+    # מסמך אינו תלוי חשבון, ולכן אותו file_id עובד גם כאן
+    client, which = botapi.downloader(size, botapi.premium())
+    if client is None:
+        client, which = botapi.bot(), "בוט"
     if client is None or not size:
         return False
     try:
@@ -93,21 +98,46 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
 
     began = time.monotonic()
     workers = fastio._connections(size, max(1, config.TG_CONNECTIONS))
+    moved = {"at": 0}
 
     async def on_progress(done: int, total: int, note: str) -> None:
+        moved["at"] = done
         elapsed = max(0.1, time.monotonic() - began)
         rate = done / elapsed / 1048576
         await screen.show(
             f"📥 מוריד ·{workers}× · {done * 100 // max(1, total)}% · "
             f"{rate:.1f}MB/s{' · ' + note if note else ''}")
 
+    # דופק: פתיחת שישה־עשר חיבורים נפרדת לוקחת שניות, ועד הבייט
+    # הראשון on_progress לא נקרא אף פעם. בלי זה המסך נשאר על ההודעה
+    # הראשונה והכל נראה תקוע — וזה בדיוק מה שדווח
+    async def beat() -> None:
+        while True:
+            await asyncio.sleep(config.BOT_EDIT_EVERY)
+            if moved["at"]:
+                continue
+            waited = int(time.monotonic() - began)
+            if waited > config.FAST_START_TIMEOUT:
+                # אף בייט לא הגיע. עדיף ליפול לגיבוי מאשר להישאר תקוע
+                raise TimeoutError(
+                    f"לא התחיל להוריד תוך {config.FAST_START_TIMEOUT:.0f} שניות")
+            await screen.show(f"🔌 פותח {workers} חיבורים ({which}) · "
+                              f"{waited // 60}:{waited % 60:02d}")
+
     # קוראים ל-_parallel_download ישירות ולא ל-download: האחרון בולע כשל
     # מקבילי ועובר בשקט למסלול סדרתי, וזה בדיוק מה שהסתיר קצב של
     # 1.2MB/s שנראה כאילו המקבול עובד. כאן כשל הוא כשל, והוא נאמר
     carrier = _Carrier(_as_document(found, size, name))
+    pulse = asyncio.create_task(beat())
+    puller = asyncio.ensure_future(fastio._parallel_download(
+        client, carrier, target, size, workers, on_progress))
     try:
-        await fastio._parallel_download(client, carrier, target, size,
-                                        workers, on_progress)
+        done, _ = await asyncio.wait([puller, pulse],
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if pulse in done:          # הדופק נפל על פסק זמן — אין התחלה
+            puller.cancel()
+            raise pulse.exception() or TimeoutError("ההורדה לא התחילה")
+        await puller
     except Exception as exc:  # noqa: BLE001 — נופלים לגיבוי, לא מפילים
         log.warning("המסלול המקבילי נכשל (%s: %s) — מסלול השרת",
                     type(exc).__name__, exc)
@@ -115,6 +145,9 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
                           force=True)
         target.unlink(missing_ok=True)
         return False
+    finally:
+        pulse.cancel()
+        puller.cancel()
     if target.stat().st_size < size:
         target.unlink(missing_ok=True)
         return False

@@ -26,7 +26,13 @@ log = logging.getLogger(__name__)
 
 _bot: TelegramClient | None = None
 _lite: TelegramClient | None = None
+_premium: TelegramClient | None = None
 _storage = None            # ישות הערוץ, נפתרת פעם אחת
+
+
+def premium() -> TelegramClient | None:
+    """חשבון ה-Premium, לשימוש מסלולים שאין להם את האירוע המקורי."""
+    return _premium
 
 
 def have_bot() -> bool:
@@ -39,7 +45,8 @@ def bot() -> TelegramClient | None:
 
 async def start(premium: TelegramClient) -> None:
     """מעלה את הבוט ואת החשבון הרגיל, אם הוגדרו."""
-    global _bot, _lite
+    global _bot, _lite, _premium
+    _premium = premium
     if config.BOT_TOKEN:
         _bot = await _connect(f"{config.TG_SESSION}-bot",
                               bot_token=config.BOT_TOKEN, label="בוט")
@@ -110,14 +117,14 @@ async def _connect(session, *, bot_token: str = "",
 
 
 async def stop() -> None:
-    global _bot, _lite, _storage
+    global _bot, _lite, _storage, _premium
     for client in (_bot, _lite):
         if client is not None:
             try:
                 await client.disconnect()
             except Exception as exc:  # noqa: BLE001
                 log.debug("ניתוק נכשל: %s", exc)
-    _bot, _lite, _storage = None, None, None
+    _bot, _lite, _storage, _premium = None, None, None, None
 
 
 def uploader(size: int, premium: TelegramClient):
