@@ -26,6 +26,9 @@ TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
 # הבוט מתחבר דרך MTProto ולא דרך ה-Bot API, ולכן תקרת ההעלאה שלו 2GB
 # ולא 50MB. קובץ גדול יותר עובר לחשבון המשתמש, שהוא Premium
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# שרת Bot API מקומי. ריק = אין, והכל עובר דרך חשבון המשתמש כמו קודם.
+# השרת הזה הוא מה שמעלה את תקרת הבוט מ-50MB ל-2GB
+BOT_API_URL = os.getenv("BOT_API_URL", "").strip()
 # סשן של חשבון משתמש רגיל (לא Premium). ריק = הכל דרך ה-Premium
 TG_SESSION_LITE = os.getenv("TG_SESSION_LITE", "").strip()
 # מחרוזת סשן של החשבון הרגיל. עדיפה על קובץ — ראו botapi.start.
