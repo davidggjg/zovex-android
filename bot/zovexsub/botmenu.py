@@ -205,15 +205,28 @@ async def _incoming(message: dict) -> None:
 async def _pump() -> None:
     """מושך עדכונים מהבוט ומטפל בלחיצות."""
     offset = 0
+    misses = 0
     while True:
         try:
             batch = await localbot.updates(offset)
         except asyncio.CancelledError:
             raise
         except Exception as exc:    # noqa: BLE001 — רשת נופלת, ממשיכים
-            log.debug("משיכת עדכונים נכשלה: %s", exc)
+            # רמת debug הסתירה את התקלה הגרועה מכולן: כששרת ה-Bot API
+            # המקומי אינו עולה, כל משיכה נכשלת והבוט חירש לנצח — בלי
+            # קריסה, בלי שגיאה בלוג, ובלי שום סימן חיצוני
+            misses += 1
+            if misses in (3, 20) or misses % 100 == 0:
+                log.error("משיכת עדכונים נכשלה %d פעמים ברציפות (%s) — "
+                          "האם שרת ה-Bot API המקומי רץ על %s?",
+                          misses, exc, config.BOT_API_URL)
+            else:
+                log.debug("משיכת עדכונים נכשלה: %s", exc)
             await asyncio.sleep(5)
             continue
+        if misses:
+            log.info("משיכת העדכונים חזרה אחרי %d כשלונות", misses)
+            misses = 0
         for update in batch:
             offset = max(offset, int(update.get("update_id", 0)) + 1)
             try:
