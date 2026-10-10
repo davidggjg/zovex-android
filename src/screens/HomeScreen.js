@@ -517,7 +517,7 @@ const mdStyles = StyleSheet.create({
     backgroundColor: '#0a0a0a',
     zIndex: 100,
   },
-  sheet: {flex: 1, overflow: 'hidden', backgroundColor: '#0a0a0a'},
+  sheet: {flex: 1, overflow: 'hidden', backgroundColor: colors.bg},
   closeBtn: {
     position: 'absolute', top: 14, right: 14, zIndex: 10,
     backgroundColor: 'rgba(0,0,0,0.65)', borderRadius: 20,
@@ -531,7 +531,7 @@ const mdStyles = StyleSheet.create({
   epHeading: {color: '#ddd', fontSize: 14, fontWeight: '700', textAlign: 'right', marginTop: -4, marginBottom: 8},
   desc: {color: '#aaa', fontSize: 13, lineHeight: 20, textAlign: 'right', marginBottom: 16},
   actionsRow: {flexDirection: 'row', gap: 10},
-  playBtn: {flex: 1, backgroundColor: '#e50914', borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
+  playBtn: {flex: 1, backgroundColor: colors.primary, borderRadius: 12, paddingVertical: 14, alignItems: 'center'},
   // לב ריק/מלא. רוחב קבוע כדי שהמעבר בין ♡ ל-❤ לא יזיז את שאר הכפתורים.
   favBtn: {width: 52, marginRight: 8, borderRadius: 12, paddingVertical: 14,
            alignItems: 'center', justifyContent: 'center',
