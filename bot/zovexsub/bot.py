@@ -18,7 +18,8 @@ from telethon.errors import FloodWaitError
 from telethon import TelegramClient, events
 from telethon.tl.types import DocumentAttributeFilename
 
-from . import allowlist, config, diagnose, fastio, fetch, media, pipeline, progress as prog
+from . import (allowlist, botapi, config, diagnose, fastio, fetch, media,
+               pipeline, progress as prog)
 
 LEVEL = getattr(logging, (os.getenv("LOG_LEVEL") or "INFO").upper(), logging.INFO)
 logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(message)s")
@@ -679,12 +680,11 @@ async def _burn(job: Job, work: Path) -> None:
     async def on_upload(sent: int, total: int) -> None:
         await upload.show(sent / total if total else 0, done_bytes=sent)
 
-    client = job.event.client
+    user_client = job.event.client
     chat = await job.event.get_input_chat()
-    sent_file = await fastio.upload(client, burned, on_progress=on_upload)
 
-    # התכונות נקבעות פעם אחת ונשלחות בשני המסלולים. בלעדיהן טלגרם לא
-    # יודע את אורך הסרטון ואת מידותיו, מציג "0 מתוך 0" ולא מנגן בתצוגה
+    # התכונות נקבעות פעם אחת ונשלחות בכל מסלול. בלעדיהן טלגרם לא יודע
+    # את אורך הסרטון ואת מידותיו, מציג "0 מתוך 0" ולא מנגן בתצוגה
     # המקדימה — רק אחרי כניסה להודעה הוא קורא אותן מהקובץ עצמו
     info = await media.probe(burned)
     stream = next((s for s in info.get("streams", [])
@@ -694,20 +694,63 @@ async def _burn(job: Job, work: Path) -> None:
         int(stream.get("width", 0) or 0), int(stream.get("height", 0) or 0),
     )
     thumb = await media.poster(burned, work)
+    size = burned.stat().st_size
 
-    if sent_file is not None:
-        await client.send_file(
-            chat, sent_file, caption="🔥 וידאו עם כתוביות צרובות",
-            supports_streaming=True, reply_to=job.event.message.id,
-            attributes=attributes, thumb=str(thumb) if thumb else None,
-        )
-    else:
-        await client.send_file(
-            chat, str(burned), caption="🔥 וידאו עם כתוביות צרובות",
-            supports_streaming=True, reply_to=job.event.message.id,
-            attributes=attributes, thumb=str(thumb) if thumb else None,
-            progress_callback=on_upload,
-        )
+    async def deliver(client) -> None:
+        """מעלה ושולח באותו חשבון.
+
+        קובץ שהועלה בחשבון אחד אינו ניתן לשליחה מהשני — ההעלאה קשורה
+        לחיבור שביצע אותה. לכן שני השלבים חייבים לרוץ יחד
+        """
+        sent_file = await fastio.upload(client, burned, on_progress=on_upload)
+        common = dict(caption="🔥 וידאו עם כתוביות צרובות",
+                      supports_streaming=True,
+                      reply_to=job.event.message.id,
+                      attributes=attributes,
+                      thumb=str(thumb) if thumb else None)
+        if sent_file is not None:
+            await client.send_file(chat, sent_file, **common)
+        else:
+            await client.send_file(chat, str(burned),
+                                   progress_callback=on_upload, **common)
+
+    async def send_with(client, where) -> object:
+        """מעלה ושולח באותו חשבון.
+
+        קובץ שהועלה בחשבון אחד אינו ניתן לשליחה מהשני — ההעלאה קשורה
+        לחיבור שביצע אותה, ולכן שני השלבים חייבים לרוץ יחד
+        """
+        handle = await fastio.upload(client, burned, on_progress=on_upload)
+        common = dict(caption="🔥 וידאו עם כתוביות צרובות",
+                      supports_streaming=True,
+                      attributes=attributes,
+                      thumb=str(thumb) if thumb else None)
+        if handle is not None:
+            return await client.send_file(where, handle, **common)
+        return await client.send_file(where, str(burned),
+                                      progress_callback=on_upload, **common)
+
+    uploader, which = botapi.uploader(size, user_client)
+    log.info("הפלט %.2fGB — מועלה מחשבון %s", size / 1024 ** 3, which)
+
+    relayed = False
+    if botapi.ready_for_relay():
+        # החשבון מעלה לערוץ האחסון, והבוט מעביר משם. ההעברה אינה
+        # העלאה — הקובץ כבר אצל טלגרם — ולכן מגבלת הגודל של הבוט לא
+        # חלה עליה, וכך אפשר למסור גם קבצים שהבוט לא היה יכול להעלות
+        try:
+            vault = await botapi.storage(uploader)
+            stored = await send_with(uploader, vault)
+            await botapi.bot().forward_messages(chat, stored)
+            relayed = True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("המסירה דרך הבוט נכשלה (%s: %s) — שולחים ישירות",
+                        type(exc).__name__, exc)
+
+    if not relayed:
+        # בלי בוט או בלי ערוץ אחסון, החשבון שולח ישירות לצ'אט כמו תמיד
+        await send_with(uploader, chat)
+
     await _safe_delete(job.status)
     pipeline.cleanup(work)
 
@@ -810,6 +853,9 @@ async def main() -> None:
     log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
              me.username or me.first_name, me.id, len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
+    # הבוט והחשבון הרגיל עולים כאן. כשאחד מהם חסר או נכשל, הכל ממשיך
+    # לעבוד בדיוק כמו קודם עם חשבון ה-Premium בלבד
+    await botapi.start(client)
     log.info("לולאת אירועים: %s", _loop_name)
     log.info("טריגר: %s · רשימת מורשים: %s · תיקיית עבודה: %s",
              T, config.ALLOWLIST_FILE, config.WORK_DIR)

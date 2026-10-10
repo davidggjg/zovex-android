@@ -22,6 +22,18 @@ def _keys(name: str) -> list[str]:
 TG_API_ID = _int("TG_API_ID", 0)
 TG_API_HASH = os.getenv("TG_API_HASH", "")
 TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
+# טוקן בוט מ-BotFather. ריק = עובדים עם חשבון המשתמש בלבד, כמו קודם.
+# הבוט מתחבר דרך MTProto ולא דרך ה-Bot API, ולכן תקרת ההעלאה שלו 2GB
+# ולא 50MB. קובץ גדול יותר עובר לחשבון המשתמש, שהוא Premium
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# סשן של חשבון משתמש רגיל (לא Premium). ריק = הכל דרך ה-Premium
+TG_SESSION_LITE = os.getenv("TG_SESSION_LITE", "").strip()
+# תקרת ההעלאה של חשבון רגיל. מעליה נדרש Premium
+LITE_UPLOAD_MAX = _int("LITE_UPLOAD_MAX", 2000 * 1024 * 1024)
+# ערוץ אחסון פרטי שבו נמצאים הבוט ושני החשבונות. החשבון מעלה לשם
+# והבוט מעביר משם למשתמש — העברה אינה העלאה, ולכן מגבלת הגודל של
+# הבוט אינה חלה עליה כלל
+STORAGE_CHAT = os.getenv("STORAGE_CHAT", "").strip()
 
 TRIGGER = os.getenv("TRIGGER", ".srt")
 
