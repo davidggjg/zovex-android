@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -89,3 +90,53 @@ async def find_chat() -> list[dict]:
         if chat.get("id"):
             found[chat["id"]] = chat
     return list(found.values())
+
+
+def keyboard(rows: list[list[tuple[str, str]]]) -> str:
+    """מקלדת כפתורים. כל כפתור הוא (טקסט, ערך שיחזור בלחיצה)."""
+    return json.dumps({"inline_keyboard": [
+        [{"text": text, "callback_data": data} for text, data in row]
+        for row in rows
+    ]}, ensure_ascii=False)
+
+
+async def say(chat_id, text: str, *, buttons: str = "",
+              reply_to: int = 0) -> dict:
+    fields = {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML"}
+    if buttons:
+        fields["reply_markup"] = buttons
+    if reply_to:
+        fields["reply_to_message_id"] = str(reply_to)
+    return await call("sendMessage", **fields)
+
+
+async def edit(chat_id, message_id: int, text: str,
+               *, buttons: str = "") -> dict:
+    """עורך הודעה קיימת. כך שאלה הופכת לשאלה הבאה בלי להציף את הצ'אט."""
+    fields = {"chat_id": str(chat_id), "message_id": str(message_id),
+              "text": text, "parse_mode": "HTML"}
+    fields["reply_markup"] = buttons or json.dumps({"inline_keyboard": []})
+    try:
+        return await call("editMessageText", **fields)
+    except RuntimeError as exc:
+        # טלגרם דוחה עריכה לטקסט זהה. זה לא כשל אמיתי
+        if "not modified" in str(exc).lower():
+            return {}
+        raise
+
+
+async def tap(callback_id: str, note: str = "") -> None:
+    """מאשר ללחיצה. בלי זה הכפתור נשאר עם סמן טעינה מסתובב."""
+    fields = {"callback_query_id": callback_id}
+    if note:
+        fields["text"] = note
+    try:
+        await call("answerCallbackQuery", **fields)
+    except RuntimeError as exc:
+        log.debug("אישור לחיצה נכשל: %s", exc)
+
+
+async def updates(offset: int, timeout: int = 25) -> list[dict]:
+    """משיכת עדכונים ארוכה. timeout בצד השרת חוסך סיבובים מיותרים."""
+    return await call("getUpdates", offset=offset, timeout=timeout,
+                      allowed_updates=json.dumps(["message", "callback_query"]))
