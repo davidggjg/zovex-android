@@ -131,6 +131,21 @@ def uploader(size: int, premium: TelegramClient):
     return premium, "Premium"
 
 
+def downloader(size: int, premium: TelegramClient):
+    """מי מוריד קובץ בגודל הזה.
+
+    הפיצול מוריד לחץ: כל קובץ עובר בחשבון אחד בלבד במקום ששניהם
+    ייספגו את כל התנועה. ההחלטה לפי גודל המקור, שידוע מראש — להבדיל
+    מההעלאה, שמנותבת לפי גודל הפלט שנודע רק אחרי הצריבה.
+
+    חשבון יכול להוריד רק הודעה שהוא רואה. כשהחשבון הרגיל אינו בצ'אט
+    שבו נשלח הסרטון ההורדה תיכשל, ולכן הקורא חייב ליפול חזרה
+    """
+    if _lite is not None and 0 < size <= config.LITE_UPLOAD_MAX:
+        return _lite, "רגיל"
+    return premium, "Premium"
+
+
 async def storage(client: TelegramClient):
     """ערוץ האחסון שאליו מעלים ושממנו הבוט מעביר."""
     global _storage

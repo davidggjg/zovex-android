@@ -541,6 +541,27 @@ async def burn_worker() -> None:
             burn_queue.task_done()
 
 
+async def _fetch_with_split(job, message, dst, size, on_progress) -> None:
+    """מוריד בחשבון שמתאים לגודל, ונופל חזרה לחשבון הראשי בכשל.
+
+    הפיצול לפי גודל מוריד לחץ מכל חשבון בנפרד. אבל חשבון יכול להוריד
+    רק הודעה שהוא רואה — וכשהחשבון הרגיל אינו בצ'אט שבו נשלח הסרטון,
+    הניסיון ייכשל. לכן נפילה חזרה, ולא התעקשות
+    """
+    main = job.event.client
+    picked, which = botapi.downloader(int(size or 0), main)
+    if picked is not main:
+        log.info("מוריד %.0fMB בחשבון ה%s", (size or 0) / 1048576, which)
+        try:
+            await fastio.download(picked, message, dst, on_progress=on_progress)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("ההורדה בחשבון ה%s נכשלה (%s) — חוזרים לראשי",
+                        which, type(exc).__name__)
+            dst.unlink(missing_ok=True)
+    await fastio.download(main, message, dst, on_progress=on_progress)
+
+
 async def _subtitle(job: Job, work: Path) -> None:
     work.mkdir(parents=True, exist_ok=True)
 
@@ -574,7 +595,7 @@ async def _subtitle(job: Job, work: Path) -> None:
             await download.show(received / total if total else 0,
                                 done_bytes=received, note=note)
 
-        await fastio.download(job.event.client, job.message, source,
+        await _fetch_with_split(job, job.message, source, total_bytes,
                               on_progress=on_download)
         await download.finish()
     log.info("מקור מוכן: %s (%.1f MB)", source.name, source.stat().st_size / 1048576)
@@ -638,7 +659,7 @@ async def _burn(job: Job, work: Path) -> None:
 
         name = _filename(job.message)
         source = work / f"source{Path(name).suffix or '.mp4'}"
-        await fastio.download(job.event.client, job.message, source,
+        await _fetch_with_split(job, job.message, source, total_bytes,
                               on_progress=on_download)
         await download.finish()
 
