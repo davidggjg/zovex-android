@@ -61,6 +61,8 @@ RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
 # לאורך פרק ארוך ועושה חיפוש באינטרנט; על קליפ קצר הוא רק מוסיף זמן.
 # 4000 תווים הם בערך שלוש דקות דיבור
 RESEARCH_FACTS_MIN = _int("RESEARCH_FACTS_MIN", 4000)
+# כמה פריטים לא ודאיים נשלחים לאימות ברשת. התקרה שומרת על הקריאה קצרה
+VERIFY_MAX_ITEMS = _int("VERIFY_MAX_ITEMS", 40)
 # לכמה זמן לדלג על חיפוש גוגל אחרי שהוא נכשל. ראו gemini._search_failed
 SEARCH_REST = float(os.getenv("SEARCH_REST") or 900)
 
@@ -444,6 +446,8 @@ OFFSET_MIN_SAMPLES = _int("OFFSET_MIN_SAMPLES", 12)
 # גלובלי ייחשב אמיתי ולא התאמה מקרית לרעש
 OFFSET_TOLERANCE = float(os.getenv("OFFSET_TOLERANCE") or 0.35)
 OFFSET_MIN_RATIO = float(os.getenv("OFFSET_MIN_RATIO") or 0.45)
+# מאיזה אורך קטע דיבור בלי כתובית נחשב אובדן ולא נשימה בין משפטים
+MISSED_MIN = float(os.getenv("MISSED_MIN") or 1.2)
 # ריפוד סביב כל קטע דיבור, כדי לא לחתוך הברה ראשונה או אחרונה
 VAD_PAD = float(os.getenv("VAD_PAD") or 0.15)
 # פער קצר בין שני קטעים הוא נשימה באמצע משפט, לא סוף דיבור

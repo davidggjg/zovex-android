@@ -71,19 +71,32 @@ FACTS_SYSTEM = """אתה עורך לשוני באולפן כתוביות. לפנ
 FACTS_USER = """להלן קטע {part} מתוך {total} בתמליל (שפת מקור: {language}).
 חלץ וכתוב בעברית, בסעיפים האלה בדיוק. סעיף בלי ממצאים — כתוב "אין".
 
-שמות פרטיים: כל שם של אדם/מקום/חברה/מוצר שמופיע בקטע, והאיות הנכון בעברית. חפש באינטרנט כדי לאמת איות של שמות לא מוכרים.
+שמות פרטיים: כל שם של אדם/מקום/חברה/מוצר שמופיע בקטע, והאיות הסביר בעברית. סמן ב-(?) שם שאינך בטוח באיותו.
 מונחים: מונחים מקצועיים — מונח במקור ⇒ התרגום הקבוע שישמש בכל הסרטון.
-ציטוטים ומקורות: פסוק, שיר, חוק, מחקר או נתון שמצוטט — אמת בחיפוש וכתוב את הנוסח המדויק.
+ציטוטים ומקורות: פסוק, שיר, חוק, מחקר או נתון שמצוטט — ציין במה מדובר. סמן ב-(?) אם אינך בטוח.
 שגיאות תמלול: מילים שנשמע שהתמלול שיבש, ומה הכוונה המקורית הסבירה.
 
 הקטע:
 {transcript}"""
 
-# התמליל נחתך לקטעים שרצים במקביל. מעבר העובדות משתמש בחיפוש גוגל, וזה
-# איטי — קריאה אחת על פרק שלם הייתה החלק הסדרתי היחיד בכל הצינור
+# חילוץ ואימות הופרדו. קודם כל קריאת עובדות חיפשה בגוגל תוך כדי שהיא
+# מעכלת 30,000 תווים של תמליל, וארבע כאלה במקביל לקחו דקות. אבל מה
+# שבאמת צריך אימות הוא רשימת השמות — כמה מאות תווים — ולא התמליל.
+# עכשיו החילוץ מהיר ובלי רשת, ואחריו קריאת אימות אחת וקטנה שרצה רק אם
+# נשאר בה צורך
 FACTS_CHUNK = 30_000     # תווים לקריאה
 FACTS_CHUNKS_MAX = 4
 
+
+VERIFY_SYSTEM = """אתה בודק עובדות באולפן כתוביות. לפניך רשימת שמות
+ומונחים שחולצו מתמליל. אמת באינטרנט רק את מה שמסומן ב-(?) — השאר כבר
+ודאי. תשובה קצרה: שורה לשם, בלי הסברים."""
+
+VERIFY_USER = """אמת את האיות העברי של הפריטים המסומנים ב-(?).
+החזר שורה לכל תיקון בפורמט: מקור ⇒ עברית
+פריט שאין לגביו ממצא — דלג עליו.
+
+{items}"""
 
 TRANSLATE_SYSTEM = """אתה מתרגם כתוביות בכיר באולפן ישראלי. אתה מפיק עברית
 טבעית, מדויקת ומדוברת — כזו שצופה ישראלי לא מרגיש שתורגמה.
@@ -387,11 +400,18 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
         )
 
     async def facts(index: int, chunk: str) -> str:
+        # בלי רשת: זו קריאה וחילוץ בלבד, והחיפוש הוא מה שהאט אותה
         return await gemini.research(
             FACTS_SYSTEM,
             FACTS_USER.format(part=index + 1, total=len(chunks),
                               language=language, transcript=chunk),
+            grounded=False,
         )
+
+    async def verify(items: str) -> str:
+        """אימות אינטרנט אחד וקצר, רק על מה שסומן כלא ודאי."""
+        return await gemini.research(VERIFY_SYSTEM,
+                                     VERIFY_USER.format(items=items))
 
     if on_step:
         await on_step(f"חוקר את התוכן 0/{total}", 0.0)
@@ -410,6 +430,23 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
     merged = "\n\n".join(part.strip() for part in found if part.strip())
     if merged:
         sections.append("שמות, מונחים וציטוטים שאותרו:\n" + merged)
+
+    # אימות ברשת רק אם יש מה לאמת. שורות שסומנו ב-(?) הן בדיוק אלה
+    # שהמודל אינו בטוח בהן; כשאין אף אחת, אין סיבה לצאת לרשת בכלל
+    unsure = [line for line in merged.splitlines() if "(?)" in line]
+    if unsure:
+        trimmed = "\n".join(unsure[:config.VERIFY_MAX_ITEMS])
+        log.info("אימות ברשת: %d פריטים לא ודאיים (מתוך %d שורות)",
+                 len(unsure), len(merged.splitlines()))
+        try:
+            checked = await call("אימות ברשת", verify(trimmed))
+        except Exception as exc:                    # noqa: BLE001
+            log.warning("האימות נכשל ומדולג: %s", exc)
+            checked = ""
+        if checked.strip():
+            sections.append("איותים שאומתו:\n" + checked.strip())
+    else:
+        log.info("אין פריטים לא ודאיים — מדלגים על חיפוש ברשת")
     notes = "\n\n".join(sections)
     log.info("מסמך הנחיות נוצר: %d תווים מתוך %d קריאות", len(notes), total)
     return notes

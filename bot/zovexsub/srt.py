@@ -63,6 +63,18 @@ def build_cues(segments: list[Segment], lines: list[str],
             log.info("אין היסט שיטתי בתזמונים (%.2fש)", drift)
         cues = _snap_to_speech(cues, speech, accurate)
     cues = _fix_timing(cues)
+
+    if speech:
+        gaps = missed_speech(cues, speech)
+        if gaps:
+            lost = sum(end - begin for begin, end in gaps)
+            where = " · ".join(f"{int(b) // 60}:{int(b) % 60:02d}"
+                               for b, _ in gaps[:6])
+            log.warning("%d קטעי דיבור ללא כתובית, %.0f שניות בסך הכל. "
+                        "ראשונים: %s", len(gaps), lost, where)
+        else:
+            log.info("כל קטעי הדיבור שזוהו מכוסים בכתוביות")
+
     for i, cue in enumerate(cues, 1):
         cue.index = i
         cue.text = wrap(cue.text)
@@ -123,6 +135,30 @@ def global_offset(cues: list[Cue], speech: list[tuple[float, float]]) -> float:
     if best_hits <= score(0.0):
         return 0.0
     return best
+
+
+def missed_speech(cues: list[Cue], speech: list[tuple[float, float]]
+                  ) -> list[tuple[float, float]]:
+    """קטעי דיבור שזוהו באודיו ולא קיבלו שום כתובית.
+
+    זה הסימפטום של "רעש סופה ברקע ואז אין כתוביות": זיהוי הדיבור שומע
+    שמישהו מדבר, אבל התמלול לא הצליח להוציא מילים. בלי המדידה הזאת
+    המקרה נראה למשתמש כמו כתובית חסרה אקראית, ואי אפשר לדעת אם מדובר
+    בשתיקה אמיתית או בכישלון תמלול.
+
+    המחקר מראה שניקוי רעש דווקא מעלה את שיעור השגיאות של מודלים
+    מודרניים, ולכן הצעד הנכון הוא למדוד תחילה כמה באמת אבד.
+    """
+    if not speech:
+        return []
+    gaps = []
+    for begin, end in speech:
+        if end - begin < config.MISSED_MIN:
+            continue
+        covered = any(c.start < end and c.end > begin for c in cues)
+        if not covered:
+            gaps.append((begin, end))
+    return gaps
 
 
 def apply_offset(cues: list[Cue], seconds: float) -> list[Cue]:
