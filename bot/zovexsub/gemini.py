@@ -106,6 +106,17 @@ async def _resolve(model: str) -> str:
 # חשבונאות זמן: כמה מתוך השלב באמת עבר בהמתנה למפתח פנוי, לעומת
 # המתנה לתשובה של המודל. בלי ההפרדה הזאת אי אפשר לדעת אם המכסות הן
 # הצוואר או שהקריאות עצמן פשוט איטיות — וזו בדיוק השאלה הפתוחה
+# כמה קריאות ממתינות ברגע זה למפתח פנוי. Tally כבר מפריד בין המתנה
+# למכסה להמתנה למודל, אבל רק בסיכום שבסוף — וכשחלון יחיד רץ דקה
+# המשתמש רואה מספר אחד ולא יודע אם אנחנו חנוקים או שהמודל פשוט איטי
+_waiting_for_key = 0
+
+
+def waiting_for_key() -> int:
+    """כמה קריאות תקועות כרגע בהמתנה למפתח."""
+    return _waiting_for_key
+
+
 class Tally:
     def __init__(self) -> None:
         self.reset()
@@ -184,8 +195,13 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
             attempt, skipped = 0, 0
             budget = max(4, 2 * len(config.GEMINI_API_KEYS))
             while attempt < budget:
+                global _waiting_for_key
                 _waited = time.monotonic()
-                key = await _pool.wait_for_free()
+                _waiting_for_key += 1
+                try:
+                    key = await _pool.wait_for_free()
+                finally:
+                    _waiting_for_key -= 1
                 tally.quota_wait += time.monotonic() - _waited
                 if (_blocked.get((name, key), 0.0) > time.monotonic()
                         or (name, key) in _dead):

@@ -540,8 +540,13 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         now = time.monotonic()
         if live:
             oldest = int(now - min(live.values()))
+            # למה זה לוקח זמן, ולא רק כמה. חלון בודד שרץ דקה נראה
+            # זהה בשני המקרים, והמשתמש אינו יכול לדעת אם אנחנו חנוקים
+            # במכסת המפתחות או שהמודל עצמו איטי
+            stuck = gemini.waiting_for_key()
+            why = " · ממתין למפתח" if stuck else " · ממתין למודל"
             note = (f"מתרגם {finished}/{len(segments)} שורות · "
-                    f"{len(live)} חלונות בעבודה · {oldest}ש")
+                    f"{len(live)} חלונות בעבודה · {oldest}ש{why}")
         else:
             note = f"מתרגם {finished}/{len(segments)} שורות"
         await on_step(note, TRANSLATE_FROM + (TRANSLATE_TO - TRANSLATE_FROM)

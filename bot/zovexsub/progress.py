@@ -18,6 +18,10 @@ STEP_CLOCK_FROM = 10.0
 # מתחת לאחוז הזה ההערכה מבוססת על מדגם זעיר ויוצאת מופרכת. שלב שמתחיל
 # באחוז סמלי, כמו החקר שלפני התרגום, היה מייצר ממנה זמן דמיוני שרק גדל
 ETA_FROM = 0.08
+# גם מתחת לזמן הזה אין על מה לבסס חיזוי. בקליפ של 25 שניות ההערכה
+# נשענה על 53 שניות ו-15 אחוזים והכריזה על שש דקות, כי השלבים אינם
+# לינאריים בזמן: החקר הוא עלות קבועה שתופסת את רוב ההתחלה
+ETA_AFTER_SECONDS = 90.0
 
 
 def bar(fraction: float) -> str:
@@ -129,7 +133,7 @@ class Stage:
 
     def eta(self) -> float:
         """כמה זמן נשאר, לפי הקצב שנמדד עד כה."""
-        if self.fraction < ETA_FROM:
+        if self.fraction < ETA_FROM or self.elapsed < ETA_AFTER_SECONDS:
             return 0.0
         return self.elapsed * (1 - self.fraction) / self.fraction
 
