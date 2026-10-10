@@ -1,6 +1,7 @@
 """בניית קובץ SRT: תזמונים נקיים ופיצול שורות קריא בעברית."""
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 from dataclasses import dataclass
@@ -51,11 +52,84 @@ def build_cues(segments: list[Segment], lines: list[str],
         cues.append(Cue(0, seg.start, max(seg.end, seg.start + 0.3), text))
 
     if speech:
+        # קודם מתקנים שעון מוסט, ורק אחר כך מצמידים נקודתית. הסדר
+        # ההפוך היה מצמיד כל כתובית לדיבור הלא נכון
+        drift = global_offset(cues, speech)
+        if abs(drift) >= config.OFFSET_MIN:
+            log.warning("הכתוביות %s ב-%.2f שניות באופן שיטתי — מתוקן",
+                        "מאחרות" if drift > 0 else "מקדימות", abs(drift))
+            cues = apply_offset(cues, drift)
+        else:
+            log.info("אין היסט שיטתי בתזמונים (%.2fש)", drift)
         cues = _snap_to_speech(cues, speech, accurate)
     cues = _fix_timing(cues)
     for i, cue in enumerate(cues, 1):
         cue.index = i
         cue.text = wrap(cue.text)
+    return cues
+
+
+def global_offset(cues: list[Cue], speech: list[tuple[float, float]]) -> float:
+    """כמה שניות הכתוביות מאחרות או מקדימות באופן שיטתי.
+
+    כתובית בודדת שזזה היא רעש; כולן שזזות יחד הן שעון שיצא מסנכרון —
+    בדיוק מה שמשתמש חווה כ"הדובר אומר, ושלוש שניות אחר כך מופיעה
+    הכתובית". הצמדה מקומית לא תתקן את זה, כי כולן מוסטות באותו שיעור.
+
+    הגרסה הראשונה חיפשה לכל כתובית את תחילת הדיבור הקרובה אליה ולקחה
+    את החציון. זה נשבר: כשההיסט גדול מחצי המרווח בין אמירות, "הקרובה
+    ביותר" היא כבר האמירה הבאה, וההיסט יוצא בסימן הפוך. דיליי של שלוש
+    שניות זוהה כהקדמה של שתיים, כלומר תיקון שמחמיר פי שניים.
+
+    כאן נסרקים כל ההיסטים האפשריים בטווח, ונבחר זה שמיישר את המספר
+    הגדול ביותר של כתוביות אל תחילת דיבור. אין "קרוב ביותר" ואין
+    אליאסינג — רק ספירה.
+    """
+    if not cues or not speech:
+        return 0.0
+    onsets = sorted(a for a, _ in speech)
+    starts = [c.start for c in cues]
+    if len(starts) < config.OFFSET_MIN_SAMPLES:
+        return 0.0
+
+    def score(shift: float) -> int:
+        hits = 0
+        for value in starts:
+            moved = value - shift
+            position = bisect.bisect_left(onsets, moved)
+            for near in onsets[max(0, position - 1):position + 1]:
+                if abs(near - moved) <= config.OFFSET_TOLERANCE:
+                    hits += 1
+                    break
+        return hits
+
+    step = 0.05
+    steps = int(config.OFFSET_SEARCH / step)
+    scored = [(index * step, score(index * step))
+              for index in range(-steps, steps + 1)]
+    best_hits = max(hits for _, hits in scored)
+
+    # כל היסט בתוך טווח הסבילות מיישר את אותן כתוביות ומקבל אותו
+    # ניקוד, כך שהמנצחים יוצרים רמה שטוחה. בחירת הראשון שבה נתנה
+    # תוצאה נמוכה מהאמת בדיוק ברוחב הסבילות; מרכז הרמה הוא ההיסט
+    plateau = [shift for shift, hits in scored if hits == best_hits]
+    best = plateau[len(plateau) // 2]
+
+    # התיקון חייב להשתלם בבירור: גם לשפר מול היעדר תיקון, וגם ליישר
+    # חלק משמעותי מהכתוביות. אחרת זו התאמה מקרית לרעש
+    if best_hits < max(config.OFFSET_MIN_SAMPLES,
+                       int(len(starts) * config.OFFSET_MIN_RATIO)):
+        return 0.0
+    if best_hits <= score(0.0):
+        return 0.0
+    return best
+
+
+def apply_offset(cues: list[Cue], seconds: float) -> list[Cue]:
+    """מזיז את כל הכתוביות, בלי לחרוג מתחילת הסרטון."""
+    for cue in cues:
+        cue.start = max(0.0, cue.start - seconds)
+        cue.end = max(cue.start + 0.05, cue.end - seconds)
     return cues
 
 

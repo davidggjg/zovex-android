@@ -84,6 +84,29 @@ def _snap_bounded():
 
 
 # ---------------------------------------------------------------- שבירה
+@check("היסט גלובלי: מזוהה נכון, ונחסם כשאין בו טעם")
+def _offset():
+    speech = [(i * 5.0, i * 5.0 + 2.5) for i in range(40)]
+
+    def cues(shift, jitter=0.0):
+        import random
+        random.seed(7)
+        return [srt.Cue(i, a + shift + random.uniform(-jitter, jitter),
+                        a + shift + 2.3, f"שורה {i}")
+                for i, (a, _) in enumerate(speech)]
+
+    # דיליי שיטתי — הסימן והגודל חייבים להיות מדויקים. גרסה קודמת
+    # זיהתה +3 כ--2, כלומר תיקון שמחמיר פי שניים
+    got = srt.global_offset(cues(3.0), speech)
+    assert abs(got - 3.0) < 0.1, f"דיליי 3ש זוהה כ-{got}"
+    got = srt.global_offset(cues(-1.2), speech)
+    assert abs(got + 1.2) < 0.1, f"הקדמה 1.2ש זוהתה כ-{got}"
+    # תזמונים תקינים, רועשים, או מעט מדי — אסור לגעת
+    assert abs(srt.global_offset(cues(0.0), speech)) < config.OFFSET_MIN
+    assert srt.global_offset(cues(0.0, jitter=3.0), speech) == 0.0
+    assert srt.global_offset(cues(3.0)[:5], speech) == 0.0
+
+
 @check("שבירת שורות: אף שורה לא חורגת, ואין אובדן טקסט")
 def _wrap():
     limit = config.SRT_MAX_CHARS_PER_LINE

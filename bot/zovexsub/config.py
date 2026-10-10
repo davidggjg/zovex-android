@@ -435,6 +435,15 @@ VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD") or 0.35)
 # תקרת ההצמדה לדיבור, בשניות. ראו ההסבר ב-srt.py
 SNAP_RAW = float(os.getenv("SNAP_RAW") or 1.5)
 SNAP_ACCURATE = float(os.getenv("SNAP_ACCURATE") or 0.4)
+# תיקון שעון מוסט: עד כמה לחפש התאמה, מהו היסט שכדאי לתקן, כמה דגימות
+# דרושות, ומהו פיזור שמעליו הנתונים רועשים מדי מכדי להסיק מהם
+OFFSET_SEARCH = float(os.getenv("OFFSET_SEARCH") or 6.0)
+OFFSET_MIN = float(os.getenv("OFFSET_MIN") or 0.35)
+OFFSET_MIN_SAMPLES = _int("OFFSET_MIN_SAMPLES", 12)
+# כמה קרוב נחשב "מיושר", ואיזה חלק מהכתוביות חייב להתיישר כדי שתיקון
+# גלובלי ייחשב אמיתי ולא התאמה מקרית לרעש
+OFFSET_TOLERANCE = float(os.getenv("OFFSET_TOLERANCE") or 0.35)
+OFFSET_MIN_RATIO = float(os.getenv("OFFSET_MIN_RATIO") or 0.45)
 # ריפוד סביב כל קטע דיבור, כדי לא לחתוך הברה ראשונה או אחרונה
 VAD_PAD = float(os.getenv("VAD_PAD") or 0.15)
 # פער קצר בין שני קטעים הוא נשימה באמצע משפט, לא סוף דיבור
