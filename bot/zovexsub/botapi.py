@@ -51,12 +51,37 @@ async def start(premium: TelegramClient) -> None:
     # שצריך להעתיק. זה מה שבוטים אחרים עושים, ומה שנראה כאילו הכל
     # מחובר דרך הטוקן
     if config.TG_STRING_LITE:
-        _lite = await _connect(StringSession(config.TG_STRING_LITE),
-                               label="חשבון רגיל (מחרוזת)")
+        # כשל כאן לא מפיל את השירות: החשבון השני הוא תוספת, והבוט
+        # הראשי חייב לעלות גם בלעדיו
+        try:
+            _lite = await _connect(_string_session(config.TG_STRING_LITE),
+                                   label="חשבון רגיל (מחרוזת)")
+        except Exception as exc:  # noqa: BLE001
+            log.error("%s — ממשיכים בלי החשבון השני", exc)
     elif config.TG_SESSION_LITE:
         _lite = await _connect(config.TG_SESSION_LITE, label="חשבון רגיל")
     if _lite is None:
         log.info("אין חשבון רגיל — כל ההעלאות דרך חשבון ה-Premium")
+
+
+def _string_session(raw: str):
+    """בונה סשן ממחרוזת, וסולח לטעויות העתקה נפוצות.
+
+    המחרוזת מודפסת כשורה שלמה בצורת TG_STRING_LITE=..., וקל להעתיק את
+    כולה כולל השם — ואז נוצר בקובץ ערך כפול. טלתון זורק על זה
+    "Not a valid string", והשירות נכנס ללולאת קריסה שבה השגיאה האמיתית
+    נבלעת בין הודעות ההפעלה מחדש של systemd. עדיף לנקות ולהמשיך
+    """
+    value = raw.strip().strip('"').strip("'")
+    while "=" in value and value.split("=", 1)[0].isidentifier():
+        value = value.split("=", 1)[1].strip()
+    try:
+        return StringSession(value)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"TG_STRING_LITE אינו מחרוזת סשן תקינה ({exc}). "
+            f"אורך שהתקבל: {len(value)}, צפוי כ-350. "
+            "ליצירה מחדש: python3 tests/mksession.py") from exc
 
 
 async def _connect(session, *, bot_token: str = "",
