@@ -64,6 +64,16 @@ import {groupLiveByGenre} from '../utils/liveGenres';
 
 const DOWNLOADS_CATEGORY = 'ההורדות שלי';
 
+// דלי שנים לסינון בדף החיפוש הייעודי (טלפון) — ראה ההסבר המלא ליד
+// matchesYearFilter.
+const YEAR_FILTERS = [
+  {key: 'all', label: 'הכל'},
+  {key: '2020', label: '2020+'},
+  {key: '2010', label: '2010–2019'},
+  {key: '2000', label: '2000–2009'},
+  {key: 'old', label: 'לפני 2000'},
+];
+
 // בטלוויזיה מודדים לפי המסך ולא לפי החלון: החלון עלול להימסר קטן יותר
 // (למשל אחרי חזרה מהנגן), וזה מה שהפך את הרשת ל"מסך של טלפון". המסך תמיד
 // מדווח את הרוחב המלא של הטלוויזיה.
@@ -1145,6 +1155,10 @@ export default function HomeScreen({navigation, route}) {
   // דף חיפוש ייעודי לטלפון בלבד (ראה showSearchScreen למטה, ליד PhoneSearchScreen).
   // בטלוויזיה הסרגל העליון נשאר כפי שהיה.
   const [showSearchScreen, setShowSearchScreen] = useState(false);
+  // סינון "חיפוש חכם" בדף החיפוש הייעודי — ז'אנר ושנה, בנוסף לטקסט.
+  // 'הכל'/'all' הם ברירת המחדל: בלי סינון, בדיוק כמו היום.
+  const [searchFilterCat, setSearchFilterCat] = useState('הכל');
+  const [searchFilterYear, setSearchFilterYear] = useState('all');
   useEffect(() => {
     if (searchTyping) {
       const t = setTimeout(() => searchRef.current?.focus(), 50);
@@ -1568,7 +1582,11 @@ export default function HomeScreen({navigation, route}) {
       // כדי שלא ייווצר שוב Modal-בתוך-Modal כשפותחים פריט מתוך תוצאות
       // החיפוש (ראה ההסבר ליד seasonPickerWrap). בלי שורה זו "אחורה" היה
       // מדלג ישר על הדף הזה אל ניקוי החיפוש/שינוי הקטגוריה.
-      if (showSearchScreen) { setShowSearchScreen(false); clearSearch(); return true; }
+      if (showSearchScreen) {
+        setShowSearchScreen(false); clearSearch();
+        setSearchFilterCat('הכל'); setSearchFilterYear('all');
+        return true;
+      }
       if (showCatModal) { setShowCatModal(false); return true; }
       if (showUserMenu) { setShowUserMenu(false); return true; }
       if (showSupport) { setShowSupport(false); return true; }
@@ -1864,13 +1882,38 @@ export default function HomeScreen({navigation, route}) {
     () => (isNetflixMode || isLiveMode ? [] : getItemsForCategory(category)),
     [isNetflixMode, isLiveMode, category, getItemsForCategory]);
 
-  // דף החיפוש הייעודי (טלפון) מחפש תמיד על "הכל", בלי קשר לקטגוריה
-  // שנבחרה במסך הבית מתחתיו — זו בדיוק הנקודה ("חיפוש נקי" ולא המשך
-  // חיפוש-תוך-קטגוריה). חסם ל-showSearchScreen כדי לא לחשב את זה בכל
-  // הקשה כשהדף סגור.
-  const searchScreenItems = useMemo(
-    () => (showSearchScreen ? getItemsForCategory('הכל') : []),
-    [showSearchScreen, getItemsForCategory]);
+  // צ'יפים לסינון ז'אנר בדף החיפוש — תת-קבוצה של allCategories, בלי
+  // הטאבים שהם לא באמת "ז'אנר" (מועדפים/היסטוריה/הורדות הן רשימות
+  // אישיות של המשתמש, לא סיווג תוכן; "הכל" מיוצג ע"י הצ'יפ הראשון שלנו).
+  const searchGenreOptions = useMemo(
+    () => allCategories.filter(c =>
+      c !== 'הכל' && c !== DOWNLOADS_CATEGORY && c !== 'מועדפים' && c !== 'היסטוריה'),
+    [allCategories]);
+
+  // דלי שנים פשוטים ולא טווח חופשי: רוב התוכן הישן בקטלוג כלל לא הגיע
+  // דרך TMDB (נבדק על המדגם החי — כ-2/3 מהפריטים בלי year כלל), ובורר
+  // שנה מדויקת היה מרגיש "שבור" לרוב הקטלוג. 'all' לא מסנן כלום — פריט
+  // בלי year עדיין מופיע ב"הכל", רק לא בדלי שנה ספציפי.
+  const matchesYearFilter = useCallback(item => {
+    if (searchFilterYear === 'all') return true;
+    const y = parseInt(item?.year, 10);
+    if (!y) return false;
+    if (searchFilterYear === '2020') return y >= 2020;
+    if (searchFilterYear === '2010') return y >= 2010 && y <= 2019;
+    if (searchFilterYear === '2000') return y >= 2000 && y <= 2009;
+    if (searchFilterYear === 'old') return y < 2000;
+    return true;
+  }, [searchFilterYear]);
+
+  // דף החיפוש הייעודי (טלפון): ברירת המחדל "הכל"/"all" מחפשת בלי קשר
+  // לקטגוריה שנבחרה במסך הבית מתחתיו — "חיפוש נקי" ולא המשך חיפוש-תוך-
+  // קטגוריה. צ'יפי הז'אנר/שנה מצמצמים מעל זה, לא מחליפים את הטקסט.
+  // חסם ל-showSearchScreen כדי לא לחשב את זה בכל הקשה כשהדף סגור.
+  const searchScreenItems = useMemo(() => {
+    if (!showSearchScreen) return [];
+    const base = getItemsForCategory(searchFilterCat);
+    return searchFilterYear === 'all' ? base : base.filter(matchesYearFilter);
+  }, [showSearchScreen, getItemsForCategory, searchFilterCat, searchFilterYear, matchesYearFilter]);
 
   // ── First-launch sign-in screen ──
   if (!loading && showSignIn) {
@@ -2216,7 +2259,10 @@ export default function HomeScreen({navigation, route}) {
       <View style={styles.searchScreenHeader}>
         <TvFocusable
           style={styles.searchScreenCloseBtn}
-          onPress={() => { setShowSearchScreen(false); clearSearch(); }}>
+          onPress={() => {
+            setShowSearchScreen(false); clearSearch();
+            setSearchFilterCat('הכל'); setSearchFilterYear('all');
+          }}>
           <Text style={styles.searchScreenCloseTxt}>✕</Text>
         </TvFocusable>
         <View style={styles.searchScreenInputWrap}>
@@ -2233,6 +2279,42 @@ export default function HomeScreen({navigation, route}) {
         </View>
       </View>
 
+      {/* חיפוש חכם יותר: ז'אנר ושנה, מצטרפים לטקסט ולא מחליפים אותו.
+          דוד: "שאפשר לחפש לפי ז'אנרים שנת יציאה... חיפוש חכם יותר". */}
+      <View style={styles.searchFilters}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}>
+          <TvFocusable
+            style={[styles.filterChip, searchFilterCat === 'הכל' && styles.filterChipActive]}
+            onPress={() => setSearchFilterCat('הכל')}>
+            <Text style={[styles.filterChipTxt, searchFilterCat === 'הכל' && styles.filterChipTxtActive]}>
+              הכל
+            </Text>
+          </TvFocusable>
+          {searchGenreOptions.map(c => (
+            <TvFocusable key={c}
+              style={[styles.filterChip, searchFilterCat === c && styles.filterChipActive]}
+              onPress={() => setSearchFilterCat(c)}>
+              <Text style={[styles.filterChipTxt, searchFilterCat === c && styles.filterChipTxtActive]}>
+                {catName(c)}
+              </Text>
+            </TvFocusable>
+          ))}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}>
+          {YEAR_FILTERS.map(f => (
+            <TvFocusable key={f.key}
+              style={[styles.filterChip, searchFilterYear === f.key && styles.filterChipActive]}
+              onPress={() => setSearchFilterYear(f.key)}>
+              <Text style={[styles.filterChipTxt, searchFilterYear === f.key && styles.filterChipTxtActive]}>
+                {f.label}
+              </Text>
+            </TvFocusable>
+          ))}
+        </ScrollView>
+      </View>
+
       <FlatList
         key={`phone-search-${NUM_COLS}`}
         data={Array.isArray(searchScreenItems) ? searchScreenItems.filter(item => item && item.id) : []}
@@ -2242,18 +2324,25 @@ export default function HomeScreen({navigation, route}) {
         keyboardShouldPersistTaps="handled"
         renderItem={renderGridItem}
         ListEmptyComponent={
-          qTokens.length ? (
+          // "אין תוצאות" מוצג גם כשהריק נגרם רק מצ'יפ ז'אנר/שנה בלי טקסט
+          // בכלל — לא רק כש-qTokens לא ריק. בלי זה "התחילו להקליד" הוצג
+          // גם כשהמשתמש כבר בחר סינון ופשוט לא היו תוצאות.
+          qTokens.length || searchFilterCat !== 'הכל' || searchFilterYear !== 'all' ? (
             <View style={styles.emptySearchWrap}>
               <EmptyState emoji="🔍" title="לא נמצאו תוצאות"
-                desc={`לא מצאנו כלום בשביל "${search}". נסו מילה אחרת או בדקו את האיות.`} />
-              <TvFocusable style={styles.emptyClearBtn} onPress={clearSearch}>
+                desc={search
+                  ? `לא מצאנו כלום בשביל "${search}". נסו מילה אחרת או בדקו את האיות.`
+                  : 'לא מצאנו כלום עם הסינון הזה. נסו ז\'אנר או שנה אחרים.'} />
+              <TvFocusable style={styles.emptyClearBtn} onPress={() => {
+                clearSearch(); setSearchFilterCat('הכל'); setSearchFilterYear('all');
+              }}>
                 <Text style={styles.emptyClearTxt}>נקה חיפוש</Text>
               </TvFocusable>
             </View>
           ) : (
             <View style={styles.emptySearchWrap}>
               <EmptyState emoji="🔍" title="חפשו סרטים, סדרות וערוצים"
-                desc="התחילו להקליד כדי לראות תוצאות" />
+                desc="התחילו להקליד, או בחרו ז'אנר ושנה" />
             </View>
           )
         }
@@ -2664,6 +2753,16 @@ const styles = StyleSheet.create({
   searchScreenInput: {
     color: colors.text, fontSize: font.body, paddingHorizontal: 16, paddingVertical: 12,
   },
+  // ── צ'יפי סינון (ז'אנר/שנה) בדף החיפוש ──
+  searchFilters: {paddingBottom: 6},
+  filterRow: {flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 5},
+  filterChip: {
+    paddingHorizontal: 14, paddingVertical: 7, borderRadius: radius.pill,
+    backgroundColor: colors.surfaceElevated, borderWidth: 1, borderColor: colors.border,
+  },
+  filterChipActive: {backgroundColor: colors.focusTint, borderColor: colors.primary},
+  filterChipTxt: {color: colors.textSecondary, fontSize: 13, fontWeight: '700'},
+  filterChipTxtActive: {color: colors.primaryHi},
 
   // ── Category button row ──
   catsRow: {
