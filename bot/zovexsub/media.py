@@ -96,6 +96,46 @@ async def video_height(path: Path) -> int:
     return int(digits) if digits else 0
 
 
+async def video_fps(path: Path) -> float:
+    """קצב הפריימים הנומינלי של המקור, או 0 כשלא ניתן לקרוא.
+
+    נדרש להרכבה המקבילית. מכולת MP4 אינה תומכת בקצב משתנה, ולכן
+    ffmpeg מנחש קצב לכל קטע בנפרד — ובמקור VFR הניחושים נבדלים, צירי
+    הזמן אינם תואמים, וההרכבה יוצאת עם חותמות זמן שבורות. זה מה
+    שהפיק קובץ של 0.374 פריימים לשנייה במקום 23.976
+    """
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1:nk=1",
+            str(path),
+        ], timeout=60)
+    except (FFmpegError, OSError):
+        return 0.0
+    text = out.strip().splitlines()[0] if out.strip() else ""
+    try:
+        if "/" in text:
+            top, bottom = text.split("/", 1)
+            return float(top) / float(bottom) if float(bottom) else 0.0
+        return float(text)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+async def frame_count(path: Path) -> int:
+    """כמה פריימים יש בפועל בזרם הווידאו."""
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-count_frames", "-show_entries", "stream=nb_read_frames",
+            "-of", "default=nw=1:nk=1", str(path),
+        ], timeout=1800)
+    except (FFmpegError, OSError):
+        return 0
+    digits = "".join(c for c in out if c.isdigit())
+    return int(digits) if digits else 0
+
+
 async def duration_seconds(path: Path) -> float:
     info = await probe(path)
     try:
@@ -839,6 +879,16 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     settings = _settings_for(video, duration, await video_height(video),
                              profile)
     _describe_profile(settings, video, duration)
+    # מכולת MP4 אינה תומכת בקצב פריימים משתנה, ולכן ffmpeg מנחש קצב
+    # לכל קטע בנפרד. במקור VFR הניחושים נבדלים, ציר הזמן של הקטעים
+    # אינו תואם, וה-concat מפיק חותמות זמן שבורות — כך נוצר פלט של
+    # 0.374 פריימים לשנייה במקום 23.976, עם אובדן כמעט כל הפריימים.
+    # קצב מפורש וזהה לכל הקטעים מסיר את הניחוש מהתמונה
+    fps = await video_fps(video)
+    if fps <= 0:
+        log.warning("קצב הפריימים של המקור לא נקרא — ההרכבה עלולה להישבר")
+    else:
+        log.info("קצב פריימים אחיד לכל הקטעים: %.3f", fps)
 
     threads = config.BURN_SEGMENT_THREADS
     span = duration / segments
@@ -869,6 +919,11 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         ] + _encoder_args(settings, threads, duration)
         # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח
         # סיבוב נוסף על כל הקובץ. נמדד כ-1.9 שניות מבוזבזות לכל קטע
+        if fps > 0:
+            # -fps_mode cfr מכריח פריים לכל משבצת זמן, ו-timescale זהה
+            # מוודא שכל הקטעים חולקים את אותו ציר
+            cmd += ["-fps_mode", "cfr", "-r", f"{fps:.6f}",
+                    "-video_track_timescale", "90000"]
         cmd += ["-an", str(piece)]
 
         async def progress(fraction: float, speed: str) -> None:
@@ -920,7 +975,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
     if on_progress:
         await on_progress(1.0, "בודק")
-    await _verify(dst, duration)
+    await _verify(dst, duration, fps)
     await _check_codec(dst, config.BURN_CODEC or settings["codec"])
     shutil.rmtree(work, ignore_errors=True)
     log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
@@ -980,7 +1035,8 @@ async def _check_codec(result: Path, expected: str = "") -> None:
     log.info("אימות קודק: %s/%s", codec, tag)
 
 
-async def _verify(result: Path, expected: float) -> None:
+async def _verify(result: Path, expected: float,
+                  source_fps: float = 0.0) -> None:
     """בלי אימות, הרכבה שבורה מגיעה למשתמש בשקט."""
     if not result.exists() or result.stat().st_size < 1024:
         raise FFmpegError("קובץ הפלט ריק")
@@ -993,7 +1049,25 @@ async def _verify(result: Path, expected: float) -> None:
         raise FFmpegError(
             f"אורך הפלט {actual:.1f} שניות במקום {expected:.1f} — ההרכבה לא תקינה"
         )
-    log.info("אימות ההרכבה עבר: %.1f שניות, זרמים %s", actual, ", ".join(sorted(kinds)))
+
+    # אורך לבדו אינו מספיק. הקובץ השבור נמשך 02:06:15 מול 02:06:07 —
+    # סטייה של עשירית האחוז — ובכל זאת הכיל 2,800 פריימים במקום
+    # 181,000. בדיקת האורך עברה והפלט ההרוס נשלח למשתמש בשקט
+    stream = next((x for x in info.get("streams", [])
+                   if x.get("codec_type") == "video"), {})
+    rate = stream.get("avg_frame_rate") or "0/1"
+    try:
+        top, _, bottom = rate.partition("/")
+        got_fps = float(top) / float(bottom or 1)
+    except (ValueError, ZeroDivisionError):
+        got_fps = 0.0
+    if source_fps > 0 and got_fps > 0 and got_fps < source_fps * 0.9:
+        raise FFmpegError(
+            f"קצב הפריימים בפלט {got_fps:.3f} במקום {source_fps:.3f} — "
+            "ההרכבה איבדה פריימים"
+        )
+    log.info("אימות ההרכבה עבר: %.1f שניות, %.3f פריימים לשנייה, זרמים %s",
+             actual, got_fps, ", ".join(sorted(kinds)))
 
 
 def _bitrate_cap(duration: float) -> int:

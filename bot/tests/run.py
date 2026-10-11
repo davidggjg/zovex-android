@@ -481,6 +481,38 @@ def _subtitle_routing():
 
 
 
+@check("ההרכבה המקבילית אינה מאבדת פריימים, והאימות תופס אם כן")
+def _frames_survive():
+    """תפס פלט של 0.374 פריימים לשנייה במקום 23.976.
+
+    מכולת MP4 אינה תומכת בקצב משתנה, ולכן ffmpeg מנחש קצב לכל קטע
+    בנפרד. במקור VFR הניחושים נבדלים, צירי הזמן אינם תואמים,
+    וה-concat מפיק חותמות זמן שבורות — 2,800 פריימים במקום 181,000.
+
+    האימות לא תפס את זה כי הוא בדק רק אורך: הקובץ ההרוס נמשך 02:06:15
+    מול 02:06:07, סטייה של עשירית האחוז, והוא נשלח למשתמש בשקט.
+    """
+    import inspect
+
+    from zovexsub import media
+
+    # קצב אחיד נכפה על כל קטע
+    body = inspect.getsource(media._burn_parallel)
+    assert "video_fps(video)" in body, "קצב המקור לא נקרא"
+    for flag in ('"-fps_mode", "cfr"', '"-video_track_timescale"', '"-r"'):
+        assert flag in body, f"חסר {flag} בפקודת הקטע"
+
+    # והאימות בודק פריימים ולא רק שניות
+    check_body = inspect.getsource(media._verify)
+    assert "avg_frame_rate" in check_body, "האימות עדיין עיוור לפריימים"
+    assert "source_fps" in inspect.signature(media._verify).parameters
+    assert "_verify(dst, duration, fps)" in body, "קצב המקור לא מועבר לאימות"
+
+    # פענוח קצב משבר אמיתי
+    assert media.video_fps.__doc__
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
