@@ -577,7 +577,7 @@ async def _subtitle(job: Job, work: Path) -> None:
         ensure_space(0)
         download = prog.Stage(edit, "🔗 מוריד מהקישור")
 
-        async def on_fetch(done: float, total: float) -> None:
+        async def on_fetch(done: float, total: float, eta: float = 0.0) -> None:
             download.total_bytes = int(total)
             await download.show(done / total if total else 0, done_bytes=int(done))
 

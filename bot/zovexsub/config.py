@@ -340,7 +340,9 @@ FETCH_FORMAT = os.getenv(
     "FETCH_FORMAT",
     "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
 )
-FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 4)
+# מקטעים שיורדים במקביל. יוטיוב מגישה DASH מפוצל למקטעים, וזה המנוף
+# העיקרי על הקצב. ארבעה היה שמרני מדי לקו של עשרות מגה־בייט לשנייה
+FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 8)
 # יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
 # מחשבון מחובר פותר את זה. ריק = בלי עוגיות
 FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")

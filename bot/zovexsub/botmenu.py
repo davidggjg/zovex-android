@@ -68,12 +68,29 @@ STEPS = (
 
 QUALITY = ("🎞️ <b>באיזו איכות להוריד?</b>\n\n"
            "ככל שגבוה יותר — הורדה ארוכה יותר וצריבה ארוכה יותר.")
+# רשימת גיבוי בלבד, כשבדיקת הקישור נכשלת. הרשימה האמיתית נבנית
+# מהרזולוציות שקיימות בקישור עצמו
 QUALITY_KEYS = [
     [("1080p", "q:1080"), ("720p", "q:720")],
     [("480p", "q:480"), ("360p", "q:360")],
     [("🔝 הטובה ביותר", "q:best")],
     [("❌ ביטול", "cancel")],
 ]
+
+
+def quality_keys(tall: list[int]) -> list:
+    """בונה את כפתורי האיכות מהרזולוציות שבאמת קיימות בקישור.
+
+    רשימה קבועה היא הבטחה שאי אפשר לעמוד בה: לסרטון אחד יש 1080p
+    ולאחר רק 360p. כאן מוצג בדיוק מה שיש, שניים בשורה
+    """
+    if not tall:
+        return QUALITY_KEYS
+    buttons = [(f"{h}p", f"q:{h}") for h in tall]
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
+    rows.append([("🔝 הטובה ביותר", "q:best")])
+    rows.append([("❌ ביטול", "cancel")])
+    return rows
 
 ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
        "הכתוביות כבר נשלחו למעלה.")
@@ -149,8 +166,8 @@ async def greet_link(chat_id, url: str) -> None:
     ההודעה "שלח סרטון ואתחיל" — גם כשהיה בו קישור תקין שההורדה
     יודעת להוריד
     """
-    sent = await localbot.say(chat_id, QUALITY,
-                              buttons=localbot.keyboard(QUALITY_KEYS))
+    # הודעת ביניים: בדיקת הקישור לוקחת שניות, ובלעדיה נראה שלא קרה כלום
+    sent = await localbot.say(chat_id, "🔎 בודק אילו איכויות זמינות…")
     message_id = sent.get("message_id")
     if not message_id:
         return
@@ -158,6 +175,14 @@ async def greet_link(chat_id, url: str) -> None:
     choice.url, choice.name = url, "link.mp4"
     _open[message_id] = choice
     log.info("קישור התקבל בבוט: %s", url[:120])
+
+    tall = await fetch.heights(url)
+    title = QUALITY
+    if not tall:
+        title += "\n\n<i>לא הצלחתי לקרוא את האיכויות מהקישור — " \
+                 "הרשימה כללית.</i>"
+    await localbot.edit(chat_id, message_id, title,
+                        buttons=localbot.keyboard(quality_keys(tall)))
 
 
 async def _press(query: dict) -> None:

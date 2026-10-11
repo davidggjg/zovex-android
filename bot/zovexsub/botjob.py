@@ -172,11 +172,16 @@ async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
     """מוריד מקישור, עם הרזולוציה שנבחרה בכפתורים."""
     began = time.monotonic()
 
-    async def on_progress(done: float, total: float) -> None:
+    async def on_progress(done: float, total: float, eta: float = 0.0) -> None:
         elapsed = max(0.1, time.monotonic() - began)
-        share = f"{done * 100 / total:.0f}%" if total else "…"
-        await screen.show(f"🔗 מוריד מהקישור · {share} · "
-                          f"{done / 1048576 / elapsed:.1f}MB/s")
+        parts = [f"{done / 1048576:.0f}MB"]
+        if total:
+            parts[0] = (f"{done / 1048576:.0f}/{total / 1048576:.0f}MB · "
+                        f"{done * 100 / total:.0f}%")
+        parts.append(f"{done / 1048576 / elapsed:.1f}MB/s")
+        if eta > 0:
+            parts.append(f"נותרו {int(eta) // 60}:{int(eta) % 60:02d}")
+        await screen.show("🔗 מוריד · " + " · ".join(parts))
 
     want = fetch.format_for(choice.quality)
     log.info("הורדה מקישור באיכות %s (%s)", choice.quality or "ברירת מחדל", want)

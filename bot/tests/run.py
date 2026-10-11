@@ -651,6 +651,41 @@ def _link_job():
     assert "fmt=want" in inspect.getsource(botjob._from_link)
 
 
+@check("איכויות הקישור אמיתיות, וההתקדמות מראה כמה מתוך כמה ומתי יסתיים")
+def _link_progress():
+    """רשימת איכויות קבועה היא הבטחה שאי אפשר לעמוד בה.
+
+    לסרטון אחד יש 1080p ולאחר רק 360p. וההתקדמות הראתה אחוז בלבד,
+    בלי כמה ירד מתוך כמה ובלי זמן משוער.
+    """
+    import inspect
+
+    from zovexsub import botjob, botmenu, config, fetch
+
+    # הכפתורים נבנים מהרזולוציות שהתקבלו
+    rows = botmenu.quality_keys([1080, 720, 480, 360, 240, 144])
+    sent = [d for row in rows for _, d in row if d.startswith("q:")]
+    assert sent == ["q:1080", "q:720", "q:480", "q:360", "q:240", "q:144",
+                    "q:best"], sent
+    assert all(len(row) <= 2 for row in rows[:-2]), "יותר משניים בשורה"
+    # רשימה ריקה נופלת לגיבוי במקום להשאיר תפריט ללא כפתורים
+    assert botmenu.quality_keys([]) is botmenu.QUALITY_KEYS
+
+    # הבדיקה עצמה מתעלמת ממסלולי שמע נקיים
+    body = inspect.getsource(fetch.heights)
+    assert 'vcodec' in body and '"none"' in body, "מסלול שמע ייספר כרזולוציה"
+    assert "reverse=True" in body, "הסדר אינו מהגבוה לנמוך"
+
+    # ETA עובר מ-yt-dlp עד המסך
+    assert "progress.eta" in fetch.TEMPLATE
+    shown = inspect.getsource(botjob._from_link)
+    assert "נותרו" in shown and "/{total / 1048576" in shown, \
+        "אין כמה מתוך כמה או זמן משוער"
+    # והמקביליות אינה שמרנית מדי
+    assert config.FETCH_CONNECTIONS >= 8, config.FETCH_CONNECTIONS
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

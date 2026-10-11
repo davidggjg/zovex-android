@@ -6,6 +6,7 @@ import time
 import pathlib
 import os
 import importlib.util
+import json
 import logging
 import re
 import shutil
@@ -19,7 +20,8 @@ log = logging.getLogger(__name__)
 URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.I)
 # תבנית שמוציאה מ-yt-dlp שורה אחת שקל לקרוא לכל עדכון
 TEMPLATE = "zx %(progress.downloaded_bytes)s %(progress.total_bytes)s " \
-           "%(progress.total_bytes_estimate)s %(progress.speed)s"
+           "%(progress.total_bytes_estimate)s %(progress.speed)s " \
+           "%(progress.eta)s"
 
 
 class FetchError(RuntimeError):
@@ -80,6 +82,47 @@ def _number(token: str) -> float:
     except (TypeError, ValueError):
         return 0.0
     return 0.0 if value != value else value
+
+
+async def heights(url: str, timeout: float = 45.0) -> list[int]:
+    """הרזולוציות שבאמת קיימות בקישור, מהגבוהה לנמוכה.
+
+    רשימה קבועה היא ניחוש: לסרטון אחד יש 1080p ולאחר רק 360p, ולהציע
+    למשתמש איכות שאינה קיימת זה להבטיח לו משהו שלא יקבל. yt-dlp כבר
+    יודע מה יש — שואלים אותו.
+
+    כישלון אינו מפיל כלום: הקורא נופל לרשימה הקבועה
+    """
+    cmd = _command() + ["-J", "--no-warnings", "--no-playlist", url]
+    if config.FETCH_COOKIES:
+        cmd += ["--cookies", config.FETCH_COOKIES]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, env=child_env())
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError) as exc:
+        log.warning("בדיקת איכויות נכשלה (%s)", exc)
+        return []
+    if proc.returncode != 0 or not out:
+        return []
+    try:
+        info = json.loads(out.decode("utf-8", "replace"))
+    except ValueError:
+        return []
+
+    found = set()
+    for item in info.get("formats") or ():
+        # רק מסלולי וידאו אמיתיים. מסלול שמע נקי מדווח vcodec="none"
+        if (item.get("vcodec") or "none") == "none":
+            continue
+        tall = item.get("height")
+        if isinstance(tall, int) and tall > 0:
+            found.add(tall)
+    ordered = sorted(found, reverse=True)
+    log.info("איכויות זמינות בקישור: %s",
+             ", ".join(f"{h}p" for h in ordered) or "לא נמצאו")
+    return ordered
 
 
 def format_for(quality: str) -> str:
@@ -176,7 +219,7 @@ async def _cobalt(url: str, work: Path, on_progress=None) -> Path:
                         fh.write(block)
                         done += len(block)
                         if on_progress:
-                            await on_progress(done, total)
+                            await on_progress(done, total, 0.0)
         except httpx.HTTPError as exc:
             target.unlink(missing_ok=True)
             raise FetchError(f"ההורדה מ-cobalt נקטעה: {exc}") from None
@@ -273,7 +316,10 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
                 continue
             done = _number(parts[1])
             total = _number(parts[2]) or _number(parts[3])
-            await on_progress(done, total)
+            # ה-ETA של yt-dlp מחושב על הקצב שלו עצמו, והוא מדויק
+            # יותר מהערכה שנבנה מבחוץ על ממוצע נע
+            eta = _number(parts[5]) if len(parts) > 5 else 0.0
+            await on_progress(done, total, eta)
 
     _, err = await asyncio.gather(pump(), proc.stderr.read() if proc.stderr else _none())
     await proc.wait()
