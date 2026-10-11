@@ -46,10 +46,6 @@ class Choice:
 # כל שלב: כותרת, שורות כפתורים, השדה שנשמר, ואם הוא חל רק על קישור.
 # בחירת רזולוציה חסרת משמעות לקובץ שכבר נשלח — הגודל שלו נקבע
 STEPS = (
-    ("🎞️ <b>איכות ההורדה</b>",
-     [[("1080p", "quality:1080"), ("720p", "quality:720")],
-      [("480p", "quality:480"), ("🔝 הטובה ביותר", "quality:best")]],
-     "quality", True),
     ("📏 <b>גודל הכתוביות</b>",
      [[("קטן", "size:קטן"), ("בינוני", "size:בינוני"), ("גדול", "size:גדול")]],
      "size", False),
@@ -69,6 +65,15 @@ STEPS = (
       [("⚡ מהירה", "speed:מהיר")]],
      "speed", False),
 )
+
+QUALITY = ("🎞️ <b>באיזו איכות להוריד?</b>\n\n"
+           "ככל שגבוה יותר — הורדה ארוכה יותר וצריבה ארוכה יותר.")
+QUALITY_KEYS = [
+    [("1080p", "q:1080"), ("720p", "q:720")],
+    [("480p", "q:480"), ("360p", "q:360")],
+    [("🔝 הטובה ביותר", "q:best")],
+    [("❌ ביטול", "cancel")],
+]
 
 ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
        "הכתוביות כבר נשלחו למעלה.")
@@ -144,8 +149,8 @@ async def greet_link(chat_id, url: str) -> None:
     ההודעה "שלח סרטון ואתחיל" — גם כשהיה בו קישור תקין שההורדה
     יודעת להוריד
     """
-    sent = await localbot.say(chat_id, SOURCE,
-                              buttons=localbot.keyboard(SOURCE_KEYS))
+    sent = await localbot.say(chat_id, QUALITY,
+                              buttons=localbot.keyboard(QUALITY_KEYS))
     message_id = sent.get("message_id")
     if not message_id:
         return
@@ -172,6 +177,12 @@ async def _press(query: dict) -> None:
                             "בוטל. הכתוביות נשלחו למעלה.")
         return
 
+    if data.startswith("q:"):
+        choice.quality = data.split(":", 1)[1]
+        await localbot.edit(choice.chat_id, message_id, SOURCE,
+                            buttons=localbot.keyboard(SOURCE_KEYS))
+        return
+
     if data.startswith("src:"):
         choice.source = data.split(":", 1)[1]
         label = ("מייצר כתוביות…" if choice.source == "make"
@@ -179,7 +190,7 @@ async def _press(query: dict) -> None:
         await localbot.edit(choice.chat_id, message_id, f"✅ {label}")
         _open.pop(message_id, None)
         if on_choice:
-            await on_choice(choice)
+            _detach(on_choice(choice), "עבודה מהבוט")
         return
 
     if data == "burn:yes":
