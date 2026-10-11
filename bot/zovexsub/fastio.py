@@ -157,6 +157,10 @@ def _flush_cache(handle: int, start: int, length: int) -> None:
 
 def _note(state: dict) -> str:
     """טקסט קצר שמסביר למה אין התקדמות ברגע זה."""
+    got, asked = state.get("senders", 0), state.get("asked", 0)
+    if got and asked and got < asked:
+        # פער בין המבוקש לקיים הוא ההסבר הנפוץ ביותר לקצב נמוך
+        return f"רק {got} מתוך {asked} חיבורים"
     left = state["until"] - time.monotonic()
     if left <= 1:
         return ""
@@ -218,7 +222,12 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
     home = client.session.dc_id == dc_id
     key = client.session.auth_key if home else None
 
-    async def one(auth_key):
+    async def one(auth_key, delay: float = 0.0):
+        # פיזור קל: עשרים לחיצות יד באותו אלפית שנייה נראות לטלגרם
+        # כהצפה, וחלק מהחיבורים נדחים. חמישים אלפיות ביניהם עולות
+        # שנייה אחת בסך הכל ומשאירות את ההקמה מהירה
+        if delay:
+            await asyncio.sleep(delay)
         sender = MTProtoSender(auth_key, loggers=client._log)
         await sender.connect(client._connection(
             dc.ip_address, dc.port, dc.id,
@@ -243,7 +252,8 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
 
         if count > 1:
             rest = await asyncio.gather(
-                *(one(key) for _ in range(count - 1)),
+                *(one(key, i * config.TG_CONNECT_STAGGER)
+                  for i in range(count - 1)),
                 return_exceptions=True)
             for item in rest:
                 if isinstance(item, BaseException):
@@ -272,6 +282,7 @@ async def _close_senders(senders: list) -> None:
 
 async def _parallel_download(client, message, dst: Path, size: int,
                              workers: int, on_progress) -> Path:
+    asked = workers
     dc_id, location = utils.get_input_location(message.media)
     dc_id = dc_id or client.session.dc_id
 
@@ -287,6 +298,13 @@ async def _parallel_download(client, message, dst: Path, size: int,
     handle = os.open(dst, os.O_WRONLY)
     senders = await asyncio.wait_for(
         _open_senders(client, dc_id, workers), timeout=config.TG_CONNECT_TIMEOUT)
+    # מספר החיבורים שקמו בפועל, לא זה שביקשנו. כשחלקם נכשלים
+    # התקרה שמחושבת מהמספר המבוקש גדולה מדי, והמסך מציג מספר שאינו
+    # נכון — ואז קצב נמוך נראה בלתי מוסבר
+    if len(senders) != workers:
+        log.warning("רק %d מתוך %d חיבורים קמו — הקצב ייפגע בהתאם",
+                    len(senders), workers)
+    workers = max(1, len(senders))
 
     # כמה בקשות מותר להחזיק באוויר בו-זמנית, על פני כל החיבורים. זה
     # ולא מספר החיבורים הוא מה שקובע את הקצב, ואי אפשר לדעת מראש כמה
@@ -339,7 +357,8 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # מה להציג למשתמש כשההורדה לא מתקדמת. בלי זה הבוט נראה מת בזמן
     # שהוא פשוט ממתין בציות להוראת FLOOD_WAIT של טלגרם — וזו בדיוק
     # ה"תקיעה של עשרים דקות" שדווחה
-    state = {"note": "", "until": 0.0, "premium": False}
+    state = {"note": "", "until": 0.0, "premium": False,
+             "senders": len(senders), "asked": asked}
     # בייטים שנכתבו מאז הסנכרון האחרון. בלי סנכרון תקופתי מצטברים
     # מאות מגה־בייטים של דפים מלוכלכים בזיכרון, והקרנל נכנס לכתיבה
     # כפויה שמקפיאה את כל המכונה — כולל SSH. זה בדיוק מה שנראה כמו

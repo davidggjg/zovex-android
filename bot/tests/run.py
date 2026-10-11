@@ -790,6 +790,20 @@ def _senders_parallel():
     assert body.index("first = await one(key)") < body.index("asyncio.gather")
     assert "ExportAuthorizationRequest" in body
 
+    # פיזור קל בין לחיצות היד, אחרת טלגרם רואה הצפה ודוחה חלק
+    assert "TG_CONNECT_STAGGER" in body, "אין פיזור בין החיבורים"
+    assert 0 < config.TG_CONNECT_STAGGER <= 0.2, config.TG_CONNECT_STAGGER
+    # הפיזור כולו חייב להיכנס בתוך פסק הזמן להקמה
+    assert config.TG_CONNECT_STAGGER * config.TG_CONNECTIONS < \
+        config.TG_CONNECT_TIMEOUT / 2
+
+    # מספר החיבורים שקמו בפועל מגיע למסך, אחרת קצב נמוך נראה בלתי מוסבר
+    par = inspect.getsource(fastio._parallel_download)
+    assert "workers = max(1, len(senders))" in par, \
+        "התקרה מחושבת מהמספר המבוקש ולא מזה שקם"
+    assert '"senders": len(senders)' in par
+    assert "רק {got} מתוך {asked} חיבורים" in inspect.getsource(fastio._note)
+
     # והתקרה גדולה דיה להקמה מקבילית של מלוא החיבורים
     assert config.TG_CONNECT_TIMEOUT >= 30, config.TG_CONNECT_TIMEOUT
     assert config.FAST_START_TIMEOUT >= config.TG_CONNECT_TIMEOUT, (
