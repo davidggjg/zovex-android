@@ -336,16 +336,34 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         profile = {"מהיר": "fast", "איכותי": "fast265"}.get(choice.speed, "")
         await media.burn(source, srt_path, dst, on_progress=on_burn,
                          style=style, profile=profile)
-        await screen.show("📤 שולח…", force=True)
         info = await media.probe(dst)
         stream = next((s for s in info.get("streams", [])
                        if s.get("codec_type") == "video"), {})
-        await localbot.send_video(
-            chat_id, dst, caption="🔥 וידאו עם כתוביות צרובות",
-            duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
-            width=int(stream.get("width", 0) or 0),
-            height=int(stream.get("height", 0) or 0),
-            thumb=await media.poster(dst, work))
+        megabytes = dst.stat().st_size / 1048576
+        await screen.show(f"📤 שולח {megabytes:.0f}MB…", force=True)
+
+        # דופק להעלאה. השליחה היא קריאה אחת לשרת המקומי, ואין ממנה
+        # דיווח בייטים — אבל קובץ של כמה ג'יגה לוקח דקות, וההודעה
+        # הקפואה "שולח…" לא נבדלת משירות שמת. שעון רץ כן נבדל
+        async def beat() -> None:
+            began = time.monotonic()
+            while True:
+                await asyncio.sleep(config.BOT_EDIT_EVERY)
+                waited = int(time.monotonic() - began)
+                await screen.show(
+                    f"📤 שולח {megabytes:.0f}MB · "
+                    f"{waited // 60}:{waited % 60:02d}", force=True)
+
+        pulse = asyncio.create_task(beat())
+        try:
+            await localbot.send_video(
+                chat_id, dst, caption="🔥 וידאו עם כתוביות צרובות",
+                duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
+                width=int(stream.get("width", 0) or 0),
+                height=int(stream.get("height", 0) or 0),
+                thumb=await media.poster(dst, work))
+        finally:
+            pulse.cancel()
         await screen.show("✅ הסתיים", force=True)
     except Exception as exc:  # noqa: BLE001
         log.exception("הצריבה בבוט נכשלה")

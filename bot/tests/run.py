@@ -588,6 +588,28 @@ def _ytdlp_nightly():
 
 
 
+@check("בשליחה יש דופק ולא הודעה קפואה")
+def _upload_heartbeat():
+    """ההודעה "שולח…" נשארה ללא שינוי דקות ארוכות.
+
+    השליחה היא קריאה אחת לשרת המקומי ואין ממנה דיווח בייטים, אבל
+    קובץ של כמה ג'יגה לוקח דקות — והודעה קפואה אינה נבדלת משירות שמת.
+    """
+    import inspect
+
+    from zovexsub import botjob
+
+    body = inspect.getsource(botjob._burn)
+    assert "שולח {megabytes:.0f}MB" in body, "הגודל אינו מוצג"
+    assert body.count("async def beat") == 1, "אין דופק בשליחה"
+    assert "pulse.cancel()" in body, "הדופק אינו נעצר"
+    # הדופק חייב להיעצר גם כששליחה נכשלת
+    send = body[body.index("pulse = asyncio.create_task(beat())"):]
+    assert "finally:" in send[:send.index("✅ הסתיים")], \
+        "ביטול הדופק אינו ב-finally"
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
