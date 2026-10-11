@@ -418,6 +418,37 @@ def _speed_choice():
 
 
 
+@check("מספר שאבד בתרגום מזוהה ומתוקן")
+def _numbers_survive():
+    """תפס את "Not so fast, 511" שהפך ל"לא כל כך מהר, מטר עשרים".
+
+    מספר טיסה פורש כמידת גובה. זו מחלקה שלמה — קודים, שנים ודגמים
+    שמתורגמים במקום להיות מועתקים.
+    """
+    import inspect
+
+    from zovexsub import hebrew
+
+    lost = hebrew.lost_numbers
+    assert lost("Not so fast, 511.", "לא כל כך מהר, מטר עשרים.") == ["511"]
+    assert lost("Not so fast, 511.", "לא כל כך מהר, 511.") == []
+    assert lost("A vintage 1969 Super Camaro.", "קמארו אספנות משנת 1969.") == []
+    assert lost("It's also 2,000 miles away.", "זה גם 2000 קילומטר מכאן.") == []
+
+    # מספרים קטנים נכתבים במילים בעברית, וזו כתיבה תקינה
+    assert lost("nine miles out", "במרחק תשעה מייל") == []
+    assert lost("Ten days.", "עשרה ימים.") == []
+
+    # קלט ריק או חסר אינו מפיל כלום
+    assert lost("", "") == [] and lost("511", "") == []
+
+    # והתיקון באמת מחובר למסלול הניסיון החוזר
+    body = inspect.getsource(hebrew._translate_all)
+    assert "lost_numbers" in body, "הבדיקה לא מחוברת לתרגום"
+    assert "damaged" in body
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -596,19 +596,45 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
             out[seg.index] = (got.get(seg.index) or "").strip()
 
         missing = [s.index for s in window if not out[s.index]]
-        for idx in missing:
+        # שורה שאיבדה מספר מטופלת כמו שורה חסרה: אותו מסלול, עם הוראה
+        # מפורשת. בלי זה "Not so fast, 511" ממשיך להגיע למשתמש כ"לא כל
+        # כך מהר, מטר עשרים" — שגיאת תוכן שהצופה מבחין בה
+        damaged = {s.index: lost_numbers(s.text, out[s.index])
+                   for s in window if out[s.index]}
+        damaged = {i: nums for i, nums in damaged.items() if nums}
+        for idx in list(missing) + list(damaged):
             seg = segments[idx]
+            nums = damaged.get(idx)
+            demand = ""
+            if nums:
+                demand = ("חובה שהמספרים הבאים יופיעו בתרגום כספרות, "
+                          f"בדיוק כפי שהם: {', '.join(nums)}. "
+                          "אלה קודים או מספרי זיהוי, לא מידות — אין "
+                          "לפרש אותם ואין להמיר אותם למילים.\n")
             async with gate:
                 retry = await gemini.ask_json(
                     TRANSLATE_SYSTEM,
                     f"מסמך הנחיות:\n{_cap(notes, 8000)}\n\n"
+                    f"{demand}"
                     f"תרגם לעברית שורת כתובית אחת (שפת מקור {language}). "
                     f'הקשר: "{_window_text(segments, idx)}"\n'
                     f'השורה לתרגום: "{seg.text}"\n'
                     'החזר JSON: {"lines":[{"i":%d,"he":"..."}]}' % idx,
                     schema=schema, temperature=0.3,
                 )
-            out[idx] = (_collect(retry).get(idx) or seg.text).strip()
+            fixed = (_collect(retry).get(idx) or "").strip()
+            if nums:
+                # שומרים את הניסיון החוזר רק אם הוא באמת החזיר את
+                # המספרים. אחרת עדיף התרגום הראשון מאשר הימור שני
+                if fixed and not lost_numbers(seg.text, fixed):
+                    log.info("שורה %d: המספר %s הוחזר לתרגום",
+                             idx, ", ".join(nums))
+                    out[idx] = fixed
+                else:
+                    log.warning("שורה %d: המספר %s אבד בתרגום ולא שוחזר",
+                                idx, ", ".join(nums))
+            else:
+                out[idx] = fixed or seg.text
 
         finished += len(window)
         log.info("תורגמו %d/%d שורות", finished, len(segments))
@@ -628,6 +654,33 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
 # (עד 200,000 תווים): מפתח אחד עבד בזמן שכל השאר עמדו פנויים, והשלב כולו
 # היה חסום על הקריאה האיטית הזאת. חלונות מקביליים מנצלים את כל המפתחות,
 # ובונוס: חלון קצר מקבל תשומת לב טובה יותר מהמודל מאשר ערימה ענקית
+def _digits(text: str) -> list[str]:
+    """רצפי ספרות באורך שלוש ומעלה, בלי מפרידי אלפים.
+
+    שלוש ומעלה בכוונה: מספרים קטנים נכתבים בעברית במילים ("תשעה מייל"
+    עבור nine miles) וזו כתיבה תקינה. אבל 511, 1969 ו-2,000 הם קודים,
+    שנים וכמויות — הם חייבים לשרוד את התרגום כספרות.
+    """
+    # הנקודה של סוף המשפט נבלעה ברצף ויצרה "511." — ואז המספר נחשב
+    # אבוד גם כשהתרגום הכיל אותו. מסירים פיסוק נגרר
+    found = re.findall(r"\d[\d.]*", text.replace(",", ""))
+    return [d for d in (f.rstrip(".") for f in found) if len(d) >= 3]
+
+
+def lost_numbers(source: str, hebrew: str) -> list[str]:
+    """מספרים שהיו במקור ונעלמו בתרגום.
+
+    תפס את "Not so fast, 511" שהפך ל"לא כל כך מהר, מטר עשרים": המודל
+    פירש מספר טיסה כמידת גובה. זו מחלקה שלמה של שגיאות — קודים, מספרי
+    טיסה, שנים ודגמים שמתורגמים במקום להיות מועתקים — והיא היחידה
+    מבין פגמי התרגום שניתן לזהות בוודאות בלי לקרוא את התוכן
+    """
+    if not source or not hebrew:
+        return []
+    flat = hebrew.replace(",", "")
+    return [d for d in _digits(source) if d not in flat]
+
+
 QUALITY_WINDOW = 120
 
 _QUALITY_SCHEMA = {
