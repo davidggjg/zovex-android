@@ -686,6 +686,36 @@ def _link_progress():
 
 
 
+@check("גודל הכתוביות תואם למדידה מול קובץ מקצועי")
+def _subtitle_size():
+    """נמדד בצילום מסך של נגן אמיתי עם כתוביות של מקודד מקצועי.
+
+    המדד היציב הוא המרחק בין ראש שורה לראש השורה הבאה, כאחוז מגובה
+    אזור הווידאו: הוא אינו תלוי בהחלקת קצוות או בדחיסת התמונה.
+    מקצועי 8.40%; FontSize 20 נתן 7.04% ו-22 נתן 8.70%.
+    """
+    from zovexsub import media
+
+    small = media.SUB_SIZES["קטן"]
+    assert small["font"] == 22, (
+        f"קטן הוא {small['font']} ולא 22 — המדידה נתנה 21.6")
+    # הסולם עולה, וקו המתאר עולה איתו
+    fonts = [media.SUB_SIZES[k]["font"] for k in ("קטן", "בינוני", "גדול")]
+    assert fonts == sorted(fonts) and len(set(fonts)) == 3, fonts
+    lines = [media.SUB_SIZES[k]["outline"] for k in ("קטן", "בינוני", "גדול")]
+    assert lines == sorted(lines), lines
+
+    # MarginV אחיד: 28 הרחיק את הכתוביות לעשרה אחוזים מהתחתית
+    # במקום 7.11 שנמדדו אצל המקצוענים
+    margins = {media.SUB_SIZES[k]["margin"] for k in media.SUB_SIZES}
+    assert margins == {20}, margins
+
+    # והערכים באמת מגיעים ל-force_style
+    style = media.sub_style("קטן", "dejavu", "קו")
+    assert "FontSize=22" in style and "MarginV=20" in style, style
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
