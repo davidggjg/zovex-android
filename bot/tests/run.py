@@ -610,6 +610,48 @@ def _upload_heartbeat():
 
 
 
+@check("קישור מתחיל עבודה, ושלב האיכות חל רק עליו")
+def _link_job():
+    """קודם קישור לא עשה כלום.
+
+    _incoming בדק רק מדיה, וטקסט קיבל "שלח סרטון ואתחיל" — גם כשהיה
+    בו קישור תקין שההורדה יודעת להוריד.
+    """
+    import inspect
+
+    from zovexsub import botjob, botmenu, fetch
+
+    body = inspect.getsource(botmenu._incoming)
+    assert "fetch.find_url" in body, "הטקסט לא נבדק לקישור"
+    assert "greet_link" in body
+
+    # שלב האיכות חל על קישור בלבד
+    quality = next(i for i, st in enumerate(botmenu.STEPS) if st[2] == "quality")
+    link = botmenu.Choice(chat_id=1, url="https://x/y")
+    sent = botmenu.Choice(chat_id=1)
+    assert botmenu._applies(quality, link)
+    assert not botmenu._applies(quality, sent)
+    assert len(botmenu._steps_for(link)) == len(botmenu._steps_for(sent)) + 1
+    # ולסרטון שנשלח השלב הראשון אינו האיכות
+    assert botmenu._steps_for(sent)[0] != quality
+
+    # הכפתורים שולחים ערכים שהתבנית מכירה
+    rows = botmenu.STEPS[quality][1]
+    for row in rows:
+        for _, data in row:
+            value = data.split(":", 1)[1]
+            fmt = fetch.format_for(value)
+            assert fmt and "bestvideo" in fmt, (value, fmt)
+            if value.isdigit():
+                assert f"height<={value}" in fmt, fmt
+    assert "height<=" not in fetch.format_for("best")
+
+    # וההורדה מקבלת את התבנית
+    assert "fmt" in inspect.signature(fetch.download).parameters
+    assert "fmt=want" in inspect.getsource(botjob._from_link)
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -17,7 +17,8 @@ import time
 import uuid
 from pathlib import Path
 
-from . import botapi, botmenu, config, fastio, fileid, localbot, media, pipeline
+from . import (botapi, botmenu, config, fastio, fetch, fileid,
+               localbot, media, pipeline)
 
 log = logging.getLogger(__name__)
 
@@ -167,6 +168,28 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
     return True
 
 
+async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
+    """מוריד מקישור, עם הרזולוציה שנבחרה בכפתורים."""
+    began = time.monotonic()
+
+    async def on_progress(done: float, total: float) -> None:
+        elapsed = max(0.1, time.monotonic() - began)
+        share = f"{done * 100 / total:.0f}%" if total else "…"
+        await screen.show(f"🔗 מוריד מהקישור · {share} · "
+                          f"{done / 1048576 / elapsed:.1f}MB/s")
+
+    want = fetch.format_for(choice.quality)
+    log.info("הורדה מקישור באיכות %s (%s)", choice.quality or "ברירת מחדל", want)
+    await screen.show(f"🔗 מוריד מהקישור · {choice.quality or 'איכות ברירת מחדל'}",
+                      force=True)
+    try:
+        return await fetch.download(choice.url, work, on_progress, fmt=want)
+    except fetch.FetchError as exc:
+        # ההסבר של fetch כבר מנוסח למשתמש ומפרט מה לעשות
+        await localbot.say(choice.chat_id, f"❌ {exc}")
+        return None
+
+
 async def _fetch(chat_id, file_id: str, name: str, work: Path,
                  screen: "Screen", size: int = 0) -> Path | None:
     """מביא את הסרטון לתיקיית העבודה."""
@@ -222,8 +245,11 @@ async def run(choice) -> None:
         _waiting[int(chat_id)] = None
 
     try:
-        source = await _fetch(chat_id, choice.file_id, choice.name,
-                              work, screen, choice.size_bytes)
+        if choice.url:
+            source = await _from_link(choice, work, screen)
+        else:
+            source = await _fetch(chat_id, choice.file_id, choice.name,
+                                  work, screen, choice.size_bytes)
         if source is None:
             _waiting.pop(int(chat_id), None)
             _given.pop(int(chat_id), None)

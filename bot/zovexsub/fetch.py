@@ -82,7 +82,23 @@ def _number(token: str) -> float:
     return 0.0 if value != value else value
 
 
-async def download(url: str, work: Path, on_progress=None) -> Path:
+def format_for(quality: str) -> str:
+    """בוחר תבנית yt-dlp לפי הרזולוציה שהמשתמש ביקש.
+
+    "best" מוריד את הקיים הטוב ביותר, כולל 4K. כל השאר תוקרה בגובה,
+    עם נפילה אחורה לכל מה שקיים — אחרת סרטון שאין לו את הרזולוציה
+    המדויקת פשוט נכשל במקום לרדת דרגה
+    """
+    if not quality or quality == "best":
+        return "bestvideo+bestaudio/best" if quality else config.FETCH_FORMAT
+    if not quality.isdigit():
+        return config.FETCH_FORMAT
+    return (f"bestvideo[height<={quality}]+bestaudio/"
+            f"best[height<={quality}]/best")
+
+
+async def download(url: str, work: Path, on_progress=None,
+                   fmt: str = "") -> Path:
     """מוריד מקישור. cobalt קודם אם הוגדר, אחרת yt-dlp."""
     if config.COBALT_URL:
         try:
@@ -90,14 +106,14 @@ async def download(url: str, work: Path, on_progress=None) -> Path:
         except FetchError as exc:
             log.warning("cobalt נכשל (%s), עוברים ל-yt-dlp", exc)
     try:
-        return await _ytdlp(url, work, on_progress)
+        return await _ytdlp(url, work, on_progress, fmt)
     except StalePlayer:
         # yt-dlp עודכן באמצע הכישלון. ניסיון אחד נוסף, ורק אחד:
         # אם גם הגרסה החדשה נכשלת זו כבר לא בעיית גרסה
         log.warning("מנסה שוב עם הגרסה המעודכנת")
         for leftover in work.glob("source.*"):
             leftover.unlink(missing_ok=True)
-        return await _ytdlp(url, work, on_progress)
+        return await _ytdlp(url, work, on_progress, fmt)
 
 
 async def _cobalt(url: str, work: Path, on_progress=None) -> Path:
@@ -199,7 +215,8 @@ def _note_success() -> None:
     _blocked_until = 0.0
 
 
-async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
+async def _ytdlp(url: str, work: Path, on_progress=None,
+                 fmt: str = "") -> Path:
     """מוריד את הווידאו הטוב ביותר שנכנס במגבלה, וממזג לקובץ אחד."""
     if not available():
         raise FetchError("yt-dlp לא מותקן על השרת. התקנה: pip install yt-dlp")
@@ -226,7 +243,7 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
         "--extractor-args", f"youtube:player_client={config.FETCH_CLIENTS}",
         "--no-playlist", "--newline",
         "--progress-template", TEMPLATE,
-        "-f", config.FETCH_FORMAT,
+        "-f", fmt or config.FETCH_FORMAT,
         "--merge-output-format", "mp4",
         "--retries", "10", "--fragment-retries", "10",
         "--concurrent-fragments", str(config.FETCH_CONNECTIONS),

@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from . import config, localbot
+from . import config, fetch, localbot
 
 log = logging.getLogger(__name__)
 
@@ -38,28 +38,36 @@ class Choice:
     name: str = ""
     source: str = ""             # make / own
     speed: str = ""              # מהיר (H.264) / איכותי (H.265)
+    url: str = ""                # קישור, כשהעבודה התחילה מקישור
+    quality: str = ""            # רזולוציית ההורדה מקישור
 
 
 # כל שלב: כותרת, שורות כפתורים, והשדה שנשמר
+# כל שלב: כותרת, שורות כפתורים, השדה שנשמר, ואם הוא חל רק על קישור.
+# בחירת רזולוציה חסרת משמעות לקובץ שכבר נשלח — הגודל שלו נקבע
 STEPS = (
+    ("🎞️ <b>איכות ההורדה</b>",
+     [[("1080p", "quality:1080"), ("720p", "quality:720")],
+      [("480p", "quality:480"), ("🔝 הטובה ביותר", "quality:best")]],
+     "quality", True),
     ("📏 <b>גודל הכתוביות</b>",
      [[("קטן", "size:קטן"), ("בינוני", "size:בינוני"), ("גדול", "size:גדול")]],
-     "size"),
+     "size", False),
     ("🔤 <b>גופן</b>",
      [[("DejaVu Sans", "font:dejavu"), ("FreeSans", "font:free")],
       [("ברירת מחדל", "font:ברירת מחדל")]],
-     "font"),
+     "font", False),
     ("🎨 <b>מראה</b>",
      [[("⬛ רקע שחור", "look:קופסה")],
       [("⬜ לבן בלבד", "look:לבן")],
       [("✒️ לבן עם קו מתאר", "look:קו")]],
-     "look"),
+     "look", False),
     ("⚙️ <b>איכות הצריבה</b>\n\n"
      "<b>איכותית</b> — H.265, קובץ קטן יותר באותה איכות.\n"
      "<b>מהירה</b> — H.264, מסיימת מהר יותר, קובץ גדול יותר.",
      [[("💎 איכותית (מומלץ)", "speed:איכותי")],
       [("⚡ מהירה", "speed:מהיר")]],
-     "speed"),
+     "speed", False),
 )
 
 ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
@@ -79,9 +87,28 @@ on_subtitle = None
 on_waiting = None
 
 
-def _menu(index: int) -> tuple[str, str]:
-    title, rows, _ = STEPS[index]
-    text = f"{title}  <i>({index + 1}/{len(STEPS)})</i>"
+def _applies(index: int, choice: "Choice") -> bool:
+    """האם השלב הזה רלוונטי לעבודה הנוכחית."""
+    return not STEPS[index][3] or bool(choice.url)
+
+
+def _steps_for(choice: "Choice") -> list[int]:
+    """רשימת השלבים שיוצגו בפועל, לפי סוג העבודה."""
+    return [i for i in range(len(STEPS)) if _applies(i, choice)]
+
+
+def _advance(choice: "Choice") -> int:
+    """השלב הבא שרלוונטי, או len(STEPS) כשנגמרו."""
+    index = choice.step + 1
+    while index < len(STEPS) and not _applies(index, choice):
+        index += 1
+    return index
+
+
+def _menu(index: int, choice: "Choice") -> tuple[str, str]:
+    title, rows, _, _ = STEPS[index]
+    shown = _steps_for(choice)
+    text = f"{title}  <i>({shown.index(index) + 1}/{len(shown)})</i>"
     return text, localbot.keyboard(rows + [[("❌ ביטול", "cancel")]])
 
 
@@ -108,6 +135,24 @@ async def greet(chat_id, file_id: str, size: int, name: str) -> None:
     choice.file_id, choice.size_bytes, choice.name = file_id, size, name
     _open[message_id] = choice
     log.info("סרטון התקבל בבוט: %s (%.0fMB)", name, size / 1048576)
+
+
+async def greet_link(chat_id, url: str) -> None:
+    """מתחיל עבודה מקישור, באותו מסלול כפתורים כמו סרטון שנשלח.
+
+    קודם קישור לא עשה כלום: _incoming בדק רק מדיה, וטקסט קיבל את
+    ההודעה "שלח סרטון ואתחיל" — גם כשהיה בו קישור תקין שההורדה
+    יודעת להוריד
+    """
+    sent = await localbot.say(chat_id, SOURCE,
+                              buttons=localbot.keyboard(SOURCE_KEYS))
+    message_id = sent.get("message_id")
+    if not message_id:
+        return
+    choice = Choice(chat_id=int(chat_id), message_id=message_id)
+    choice.url, choice.name = url, "link.mp4"
+    _open[message_id] = choice
+    log.info("קישור התקבל בבוט: %s", url[:120])
 
 
 async def _press(query: dict) -> None:
@@ -138,8 +183,8 @@ async def _press(query: dict) -> None:
         return
 
     if data == "burn:yes":
-        choice.step = 0
-        text, keys = _menu(0)
+        choice.step = next(iter(_steps_for(choice)), len(STEPS))
+        text, keys = _menu(choice.step, choice)
         await localbot.edit(choice.chat_id, message_id, text, buttons=keys)
         return
 
@@ -150,15 +195,16 @@ async def _press(query: dict) -> None:
     if field_name != expected:
         return                      # לחיצה על כפתור של שלב קודם
     setattr(choice, field_name, value)
-    choice.step += 1
+    choice.step = _advance(choice)
 
     if choice.step < len(STEPS):
-        text, keys = _menu(choice.step)
+        text, keys = _menu(choice.step, choice)
         await localbot.edit(choice.chat_id, message_id, text, buttons=keys)
         return
 
     _open.pop(message_id, None)
-    picked = " · ".join(x for x in (choice.size, choice.look, choice.speed) if x)
+    picked = " · ".join(x for x in (choice.quality, choice.size, choice.look,
+                                    choice.speed) if x)
     await localbot.edit(choice.chat_id, message_id, f"✅ נבחר: {picked}")
     if choice.done:
         _detach(choice.done(choice), "עבודה מהבוט")
@@ -200,8 +246,14 @@ async def _incoming(message: dict) -> None:
     file_id, size, name = localbot.media_of(message)
     if not file_id:
         text = (message.get("text") or "").strip()
-        if text:
-            await localbot.say(chat, "שלח סרטון ואתחיל. אין צורך בפקודות.")
+        if not text:
+            return
+        link = fetch.find_url(text)
+        if link:
+            await greet_link(chat, link)
+            return
+        await localbot.say(chat, "שלח סרטון או קישור ואתחיל. "
+                                 "אין צורך בפקודות.")
         return
     # עבודה שממתינה לכתוביות גוברת על כל זיהוי: אם המשתמש ביקש לצרוב
     # קובץ משלו ושלח מסמך, זה הקובץ — גם כשהשם חסר או מטעה
