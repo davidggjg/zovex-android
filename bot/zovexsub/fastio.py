@@ -209,36 +209,56 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
     מספר ה-DC. טלגרם מגביל קצב לכל חיבור בנפרד, ולכן חיבור נפרד לכל
     עובד הוא מה שבאמת מכפיל את הקצב.
 
-    ב-DC הביתי משתמשים באותו מפתח הצפנה ולא שולחים שום בקשת אתחול —
-    זה מה שהמימוש המוכר עושה, וזה מה שחסר לי קודם.
+    הפתיחה מקבילית, וזה הכרחי ולא שיפור: בטור כל חיבור דורש לחיצת יד
+    משלו, ועשרים מהם לקחו מעל שבעים שניות — יותר מהתקרה שמפילה את
+    המסלול כולו לגיבוי. הראשון עדיין נפתח לבדו, כי הוא זה שמייצא את
+    ההרשאה ויוצר את המפתח שכל השאר חולקים.
     """
     dc = await client._get_dc(dc_id)
     home = client.session.dc_id == dc_id
     key = client.session.auth_key if home else None
+
+    async def one(auth_key):
+        sender = MTProtoSender(auth_key, loggers=client._log)
+        await sender.connect(client._connection(
+            dc.ip_address, dc.port, dc.id,
+            loggers=client._log, proxy=client._proxy,
+        ))
+        return sender
+
+    began = time.monotonic()
     senders = []
     try:
-        for _ in range(count):
-            sender = MTProtoSender(key, loggers=client._log)
-            await sender.connect(client._connection(
-                dc.ip_address, dc.port, dc.id,
-                loggers=client._log, proxy=client._proxy,
-            ))
-            if key is None:
-                # DC אחר מחייב ייצוא הרשאה — אבל רק פעם אחת. המפתח
-                # שנוצר כאן משמש גם את שאר החיבורים, במקום לבצע ייצוא
-                # נפרד לכל אחד מהם על החיבור הראשי
-                auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
-                init = copy.copy(client._init_request)
-                init.query = functions.auth.ImportAuthorizationRequest(
-                    id=auth.id, bytes=auth.bytes)
-                await sender.send(functions.InvokeWithLayerRequest(LAYER, init))
-                key = sender.auth_key
-            senders.append(sender)
+        first = await one(key)
+        senders.append(first)
+        if key is None:
+            # DC אחר מחייב ייצוא הרשאה — אבל רק פעם אחת. המפתח שנוצר
+            # כאן משמש גם את שאר החיבורים, במקום ייצוא נפרד לכל אחד
+            auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
+            init = copy.copy(client._init_request)
+            init.query = functions.auth.ImportAuthorizationRequest(
+                id=auth.id, bytes=auth.bytes)
+            await first.send(functions.InvokeWithLayerRequest(LAYER, init))
+            key = first.auth_key
+
+        if count > 1:
+            rest = await asyncio.gather(
+                *(one(key) for _ in range(count - 1)),
+                return_exceptions=True)
+            for item in rest:
+                if isinstance(item, BaseException):
+                    # חיבור בודד שנכשל אינו מפיל את ההורדה: ממשיכים
+                    # עם מה שנפתח, ורק אם אף אחד לא קם זו שגיאה
+                    log.warning("חיבור נוסף נכשל: %s", item)
+                else:
+                    senders.append(item)
     except Exception:
         await _close_senders(senders)
         raise
-    log.info("נפתחו %d חיבורים נפרדים ל-DC %d%s",
-             len(senders), dc_id, "" if home else " (עם ייצוא הרשאה)")
+
+    log.info("נפתחו %d/%d חיבורים ל-DC %d תוך %.1f שניות%s",
+             len(senders), count, dc_id, time.monotonic() - began,
+             "" if home else " (עם ייצוא הרשאה)")
     return senders
 
 

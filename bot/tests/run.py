@@ -770,6 +770,33 @@ def _fast_failure_visible():
 
 
 
+@check("חיבורי ההורדה נפתחים במקביל ולא בטור")
+def _senders_parallel():
+    """תפס TimeoutError ריק שהפיל כל הורדה לגיבוי האיטי.
+
+    הפתיחה הייתה בטור, וכל חיבור דורש לחיצת יד משלו. כשמספר
+    החיבורים עלה מארבעה לעשרים זמן ההקמה חצה את התקרה שמפילה את
+    המסלול — כלומר השיפור שנועד להאיץ הוא שהפיל אותו.
+    """
+    import inspect
+
+    from zovexsub import config, fastio
+
+    body = inspect.getsource(fastio._open_senders)
+    assert "asyncio.gather" in body, "הפתיחה עדיין בטור"
+    assert "return_exceptions=True" in body, \
+        "חיבור בודד שנכשל מפיל את כל ההורדה"
+    # הראשון עדיין לבדו — הוא מייצא את ההרשאה
+    assert body.index("first = await one(key)") < body.index("asyncio.gather")
+    assert "ExportAuthorizationRequest" in body
+
+    # והתקרה גדולה דיה להקמה מקבילית של מלוא החיבורים
+    assert config.TG_CONNECT_TIMEOUT >= 30, config.TG_CONNECT_TIMEOUT
+    assert config.FAST_START_TIMEOUT >= config.TG_CONNECT_TIMEOUT, (
+        "פסק הזמן לבייט הראשון קצר מפסק הזמן להקמת החיבורים")
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
