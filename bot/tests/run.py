@@ -503,8 +503,7 @@ def _frames_survive():
     # קצב אחיד נכפה על כל קטע
     body = inspect.getsource(media._burn_parallel)
     assert "video_fps(video)" in body, "קצב המקור לא נקרא"
-    for flag in ('"-fps_mode", "cfr"', '"-video_track_timescale"', '"-r"'):
-        assert flag in body, f"חסר {flag} בפקודת הקטע"
+    assert "cfr_args(fps)" in body, "הקטעים אינם מקבלים קצב קבוע"
 
     # והאימות בודק פריימים ולא רק שניות
     check_body = inspect.getsource(media._verify)
@@ -713,6 +712,38 @@ def _subtitle_size():
     # והערכים באמת מגיעים ל-force_style
     style = media.sub_style("קטן", "dejavu", "קו")
     assert "FontSize=22" in style and "MarginV=20" in style, style
+
+
+
+@check("דגל הקצב הקבוע מותאם לגרסת ffmpeg המותקנת")
+def _cfr_flag_portable():
+    """תפס צריבה מקבילית שנפלה על כל סרט.
+
+    -fps_mode נוסף ב-ffmpeg 5.0. על 4.x, שהיא הגרסה ב-Ubuntu 22.04,
+    הוא אופציה לא מוכרת ו-ffmpeg נופל מיד — כלומר הדגל שנועד לתקן
+    אובדן פריימים הפיל את המסלול המקבילי כולו.
+    """
+    import asyncio
+    import inspect
+
+    from zovexsub import media
+
+    body = inspect.getsource(media.cfr_args)
+    assert '"-vsync"' in body and '"-fps_mode"' in body, \
+        "אין נפילה אחורה לשם הישן"
+
+    args = asyncio.run(media.cfr_args(23.976024))
+    assert args[0] in ("-fps_mode", "-vsync"), args
+    assert args[1] == "cfr" and "-r" in args, args
+    assert "23.976024" in " ".join(args), args
+    # קצב לא ידוע לא מוסיף דגלים בכלל
+    assert asyncio.run(media.cfr_args(0)) == []
+
+    # והכישלון מדווח את הסיבה ולא רק את שם המחלקה. הנפילה למסלול
+    # היחיד יושבת ב-burn, לא ב-_burn_parallel
+    outer = inspect.getsource(media.burn)
+    assert "{tail}" in outer and "tail = why[-1]" in outer, \
+        "ההודעה עדיין מציגה שם מחלקה במקום את הסיבה"
 
 
 

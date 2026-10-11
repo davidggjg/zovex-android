@@ -96,6 +96,30 @@ async def video_height(path: Path) -> int:
     return int(digits) if digits else 0
 
 
+_cfr_flag: list[str] = []
+
+
+async def cfr_args(fps: float) -> list[str]:
+    """דגלי קצב קבוע, בצורה שהגרסה המותקנת מבינה.
+
+    ‏-fps_mode נוסף ב-ffmpeg 5.0. על 4.x הוא אופציה לא מוכרת,
+    ו-ffmpeg נופל מיד — כלומר כל הצריבה המקבילית נכשלה ועברה למסלול
+    יחיד. השם הישן הוא -vsync, שעדיין נתמך גם בחדשות.
+    """
+    if fps <= 0:
+        return []
+    if not _cfr_flag:
+        try:
+            out = await _run(["ffmpeg", "-hide_banner", "-h", "full"],
+                             nice=False, timeout=30)
+        except (FFmpegError, OSError):
+            out = ""
+        _cfr_flag.append("-fps_mode" if "-fps_mode" in out else "-vsync")
+        log.info("דגל קצב קבוע: %s", _cfr_flag[0])
+    return [_cfr_flag[0], "cfr", "-r", f"{fps:.6f}",
+            "-video_track_timescale", "90000"]
+
+
 async def video_fps(path: Path) -> float:
     """קצב הפריימים הנומינלי של המקור, או 0 כשלא ניתן לקרוא.
 
@@ -817,7 +841,12 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
             log.exception("הצריבה המקבילית נכשלה (%s: %s) — עוברים לתהליך יחיד",
                           type(exc).__name__, exc)
             if on_progress:
-                await on_progress(0.0, f"נפל למסלול יחיד: {type(exc).__name__}")
+                # שם המחלקה לבדו חסר ערך: "FFmpegError" אינו אומר אם
+                # זו אופציה לא מוכרת, קובץ חסר או דיסק מלא. הסיבה
+                # עצמה היא ההבדל בין אבחון מיידי לסיבוב שלם של ניחושים
+                why = str(exc).strip().splitlines()
+                tail = why[-1][:120] if why else type(exc).__name__
+                await on_progress(0.0, f"נפל למסלול יחיד: {tail}")
 
     return await _burn_single(video, srt, dst, duration, on_progress, style,
                               profile)
@@ -930,11 +959,9 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         ] + _encoder_args(settings, threads, duration)
         # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח
         # סיבוב נוסף על כל הקובץ. נמדד כ-1.9 שניות מבוזבזות לכל קטע
-        if fps > 0:
-            # -fps_mode cfr מכריח פריים לכל משבצת זמן, ו-timescale זהה
-            # מוודא שכל הקטעים חולקים את אותו ציר
-            cmd += ["-fps_mode", "cfr", "-r", f"{fps:.6f}",
-                    "-video_track_timescale", "90000"]
+        # קצב קבוע מכריח פריים לכל משבצת זמן, ו-timescale זהה מוודא
+        # שכל הקטעים חולקים את אותו ציר
+        cmd += await cfr_args(fps)
         cmd += ["-an", str(piece)]
 
         async def progress(fraction: float, speed: str) -> None:
