@@ -747,6 +747,29 @@ def _cfr_flag_portable():
 
 
 
+@check("סיבת הנפילה למסלול האיטי נשלחת בהודעה נפרדת")
+def _fast_failure_visible():
+    """הסיבה מעולם לא הגיעה לעיניים.
+
+    _fast הציג אותה בעריכה של אותה הודעה, ודופק הגיבוי מתחיל תוך
+    שניות ודורס כל עריכה. התוצאה: המשתמש רואה רק "השרת מוריד" ואין
+    שום רמז למה המסלול המהיר לא עבד.
+    """
+    import inspect
+
+    from zovexsub import botjob
+
+    body = inspect.getsource(botjob._fast)
+    assert "localbot.say(chat_id_of(screen)" in body, \
+        "הסיבה עדיין נכתבת בעריכה שנדרסת"
+    assert "screen.show(f\"⚠️" not in body, "נשארה עריכה עם אזהרה"
+    # שני המסלולים מדווחים: פענוח שנכשל וגם הורדה שנכשלה
+    assert body.count("localbot.say(chat_id_of(screen)") >= 2, \
+        "רק אחד משני מצבי הכישלון מדווח"
+    assert botjob.chat_id_of(botjob.Screen(777, 1)) == 777
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

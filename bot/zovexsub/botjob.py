@@ -85,6 +85,11 @@ class _Carrier:
         self.file = type("F", (), {"size": document.size})()
 
 
+def chat_id_of(screen: "Screen"):
+    """הצ'אט שאליו שייך המסך. _fast מקבל מסך ולא מזהה צ'אט."""
+    return screen.chat_id
+
+
 async def _fast(file_id: str, size: int, name: str, target: Path,
                 screen: "Screen") -> bool:
     """מנסה להוריד במסלול המקבילי. מחזיר False כדי ליפול לגיבוי."""
@@ -99,7 +104,11 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
     try:
         found = fileid.decode(file_id)
     except ValueError as exc:
+        # הודעה נפרדת ולא עריכה: הגיבוי מתחיל מיד ודורס את המסך,
+        # ואז הסיבה נעלמת לפני שמספיקים לקרוא אותה
         log.info("file_id לא נפענח (%s) — מסלול השרת", exc)
+        await localbot.say(chat_id_of(screen),
+                           f"ℹ️ המסלול המהיר לא זמין לקובץ הזה: {exc}")
         return False
 
     began = time.monotonic()
@@ -153,8 +162,11 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
     except Exception as exc:  # noqa: BLE001 — נופלים לגיבוי, לא מפילים
         log.warning("המסלול המקבילי נכשל (%s: %s) — מסלול השרת",
                     type(exc).__name__, exc)
-        await screen.show(f"⚠️ המסלול המהיר נפל: {type(exc).__name__}: {exc}",
-                          force=True)
+        # הודעה נפרדת ולא עריכה. דופק הגיבוי מתחיל תוך שניות ומוחק
+        # כל עריכה, ולכן הסיבה מעולם לא הגיעה לעיניים
+        await localbot.say(chat_id_of(screen),
+                           f"⚠️ המסלול המהיר נפל, עובר לגיבוי האיטי.\n"
+                           f"<code>{type(exc).__name__}: {exc}</code>")
         target.unlink(missing_ok=True)
         return False
     finally:
