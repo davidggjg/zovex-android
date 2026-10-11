@@ -449,6 +449,38 @@ def _numbers_survive():
 
 
 
+@check("קובץ כתוביות מזוהה גם כששמו חסר או מטעה")
+def _subtitle_routing():
+    """תפס מסלול "קובץ משלי" שלא עשה כלום.
+
+    media_of ממציא "document.mp4" כש-file_name חסר, ואז בדיקת הסיומת
+    נכשלה והבוט פתח עבודה שלמה חדשה במקום להשתמש בקובץ שנשלח.
+    """
+    import inspect
+
+    from zovexsub import botjob, botmenu, localbot
+
+    sub = localbot.looks_like_subtitle
+    assert sub({"document": {"file_name": "a.srt"}})
+    assert sub({"document": {"file_name": "A.ASS"}})
+    assert sub({"document": {"mime_type": "text/plain", "file_size": 2048}})
+    # שם חסר לגמרי, מסמך קטן — בדיוק המקרה שנשבר
+    assert sub({"document": {"mime_type": "application/octet-stream",
+                             "file_size": 1500}})
+    # סרטון אינו כתוביות, וגם לא מסמך וידאו גדול
+    assert not sub({"video": {"file_name": "x.mp4"}})
+    assert not sub({"document": {"mime_type": "video/mp4",
+                                 "file_size": 900_000_000}})
+    assert not sub({})
+
+    # ועבודה שממתינה גוברת על כל זיהוי
+    body = inspect.getsource(botmenu._incoming)
+    assert "on_waiting" in body, "מצב ההמתנה לא נבדק"
+    assert hasattr(botjob, "waiting_for")
+    assert "botmenu.on_waiting" in inspect.getsource(botjob.install)
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

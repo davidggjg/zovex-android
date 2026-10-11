@@ -305,7 +305,13 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         pipeline.cleanup(work)
 
 
+def waiting_for(chat_id) -> bool:
+    """האם העבודה בצ'אט הזה ממתינה לקובץ כתוביות מהמשתמש."""
+    return int(chat_id) in _waiting
+
+
 def install() -> None:
     """מחבר את הבוט לנהג הזה."""
     botmenu.on_choice = run
     botmenu.on_subtitle = take_subtitle
+    botmenu.on_waiting = waiting_for

@@ -76,6 +76,7 @@ SOURCE_KEYS = [[("🤖 תייצר לי כתוביות", "src:make")],
 # on_subtitle כששלח קובץ כתוביות משלו
 on_choice = None
 on_subtitle = None
+on_waiting = None
 
 
 def _menu(index: int) -> tuple[str, str]:
@@ -202,9 +203,15 @@ async def _incoming(message: dict) -> None:
         if text:
             await localbot.say(chat, "שלח סרטון ואתחיל. אין צורך בפקודות.")
         return
-    if name.lower().endswith((".srt", ".ass", ".vtt", ".sub")):
+    # עבודה שממתינה לכתוביות גוברת על כל זיהוי: אם המשתמש ביקש לצרוב
+    # קובץ משלו ושלח מסמך, זה הקובץ — גם כשהשם חסר או מטעה
+    expected = bool(on_waiting and on_waiting(chat) and message.get("document"))
+    if expected or localbot.looks_like_subtitle(message):
         if on_subtitle:
             _detach(on_subtitle(chat, file_id, name), "קובץ כתוביות")
+        else:
+            await localbot.say(chat, "קיבלתי קובץ כתוביות אבל אין לי מה לעשות "
+                                     "איתו. שלח קודם סרטון.")
         return
     await greet(chat, file_id, size, name)
 

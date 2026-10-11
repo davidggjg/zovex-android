@@ -252,6 +252,12 @@ def clear_outbox(name: str) -> None:
         log.debug("ניקוי outbox נכשל: %s", exc)
 
 
+# סיומות וטיפוסי MIME של קובצי כתוביות
+SUBTITLE_SUFFIXES = (".srt", ".ass", ".ssa", ".vtt", ".sub", ".sbv")
+SUBTITLE_MIMES = ("application/x-subrip", "text/vtt", "text/plain",
+                  "application/octet-stream")
+
+
 def media_of(message: dict) -> tuple[str, int, str]:
     """מחלץ (file_id, גודל, שם) מהודעה, או ריק כשאין מדיה."""
     for key in ("video", "document", "animation"):
@@ -261,3 +267,23 @@ def media_of(message: dict) -> tuple[str, int, str]:
                     int(item.get("file_size", 0) or 0),
                     item.get("file_name", "") or f"{key}.mp4")
     return "", 0, ""
+
+
+def looks_like_subtitle(message: dict) -> bool:
+    """האם ההודעה נושאת קובץ כתוביות.
+
+    השם לבדו אינו אמין: כש-file_name חסר, media_of ממציא "document.mp4"
+    וקובץ ה-SRT נראה כמו סרטון חדש — ואז הבוט פתח עבודה שלמה במקום
+    להשתמש בכתוביות שנשלחו. כאן נבדקים גם טיפוס ה-MIME וגם העובדה
+    שמדובר במסמך ולא בסרטון
+    """
+    item = message.get("document")
+    if not item:
+        return False
+    name = (item.get("file_name") or "").lower()
+    if name.endswith(SUBTITLE_SUFFIXES):
+        return True
+    mime = (item.get("mime_type") or "").lower()
+    # מסמך קטן שאינו וידאו ואינו תמונה הוא כמעט תמיד קובץ כתוביות
+    small = int(item.get("file_size", 0) or 0) <= 4 * 1024 * 1024
+    return small and (mime in SUBTITLE_MIMES or mime.startswith("text/"))
