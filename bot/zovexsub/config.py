@@ -355,6 +355,13 @@ FETCH_ARIA2 = (os.getenv("FETCH_ARIA2") or "auto").strip().lower()
 # ולכן אינם מוטבעים בקוד. ברירת המחדל מכסה את מה שעובד בלי PO token
 FETCH_CLIENTS = os.getenv("FETCH_CLIENTS", "default,tv,web_safari")
 # שרת PO token (bgutil-ytdlp-pot-provider). ריק = בלי
+# עדכון אוטומטי של yt-dlp לערוץ nightly כשיוטיוב שוברת את הנגן.
+# גוגל משנה את הנגן כל כמה ימים, התיקון נכנס ל-nightly תוך שעות,
+# ובלי זה כל הורדה נכשלת עד שמישהו מריץ pip ביד
+YTDLP_AUTO_UPDATE = _int("YTDLP_AUTO_UPDATE", 1)
+# מרווח מינימלי בין ניסיונות עדכון. בלעדיו כל הורדה שנכשלת מריצה pip
+YTDLP_UPDATE_EVERY = float(os.getenv("YTDLP_UPDATE_EVERY") or 6 * 3600)
+
 FETCH_POT_URL = os.getenv("FETCH_POT_URL", "")
 # מפסק זרם: כמה כשלונות רצופים עד שעוצרים, ולכמה זמן
 FETCH_BREAKER_FAILS = _int("FETCH_BREAKER_FAILS", 5)

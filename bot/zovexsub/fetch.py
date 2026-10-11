@@ -26,6 +26,15 @@ class FetchError(RuntimeError):
     pass
 
 
+class StalePlayer(FetchError):
+    """הכישלון נבע מגרסה ישנה, ו-yt-dlp עודכן זה עתה.
+
+    נפרד מ-FetchError כדי שהקורא יידע שיש טעם בניסיון נוסף. המודול
+    שכבר נטען לזיכרון נשאר ישן, אבל ההרצה היא תת-תהליך ולכן הניסיון
+    הבא כבר מקבל את הגרסה החדשה
+    """
+
+
 def find_url(text: str) -> str | None:
     match = URL_PATTERN.search(text or "")
     return match.group(0) if match else None
@@ -80,7 +89,15 @@ async def download(url: str, work: Path, on_progress=None) -> Path:
             return await _cobalt(url, work, on_progress)
         except FetchError as exc:
             log.warning("cobalt נכשל (%s), עוברים ל-yt-dlp", exc)
-    return await _ytdlp(url, work, on_progress)
+    try:
+        return await _ytdlp(url, work, on_progress)
+    except StalePlayer:
+        # yt-dlp עודכן באמצע הכישלון. ניסיון אחד נוסף, ורק אחד:
+        # אם גם הגרסה החדשה נכשלת זו כבר לא בעיית גרסה
+        log.warning("מנסה שוב עם הגרסה המעודכנת")
+        for leftover in work.glob("source.*"):
+            leftover.unlink(missing_ok=True)
+        return await _ytdlp(url, work, on_progress)
 
 
 async def _cobalt(url: str, work: Path, on_progress=None) -> Path:
@@ -250,6 +267,8 @@ async def _ytdlp(url: str, work: Path, on_progress=None) -> Path:
         # כישלון של הבקשה הזו ולא סימן שיוטיוב חוסמת את השרת
         if _is_block(stderr):
             _note_failure()
+        if _stale_player(stderr) and await update_nightly():
+            raise StalePlayer(_explain(stderr))
         raise FetchError(_explain(stderr))
 
     files = sorted(work.glob("source.*"), key=lambda p: p.stat().st_size, reverse=True)
@@ -298,6 +317,60 @@ def child_env() -> dict:
 _BLOCK_SIGNS = ("sign in to confirm", "not a bot", "429", "too many requests",
                 "failed to extract", "player response", "po token",
                 "unable to download api page")
+
+
+# סימנים לכך שהגרסה המותקנת ישנה ולא שהבקשה שגויה. יוטיוב משנה את
+# הנגן כל כמה ימים, והתיקון נכנס ל-nightly תוך שעות
+_STALE_SIGNS = (
+    "failed to extract", "player response", "unable to extract",
+    "nsig extraction failed", "signature extraction failed",
+    "please report this issue", "update to the latest version",
+)
+_updated_at = 0.0
+
+
+def _stale_player(stderr: str) -> bool:
+    low = stderr.lower()
+    return any(sign in low for sign in _STALE_SIGNS)
+
+
+async def update_nightly() -> bool:
+    """מעדכן את yt-dlp לערוץ nightly. מחזיר אם העדכון הצליח.
+
+    ‏nightly ולא יציב: יוטיוב שוברת את הנגן כל כמה ימים, התיקון נכנס
+    לערוץ הזה תוך שעות ולערוץ היציב רק אחרי שבועות. זה גם מה שהתיעוד
+    של yt-dlp ממליץ למי שמוריד מיוטיוב.
+
+    מרווח מינימלי בין ניסיונות, אחרת כל הורדה שנכשלת מריצה pip.
+    """
+    global _updated_at
+    if not config.YTDLP_AUTO_UPDATE:
+        return False
+    now = time.monotonic()
+    if _updated_at and now - _updated_at < config.YTDLP_UPDATE_EVERY:
+        log.info("עדכון yt-dlp דולג — עודכן לפני %.0f דקות",
+                 (now - _updated_at) / 60)
+        return False
+    _updated_at = now
+
+    log.warning("יוטיוב שברה את הנגן — מעדכן את yt-dlp לערוץ nightly")
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "pip", "install", "-U", "--pre",
+        "--disable-pip-version-check", "yt-dlp[default]",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+    )
+    out, _ = await proc.communicate()
+    text = (out or b"").decode("utf-8", "replace")
+    if proc.returncode != 0:
+        log.error("עדכון yt-dlp נכשל:\n%s", text.strip()[-800:])
+        return False
+
+    # הגרסה החדשה נטענת רק בתהליך חדש. המודול שכבר מיובא נשאר ישן,
+    # ולכן ההרצה הבאה חייבת להיות כתת-תהליך — וכך זה ממילא עובד כאן
+    line = next((x for x in text.splitlines()
+                 if "Successfully installed" in x), "")
+    log.warning("yt-dlp עודכן. %s", line.strip() or "ללא שינוי גרסה")
+    return "Successfully installed" in text
 
 
 def _is_block(stderr: str) -> bool:

@@ -551,6 +551,43 @@ def _early_subtitle():
 
 
 
+@check("yt-dlp מתעדכן ל-nightly כשיוטיוב שוברת את הנגן")
+def _ytdlp_nightly():
+    """יוטיוב משנה את הנגן כל כמה ימים.
+
+    התיקון נכנס לערוץ nightly תוך שעות וליציב רק אחרי שבועות, ולכן
+    nightly הוא הערוץ שהתיעוד של yt-dlp ממליץ עליו. קודם ההודעה רק
+    ביקשה מהמשתמש להריץ pip ביד, וכל הורדה נכשלה עד שעשה את זה.
+    """
+    import asyncio
+    import inspect
+
+    from zovexsub import config, fetch
+
+    stale = fetch._stale_player
+    assert stale("ERROR: unable to extract nsig function")
+    assert stale("Failed to extract any player response")
+    assert stale("Please report this issue on https://github.com/yt-dlp")
+    # חסימה אינה גרסה ישנה, ואין טעם לעדכן בגללה
+    assert not stale("Sign in to confirm you're not a bot")
+    assert not stale("HTTP Error 429: Too Many Requests")
+    assert not stale("Private video")
+
+    # ניסיון אחד נוסף בלבד, ורק אחרי עדכון שהצליח
+    body = inspect.getsource(fetch.download)
+    assert "except StalePlayer" in body, "אין ניסיון חוזר אחרי עדכון"
+    assert body.count("_ytdlp(") == 2, "הניסיון החוזר חייב להיות יחיד"
+    assert issubclass(fetch.StalePlayer, fetch.FetchError)
+
+    # והמרווח נאכף: קריאה שנייה מיד אחרי הראשונה מדלגת
+    was, config.YTDLP_AUTO_UPDATE = config.YTDLP_AUTO_UPDATE, 0
+    try:
+        assert asyncio.run(fetch.update_nightly()) is False
+    finally:
+        config.YTDLP_AUTO_UPDATE = was
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
