@@ -504,6 +504,9 @@ def _frames_survive():
     body = inspect.getsource(media._burn_parallel)
     assert "video_fps(video)" in body, "קצב המקור לא נקרא"
     assert "cfr_args(fps)" in body, "הקטעים אינם מקבלים קצב קבוע"
+    # ורק כשצריך: על מקור CFR הדגלים מיותרים, וכבר הפילו צריבה שלמה
+    assert "if vfr:" in body, "הדגלים נוספים גם למקור CFR"
+    assert "is_vfr(video)" in body
 
     # והאימות בודק פריימים ולא רק שניות
     check_body = inspect.getsource(media._verify)
@@ -770,32 +773,35 @@ def _fast_failure_visible():
 
 
 
-@check("חיבורי ההורדה נפתחים במקביל ולא בטור")
+@check("חיבורי ההורדה נפתחים בזה אחר זה, כפי שנמדד כמהיר")
 def _senders_parallel():
-    """תפס TimeoutError ריק שהפיל כל הורדה לגיבוי האיטי.
+    """שתי מדידות שסותרות את האינטואיציה.
 
-    הפתיחה הייתה בטור, וכל חיבור דורש לחיצת יד משלו. כשמספר
-    החיבורים עלה מארבעה לעשרים זמן ההקמה חצה את התקרה שמפילה את
-    המסלול — כלומר השיפור שנועד להאיץ הוא שהפיל אותו.
+    ראשית, TimeoutError ריק הפיל כל הורדה לגיבוי: הקמה סדרתית של
+    עשרים חיבורים חצתה את פסק הזמן לבייט הראשון. התיקון הנכון היה
+    להרחיב את פסק הזמן, לא להאיץ את ההקמה.
+
+    שנית, פתיחה מקבילית נראתה כשיפור מובן מאליו — ונמדדה איטית פי
+    שמונה: 7.5MB/s בזה אחר זה מול 0.9MB/s יחד. היא נשארת מאחורי מתג
+    כבוי, כי ההשערה סבירה אך המדידה גוברת עליה.
     """
     import inspect
 
     from zovexsub import config, fastio
 
     body = inspect.getsource(fastio._open_senders)
-    assert "asyncio.gather" in body, "הפתיחה עדיין בטור"
-    assert "return_exceptions=True" in body, \
-        "חיבור בודד שנכשל מפיל את כל ההורדה"
-    # הראשון עדיין לבדו — הוא מייצא את ההרשאה
-    assert body.index("first = await one(key)") < body.index("asyncio.gather")
+    # הפתיחה סדרתית כברירת מחדל. המקבילית נראתה נכונה אבל נמדדה
+    # גרועה: 7.5MB/s בזה אחר זה מול 0.9MB/s יחד
+    assert config.TG_OPEN_PARALLEL == 0, \
+        "הפתיחה המקבילית חזרה לברירת המחדל אף שנמדדה איטית פי שמונה"
+    assert "config.TG_OPEN_PARALLEL" in body, "אין מתג בין שתי הדרכים"
+    assert "senders.append(await one(key))" in body, "חסר המסלול הסדרתי"
+    # הראשון תמיד לבדו — הוא מייצא את ההרשאה
+    assert body.index("first = await one(key)") < body.index("count > 1")
     assert "ExportAuthorizationRequest" in body
 
-    # פיזור קל בין לחיצות היד, אחרת טלגרם רואה הצפה ודוחה חלק
-    assert "TG_CONNECT_STAGGER" in body, "אין פיזור בין החיבורים"
-    assert 0 < config.TG_CONNECT_STAGGER <= 0.2, config.TG_CONNECT_STAGGER
-    # הפיזור כולו חייב להיכנס בתוך פסק הזמן להקמה
-    assert config.TG_CONNECT_STAGGER * config.TG_CONNECTIONS < \
-        config.TG_CONNECT_TIMEOUT / 2
+    # פסק הזמן לבייט הראשון חייב להכיל הקמה סדרתית מלאה
+    assert config.FAST_START_TIMEOUT >= 180, config.FAST_START_TIMEOUT
 
     # מספר החיבורים שקמו בפועל מגיע למסך, אחרת קצב נמוך נראה בלתי מוסבר
     par = inspect.getsource(fastio._parallel_download)

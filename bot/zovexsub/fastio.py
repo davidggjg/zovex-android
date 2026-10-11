@@ -250,7 +250,7 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
             await first.send(functions.InvokeWithLayerRequest(LAYER, init))
             key = first.auth_key
 
-        if count > 1:
+        if count > 1 and config.TG_OPEN_PARALLEL:
             rest = await asyncio.gather(
                 *(one(key, i * config.TG_CONNECT_STAGGER)
                   for i in range(count - 1)),
@@ -262,6 +262,13 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
                     log.warning("חיבור נוסף נכשל: %s", item)
                 else:
                     senders.append(item)
+        else:
+            # סדרתי, וזו ברירת המחדל. הפתיחה המקבילית נראתה נכונה
+            # אבל נמדדה גרועה: אותו קובץ ירד ב-7.5MB/s כשהחיבורים
+            # נפתחו בזה אחר זה, וב-0.9 כשנפתחו יחד. ההשערה שהצפה של
+            # לחיצות יד גורמת לטלגרם להגביל, והפיזור לא הספיק
+            for _ in range(count - 1):
+                senders.append(await one(key))
     except Exception:
         await _close_senders(senders)
         raise

@@ -120,6 +120,44 @@ async def cfr_args(fps: float) -> list[str]:
             "-video_track_timescale", "90000"]
 
 
+async def is_vfr(path: Path) -> bool:
+    """האם למקור קצב פריימים משתנה.
+
+    רק מקור כזה זקוק לכפיית קצב קבוע בהרכבה. על מקור CFR, שהוא רוב
+    מוחלט, הדגלים מיותרים — והם עלו ביוקר: -fps_mode אינו קיים
+    ב-ffmpeg 4.x והפיל את כל הצריבה המקבילית. מוסיפים אותם רק
+    כשהם באמת נדרשים.
+
+    הסימן המקובל: פער של יותר מאחוז בין r_frame_rate ל-avg_frame_rate.
+    """
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate,avg_frame_rate",
+            "-of", "default=nw=1:nk=1", str(path),
+        ], timeout=60)
+    except (FFmpegError, OSError):
+        return False
+
+    def ratio(text: str) -> float:
+        try:
+            top, _, bottom = text.strip().partition("/")
+            return float(top) / float(bottom or 1)
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
+    values = [ratio(line) for line in out.strip().splitlines() if line.strip()]
+    values = [v for v in values if v > 0]
+    if len(values) < 2:
+        return False
+    nominal, average = values[0], values[1]
+    drift = abs(nominal - average) / max(nominal, average)
+    if drift > 0.01:
+        log.info("מקור VFR: %.3f מול %.3f — נכפה קצב קבוע", nominal, average)
+        return True
+    return False
+
+
 async def video_fps(path: Path) -> float:
     """קצב הפריימים הנומינלי של המקור, או 0 כשלא ניתן לקרוא.
 
@@ -925,6 +963,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     # 0.374 פריימים לשנייה במקום 23.976, עם אובדן כמעט כל הפריימים.
     # קצב מפורש וזהה לכל הקטעים מסיר את הניחוש מהתמונה
     fps = await video_fps(video)
+    vfr = await is_vfr(video)
     if fps <= 0:
         log.warning("קצב הפריימים של המקור לא נקרא — ההרכבה עלולה להישבר")
     else:
@@ -959,9 +998,10 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         ] + _encoder_args(settings, threads, duration)
         # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח
         # סיבוב נוסף על כל הקובץ. נמדד כ-1.9 שניות מבוזבזות לכל קטע
-        # קצב קבוע מכריח פריים לכל משבצת זמן, ו-timescale זהה מוודא
-        # שכל הקטעים חולקים את אותו ציר
-        cmd += await cfr_args(fps)
+        # רק מקור VFR זקוק לכפיית קצב. על CFR הדגלים מיותרים, והם
+        # כבר הפילו צריבה שלמה פעם אחת
+        if vfr:
+            cmd += await cfr_args(fps)
         cmd += ["-an", str(piece)]
 
         async def progress(fraction: float, speed: str) -> None:
