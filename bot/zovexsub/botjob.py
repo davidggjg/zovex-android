@@ -326,8 +326,14 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         style = media.Style(size=choice.size, font=choice.font,
                             look=choice.look)
         # "מהיר" פורץ את הסולם האוטומטי, שהוא HEVC בלבד: H.264 מקודד
-        # מהר בהרבה ומנגן בכל מקום, במחיר קובץ גדול יותר
-        profile = {"מהיר": "fast", "איכותי": "balanced"}.get(choice.speed, "")
+        # מהר בהרבה ומנגן בכל מקום, במחיר קובץ גדול יותר.
+        #
+        # "איכותי" ממופה ל-fast265 ולא ל-balanced. נמדד על 1080p עם
+        # כתוביות, אותו CRF 23: superfast נותן 1.40x ו-veryfast רק
+        # 1.06x — שליש מהמהירות תמורת הפרש איכות שאינו נראה לעין.
+        # ה-preset הוא מנוף גדול יותר מה-CRF, ש-30 מול 23 עולה 14%
+        # בלבד, ולכן אפשר להחזיק גם איכות וגם מהירות
+        profile = {"מהיר": "fast", "איכותי": "fast265"}.get(choice.speed, "")
         await media.burn(source, srt_path, dst, on_progress=on_burn,
                          style=style, profile=profile)
         await screen.show("📤 שולח…", force=True)

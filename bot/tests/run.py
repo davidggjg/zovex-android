@@ -413,8 +413,12 @@ def _speed_choice():
     # בחירה מפורשת גוברת גם כשהסולם האוטומטי אוסר על H.264
     chosen = media._settings_for(Path(__file__), 600.0, 1080, "fast")
     assert chosen["codec"] == "libx264", chosen
-    fine = media._settings_for(Path(__file__), 600.0, 1080, "balanced")
+    fine = media._settings_for(Path(__file__), 600.0, 1080, "fast265")
     assert fine["codec"] == "libx265", fine
+    # ה-preset הוא מנוף המהירות הגדול. נמדד על 1080p עם כתוביות באותו
+    # CRF 23: superfast 1.40x מול veryfast 1.06x. "איכותי" חייב להישאר
+    # על superfast, אחרת שליש מהמהירות הולך על הפרש שאינו נראה
+    assert fine["preset"] == "superfast", fine
 
 
 
