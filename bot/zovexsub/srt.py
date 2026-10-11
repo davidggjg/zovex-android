@@ -62,6 +62,8 @@ def build_cues(segments: list[Segment], lines: list[str],
         else:
             log.info("אין היסט שיטתי בתזמונים (%.2fש)", drift)
         cues = _snap_to_speech(cues, speech, accurate)
+    cues = trim_tail(cues)
+    cues = merge_short(cues)
     cues = _fix_timing(cues)
 
     if speech:
@@ -210,6 +212,85 @@ def _snap_to_speech(cues: list[Cue], speech: list[tuple[float, float]],
     return cues
 
 
+# סימני סוף משפט. כשהחלק הראשון נגמר באחד מהם ושניהם קצרים, סביר
+# שמדובר בשני דוברים ולא בהמשך אותו משפט
+_ENDS = ".?!״\"'…"
+
+
+def _two_speakers(first: str, second: str) -> bool:
+    """האם שני החלקים נשמעים כמו חילופי דברים ולא כמשפט אחד שנחתך."""
+    if not first or not second:
+        return False
+    return first.rstrip()[-1] in _ENDS and second.lstrip()[0] not in ",.?!…-"
+
+
+def trim_tail(cues: list["Cue"]) -> list["Cue"]:
+    """מסיר הזיות תמלול שנוצרות על הקרדיטים בסוף הסרט.
+
+    מנועי תמלול ממציאים טקסט כשאין דיבור, ועל מוזיקת סיום הם מייצרים
+    חתימות של אתרי כתוביות ומילים בודדות. בסרט שנבדק הדיאלוג נגמר
+    ב-1:55:57 והקובץ נמשך עד 2:06 עם חמש שורות כאלה.
+
+    הסימן המבחין אינו התוכן אלא הבידוד: בגוף הסרט הפער הגדול ביותר בין
+    כתוביות היה 25 שניות, ואילו כל אחת מהשורות האלה ישבה אחרי שתיקה של
+    73 עד 187 שניות. לכן הכלל הוא גיאומטרי ולא מילוני — אין רשימת
+    ביטויים לתחזק, והוא עובד בכל שפה.
+    """
+    kept = list(cues)
+    removed = []
+    while len(kept) >= 2:
+        if kept[-1].start - kept[-2].end < config.SRT_TAIL_GAP:
+            break
+        removed.append(kept.pop())
+    if removed:
+        log.warning("%d כתוביות בסוף הקובץ הוסרו כהזיות תמלול (מ-%s והלאה): %s",
+                    len(removed), stamp(removed[-1].start),
+                    " · ".join(r.text.replace("\n", " ")[:30] for r in reversed(removed)))
+    return kept
+
+
+def merge_short(cues: list["Cue"]) -> list["Cue"]:
+    """מאחד כתוביות קצרות וצמודות ליחידת קריאה אחת.
+
+    נמדד מול קובץ כתוביות מקצועי של שירות סטרימינג על אותו סרט: שם
+    עשר כתוביות בלבד מתוך 1635 קצרות משנייה, ושלוש-עשרה אחוזים מהן
+    מחזיקות שני דוברים עם מקף. אצלנו חמישה-עשר אחוזים ירדו מתחת
+    לשנייה ואף כתובית לא איחדה דוברים.
+
+    הסיבה היא ש-_fix_timing אינו יכול להאריך כתובית שהבאה אחריה
+    מתחילה מיד — התקרה חוסמת אותו. הפתרון אינו לדחוס אלא לאחד, וזה
+    בדיוק מה שהמקצוענים עושים בחילופי דברים מהירים.
+    """
+    if len(cues) < 2:
+        return cues
+    out: list[Cue] = []
+    merged = 0
+    for cue in cues:
+        if not out:
+            out.append(cue)
+            continue
+        last = out[-1]
+        gap = cue.start - last.end
+        short = (last.end - last.start) < config.SRT_MERGE_UNDER
+        letters = len(last.text) + len(cue.text) + 1
+        span = cue.end - last.start
+        if (0 <= gap <= config.SRT_MERGE_GAP and short
+                and letters <= config.SRT_MERGE_MAX_CHARS
+                and span <= config.SRT_MERGE_MAX_SPAN):
+            if _two_speakers(last.text, cue.text):
+                # מקף לכל דובר, כמו בקובץ המקצועי
+                last.text = f"- {last.text}\n- {cue.text}"
+            else:
+                last.text = f"{last.text}\n{cue.text}"
+            last.end = cue.end
+            merged += 1
+            continue
+        out.append(cue)
+    if merged:
+        log.info("אוחדו %d כתוביות קצרות ליחידות קריאה", merged)
+    return out
+
+
 def _fix_timing(cues: list[Cue]) -> list[Cue]:
     """מונע חפיפות, אוכף אורך מינימלי/מקסימלי ומנצל שקט כדי להאריך קריאה.
 
@@ -283,7 +364,19 @@ def _hard_wrap(words: list[str], limit: int) -> list[str]:
 
 
 def wrap(text: str) -> str:
-    """פיצול לשתי שורות מאוזנות, עם העדפה לשבירה בפיסוק ולא באמצע ביטוי."""
+    """פיצול לשתי שורות מאוזנות, עם העדפה לשבירה בפיסוק ולא באמצע ביטוי.
+
+    שבירה שכבר קיימת בטקסט נשמרת. merge_short מפריד שני דוברים לשתי
+    שורות עם מקפים, ואיחוד עיוור כאן היה מוחק את ההפרדה ומדביק את שני
+    הדוברים לשורה אחת — בדיוק ההפך מהכוונה
+    """
+    if "\n" in text:
+        limit = config.SRT_MAX_CHARS_PER_LINE
+        kept = [" ".join(part.split()) for part in text.split("\n")]
+        kept = [part for part in kept if part]
+        if kept and all(len(part) <= limit for part in kept):
+            return "\n".join(kept)
+        text = " ".join(kept)
     text = " ".join(text.split())
     limit = config.SRT_MAX_CHARS_PER_LINE
     if len(text) <= limit:
