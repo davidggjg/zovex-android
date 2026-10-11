@@ -513,6 +513,40 @@ def _frames_survive():
 
 
 
+@check("כתוביות שנשלחו תוך כדי ההורדה נקלטות ולא נזרקות")
+def _early_subtitle():
+    """תפס את המקרה הרגיל, לא את החריג.
+
+    ההודעה "שלח עכשיו את קובץ הכתוביות" מופיעה מיד עם הלחיצה, אבל
+    _waiting נרשם רק אחרי שההורדה מסתיימת — דקות אחר כך. הקובץ
+    שהמשתמש שולח תוך כדי נפל בין הכיסאות בלי שום תשובה.
+    """
+    import inspect
+
+    from zovexsub import botjob
+
+    body = inspect.getsource(botjob.run)
+    assert '_waiting[int(chat_id)] = None' in body, \
+        "ההמתנה עדיין נרשמת רק אחרי ההורדה"
+    assert body.index('_waiting[int(chat_id)] = None') < body.index('_fetch('), \
+        "הרישום חייב לקדום להורדה"
+    assert "_given.pop" in body, "קובץ שהגיע מוקדם אינו נאסף"
+
+    take = inspect.getsource(botjob.take_subtitle)
+    # ההבחנה הקריטית: "אין עבודה" מול "ההורדה עדיין רצה"
+    assert "not in _waiting" in take, "שני המצבים עדיין מזוהים כ-None"
+    assert "_given[chat]" in take, "הקובץ המוקדם אינו נשמר"
+    assert take.count("קיבלתי את הכתוביות") >= 2, "אין אישור קבלה למשתמש"
+
+    # ומצב ההמתנה נכון גם כשהערך None
+    botjob._waiting.clear()
+    botjob._waiting[5] = None
+    assert botjob.waiting_for(5) and botjob.waiting_for("5")
+    assert not botjob.waiting_for(6)
+    botjob._waiting.clear()
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -21,8 +21,13 @@ from . import botapi, botmenu, config, fastio, fileid, localbot, media, pipeline
 
 log = logging.getLogger(__name__)
 
-# עבודות שממתינות לקובץ כתוביות מהמשתמש, לפי צ'אט
-_waiting: dict[int, Path] = {}
+# עבודות שממתינות לקובץ כתוביות מהמשתמש, לפי צ'אט. הערך None פירושו
+# שהעבודה כבר מצפה לקובץ אבל הסרטון עדיין יורד
+_waiting: dict[int, Path | None] = {}
+# קובץ כתוביות שהגיע לפני שההורדה הסתיימה. זה המצב הרגיל ולא חריג:
+# ההודעה "שלח עכשיו את קובץ הכתוביות" מופיעה מיד עם הלחיצה, וההורדה
+# נמשכת דקות — המשתמש שולח תוך כדי, ובלי המתנה הקובץ שלו נזרק בשקט
+_given: dict[int, Path] = {}
 
 
 class Screen:
@@ -211,16 +216,31 @@ async def run(choice) -> None:
     note = await localbot.say(chat_id, "📥 קורא את הסרטון…")
     screen = Screen(chat_id, note.get("message_id", 0))
 
+    # נרשמים כממתינים לפני ההורדה ולא אחריה: הקובץ של המשתמש מגיע
+    # כמעט תמיד תוך כדי, וקודם הוא נפל בין הכיסאות
+    if choice.source == "own":
+        _waiting[int(chat_id)] = None
+
     try:
         source = await _fetch(chat_id, choice.file_id, choice.name,
                               work, screen, choice.size_bytes)
         if source is None:
+            _waiting.pop(int(chat_id), None)
+            _given.pop(int(chat_id), None)
             pipeline.cleanup(work)
             return
 
         if choice.source == "own":
-            # ממתינים לקובץ הכתוביות; _subtitle_file ימשיך מכאן
             _waiting[int(chat_id)] = source
+            early = _given.pop(int(chat_id), None)
+            if early is not None and early.exists():
+                # הקובץ כבר הגיע תוך כדי ההורדה
+                srt_path = work / "given.srt"
+                shutil.move(str(early), srt_path)
+                _waiting.pop(int(chat_id), None)
+                await screen.show("✅ ממשיך עם הכתוביות ששלחת.", force=True)
+                await _offer_burn(chat_id, source, srt_path, work)
+                return
             await screen.show("📄 שלח עכשיו את קובץ הכתוביות.", force=True)
             return
 
@@ -245,19 +265,42 @@ async def run(choice) -> None:
 
 
 async def take_subtitle(chat_id, file_id: str, name: str) -> None:
-    """קובץ כתוביות שהמשתמש שלח לעבודה שממתינה."""
-    source = _waiting.pop(int(chat_id), None)
-    if source is None:
-        await localbot.say(chat_id, "אין עבודה שממתינה לקובץ. שלח קודם סרטון.")
+    """קובץ כתוביות שהמשתמש שלח לעבודה שממתינה.
+
+    None בתוך _waiting פירושו שהעבודה קיימת אבל הסרטון עדיין יורד.
+    קודם הוא לא הובחן מ"אין עבודה כלל", ולכן קובץ ששלחו תוך כדי
+    ההורדה — המקרה הרגיל — נענה ב"אין עבודה שממתינה" או בשתיקה
+    """
+    chat = int(chat_id)
+    if chat not in _waiting:
+        await localbot.say(chat_id, "אין עבודה שממתינה לקובץ. "
+                                    "שלח קודם סרטון ובחר ״קובץ קיים״.")
         return
+
     found, why = await localbot.locate(file_id)
     if found is None:
         await localbot.say(chat_id,
                            f"לא הצלחתי לקרוא את קובץ הכתוביות.\n<code>{why}</code>")
         return
+
+    source = _waiting[chat]
+    if source is None:
+        # ההורדה עדיין רצה. שומרים את הקובץ ומאשרים מיד, כדי שלא
+        # יישאר ספק אם הוא נקלט
+        holding = config.WORK_DIR / f"given-{chat}-{uuid.uuid4().hex[:6]}.srt"
+        holding.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(found, holding)
+        _given[chat] = holding
+        log.info("כתוביות התקבלו לפני סיום ההורדה (%s)", name)
+        await localbot.say(chat_id, "✅ קיבלתי את הכתוביות. "
+                                    "ממתין לסיום ההורדה ואז נמשיך.")
+        return
+
+    _waiting.pop(chat, None)
     work = source.parent
     srt_path = work / "given.srt"
     shutil.copy2(found, srt_path)
+    await localbot.say(chat_id, "✅ קיבלתי את הכתוביות.")
     await _offer_burn(chat_id, source, srt_path, work)
 
 
