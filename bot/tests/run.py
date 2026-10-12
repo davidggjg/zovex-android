@@ -893,6 +893,36 @@ def _subtitle_encoding():
 
 
 
+@check("התקדמות מדווחת מהדיסק כשהמוריד החיצוני שותק")
+def _fetch_disk_progress():
+    """aria2c הוא תת-תהליך, ו-yt-dlp אינו מדווח עליו כלל.
+
+    בלי קריאה מהדיסק המסך קופא על "מוריד" לאורך כל ההורדה, וזה
+    נראה למשתמש כמו תקיעה אף שהקובץ יורד בפועל
+    """
+    import tempfile
+
+    from zovexsub import fetch
+
+    with tempfile.TemporaryDirectory() as raw:
+        work = Path(raw)
+        assert fetch.disk_bytes(work) == 0
+        (work / "source.mp4.part").write_bytes(b"x" * 5000)
+        (work / "source.f140.m4a").write_bytes(b"y" * 1200)
+        (work / "notes.txt").write_bytes(b"z" * 9999)   # לא קובץ הורדה
+        got = fetch.disk_bytes(work)
+        assert got == 6200, got
+
+    source = inspect.getsource(fetch._ytdlp)
+    assert "disk_bytes(work)" in source, "אין שעון דיסק ב-_ytdlp"
+    assert "FETCH_STALL" in source, "אין זיהוי תקיעה"
+
+    # המקבל חייב לדעת לקבל הערה, אחרת הדיווח מהדיסק יפיל אותו
+    from zovexsub import botjob
+    inner = inspect.getsource(botjob._from_link)
+    assert "note: str" in inner, "on_progress של הקישור אינו מקבל הערה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

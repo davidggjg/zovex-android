@@ -76,6 +76,29 @@ def _aria2_args() -> list[str]:
     ]
 
 
+# שמות הקבצים החלקיים שכל מוריד משאיר אחריו בדרך
+_PARTIALS = ("source.*", "*.part", "*.frag", "*.ytdl", "*.aria2")
+
+
+def disk_bytes(work: Path) -> int:
+    """כמה בייטים באמת יושבים על הדיסק בתיקיית העבודה.
+
+    זה מקור האמת כשהמוריד עצמו שותק: aria2c הוא תת-תהליך חיצוני,
+    ו-yt-dlp אינו מדווח עליו דרך --progress-template בכלל. בלי זה
+    המסך קופא על "מוריד" לאורך כל ההורדה וזה נראה כמו תקיעה
+    """
+    # התבניות חופפות — source.mp4.part תופס גם את source.* וגם את
+    # ‏*.part — ובלי איחוד הגודל נספר פעמיים
+    sizes = {}
+    for pattern in _PARTIALS:
+        for path in work.glob(pattern):
+            try:
+                sizes[path] = path.stat().st_size
+            except OSError:
+                continue
+    return sum(sizes.values())
+
+
 def _number(token: str) -> float:
     try:
         value = float(token)
@@ -297,11 +320,19 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
         "-o", str(target),
     ] + (["--cookies", str(cookies)] if cookies else []) + [url]
     log.info("מוריד מקישור: %s", url)
+    # איזה מוריד באמת פועל קובע אם ההתקדמות מדווחת מהמוריד או מהדיסק,
+    # ובלי השורה הזאת אין דרך לדעת זאת מהלוג
+    log.info("מוריד: %s · חלקים במקביל: %s · תבנית: %s",
+             "aria2c" if "--downloader" in cmd else "פנימי של yt-dlp",
+             config.FETCH_CONNECTIONS, fmt or config.FETCH_FORMAT)
 
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         env=child_env(),
     )
+
+    # מצב משותף בין המוריד לשעון הדיסק: מתי דווח לאחרונה וכמה בסך הכל
+    seen = {"at": 0.0, "total": 0.0}
 
     async def pump() -> None:
         assert proc.stdout
@@ -319,10 +350,42 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
             # ה-ETA של yt-dlp מחושב על הקצב שלו עצמו, והוא מדויק
             # יותר מהערכה שנבנה מבחוץ על ממוצע נע
             eta = _number(parts[5]) if len(parts) > 5 else 0.0
+            seen["at"] = time.monotonic()
+            seen["total"] = total or seen["total"]
             await on_progress(done, total, eta)
 
-    _, err = await asyncio.gather(pump(), proc.stderr.read() if proc.stderr else _none())
-    await proc.wait()
+    async def watch() -> None:
+        """מדווח מהדיסק כשהמוריד שותק, ומזהה תקיעה אמיתית."""
+        if not on_progress:
+            return
+        grew_at = time.monotonic()
+        most = 0
+        while proc.returncode is None:
+            await asyncio.sleep(config.FETCH_WATCH_EVERY)
+            now = time.monotonic()
+            if now - seen["at"] < config.FETCH_WATCH_EVERY * 2.5:
+                continue        # המוריד מדווח בעצמו — לא מתערבים
+            done = disk_bytes(work)
+            if done > most:
+                most, grew_at = done, now
+            note = ""
+            idle = now - grew_at
+            if idle > config.FETCH_STALL:
+                note = f"לא זז {int(idle)}ש"
+            try:
+                await on_progress(done, seen["total"], 0.0, note)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:        # noqa: BLE001
+                log.debug("דיווח מהדיסק נכשל: %s", exc)
+
+    watcher = asyncio.ensure_future(watch())
+    try:
+        _, err = await asyncio.gather(
+            pump(), proc.stderr.read() if proc.stderr else _none())
+        await proc.wait()
+    finally:
+        watcher.cancel()
 
     if proc.returncode != 0:
         stderr = (err or b"").decode("utf-8", "replace")

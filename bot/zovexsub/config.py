@@ -370,6 +370,11 @@ FETCH_BREAKER_FAILS = _int("FETCH_BREAKER_FAILS", 5)
 FETCH_BREAKER_REST = float(os.getenv("FETCH_BREAKER_REST") or 3600)
 ARIA2_CONNECTIONS = _int("ARIA2_CONNECTIONS", 16)
 
+# כל כמה שניות לקרוא את גודל הקבצים בדיסק כשהמוריד עצמו שותק
+FETCH_WATCH_EVERY = float(os.getenv("FETCH_WATCH_EVERY") or 3)
+# כמה שניות בלי גדילה בדיסק נחשבות תקיעה שראוי להציג למשתמש
+FETCH_STALL = float(os.getenv("FETCH_STALL") or 45)
+
 # כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
 # מספר החיבורים: פחות הוא יותר, וזה נמדד בדרך הקשה.
 #
