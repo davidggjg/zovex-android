@@ -417,13 +417,32 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
         await on_step(f"חוקר את התוכן 0/{total}", 0.0)
 
     pulse = asyncio.create_task(ticker())
+    jobs = [asyncio.ensure_future(call("דוברים", people()))]
+    jobs += [asyncio.ensure_future(call(f"עובדות {i + 1}", facts(i, chunk)))
+             for i, chunk in enumerate(chunks)]
     try:
-        parts = await asyncio.gather(
-            call("דוברים", people()),
-            *(call(f"עובדות {i + 1}", facts(i, chunk))
-              for i, chunk in enumerate(chunks)))
+        # תקרת זמן לכל השלב. החקר הוא שיפור ולא תנאי, וחיפוש אחד איטי
+        # החזיק עד כה את המשתמש בלי שקיבל דבר. מה שהספיק נכנס, מה שלא
+        # נזנח — ותרגום עם מסמך חלקי טוב מתרגום שמתחיל שלוש דקות מאוחר
+        await asyncio.wait(jobs, timeout=config.RESEARCH_BUDGET)
     finally:
         pulse.cancel()
+
+    late = [job for job in jobs if not job.done()]
+    for job in late:
+        job.cancel()
+    if late:
+        log.warning("חרגו מתקרת החקר (%.0fש) ונזנחו %d קריאות מתוך %d",
+                    config.RESEARCH_BUDGET, len(late), len(jobs))
+
+    parts = []
+    for job in jobs:
+        try:
+            parts.append(job.result() if job.done() and not job.cancelled()
+                         else "")
+        except Exception as exc:        # noqa: BLE001 — קריאה שנפלה מדולגת
+            log.debug("קריאת חקר נכשלה: %s", exc)
+            parts.append("")
 
     who, *found = parts
     sections = [who.strip()] if who.strip() else []

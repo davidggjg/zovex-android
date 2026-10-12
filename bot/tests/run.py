@@ -1025,6 +1025,26 @@ def _snap_to_shot_changes():
     assert srt.snap_to_cuts(cues, [], 24.0) == 0
 
 
+@check("לשלב החקר יש תקרת זמן, ומה שהספיק נכנס")
+def _research_budget():
+    """החקר הוא שיפור ולא תנאי: הוא שומר על עקביות שמות לאורך פרק.
+
+    חיפוש אחד איטי החזיק עד כה את כל השלב, והמשתמש חיכה בלי לקבל
+    דבר. מסמך חלקי עדיף על התחלה מאוחרת
+    """
+    import inspect
+
+    from zovexsub import config, hebrew
+
+    source = inspect.getsource(hebrew.research_notes)
+    assert "RESEARCH_BUDGET" in source, "אין תקרת זמן לחקר"
+    assert "asyncio.wait(" in source, "עדיין ממתין לכל הקריאות"
+    assert "job.cancel()" in source, "קריאה שחרגה אינה מבוטלת"
+    # קריאה שנפלה או בוטלה אינה מפילה את השלב
+    assert 'parts.append("")' in source, "כשל בקריאה אינו מדולג"
+    assert config.RESEARCH_BUDGET > 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

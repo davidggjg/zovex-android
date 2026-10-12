@@ -96,6 +96,11 @@ RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
 RESEARCH_FACTS_MIN = _int("RESEARCH_FACTS_MIN", 4000)
 # כמה פריטים לא ודאיים נשלחים לאימות ברשת. התקרה שומרת על הקריאה קצרה
 VERIFY_MAX_ITEMS = _int("VERIFY_MAX_ITEMS", 40)
+
+# תקרת זמן לכל שלב החקר. החקר הוא שיפור ולא תנאי: הוא שומר שאותו שם
+# ייכתב אותו דבר בדקה 3 ובדקה 50. חיפוש אחד איטי מחזיק את המשתמש
+# בלי שהוא מקבל דבר, ולכן מה שהספיק נכנס ומה שלא — נזנח
+RESEARCH_BUDGET = float(os.getenv("RESEARCH_BUDGET") or 150)
 # לכמה זמן לדלג על חיפוש גוגל אחרי שהוא נכשל. ראו gemini._search_failed
 SEARCH_REST = float(os.getenv("SEARCH_REST") or 900)
 
