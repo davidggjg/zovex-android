@@ -1060,6 +1060,48 @@ def _research_budget():
     assert why.count("log.warning") >= 2, "עדיין מחזיר None בשקט"
 
 
+@check("מכסת ג'ימיני משותפת לכל המפתחות ומתכווצת על 429")
+def _shared_rate_budget():
+    """התיעוד של גוגל: המכסה היא לפי פרויקט ולא לפי מפתח.
+
+    כל ההנחה שמפתח נוסף הוא מכסה נוספת שגויה כששני המפתחות באותו
+    פרויקט, ואז ירי מקבילי מחזיר 429 ותו לא. ובנוסף היו שני מאגרים
+    נפרדים על אותם מפתחות, וכל אחד ספר לעצמו
+    """
+    from zovexsub import gemini, gemini_stt
+    from zovexsub.keypool import Budget
+
+    # שני המאגרים חייבים לחלוק מופע אחד, אחרת הם יורים כפול
+    assert gemini._pool.shared is gemini_stt._pool.shared, \
+        "המאגרים אינם חולקים תקציב"
+
+    budget = Budget(ceiling=8, floor=2)
+    now = 1000.0
+    for _ in range(8):
+        assert budget.room(now), "נחסם בתוך התקרה"
+        budget.charge(now)
+    assert not budget.room(now), "לא נחסם בתקרה"
+
+    # 429 מחצי את הקצב, אבל לא מתחת לרצפה
+    budget.throttle(now)
+    assert budget.rate == 4.0, budget.rate
+    budget.throttle(now + 10)
+    assert budget.rate == 2.0, budget.rate
+    budget.throttle(now + 20)
+    assert budget.rate == 2.0, "ירד מתחת לרצפה"
+
+    # גל אחד של 429 אינו מכווץ פעמיים
+    fresh = Budget(ceiling=8)
+    fresh.throttle(now)
+    fresh.throttle(now + 1)
+    assert fresh.rate == 4.0, fresh.rate
+
+    # ודקה נקייה מחזירה בקשה אחת
+    fresh._sent = []
+    assert fresh.room(now + 70)
+    assert fresh.rate == 5.0, fresh.rate
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

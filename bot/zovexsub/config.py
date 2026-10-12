@@ -584,6 +584,11 @@ GEMINI_STT_SPEAKERS = (os.getenv("GEMINI_STT_SPEAKERS") or "1").strip() not in (
 # משתנה לפי שכבה, ולכן הוא נמדד ולא מנוחש. בלי מגביל יזום אנחנו יורים
 # בקשות עד שמתקבל 429 — ואז כבר שרפנו קריאה וקיבלנו קירור. 0 = ללא
 GEMINI_RPM_PER_KEY = _int("GEMINI_RPM_PER_KEY", 10)
+# תקרת בקשות לדקה לכל מפתחות ג'ימיני ביחד. התיעוד של גוגל: המכסה היא
+# לפי פרויקט ולא לפי מפתח, ולכן חמישה מפתחות מאותו פרויקט הם מכסה
+# אחת. הערך הוא תקרה בלבד — הקצב בפועל מתכווץ לבד כשחוזרים 429
+# ומתאושש כשהם נפסקים. 0 מכבה את התקציב המשותף
+GEMINI_RPM_TOTAL = _int("GEMINI_RPM_TOTAL", 30)
 GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 1200)
 GEMINI_STT_OVERLAP = float(os.getenv("GEMINI_STT_OVERLAP") or 10)
 # איך לקבץ מילים לשורות כתוביות

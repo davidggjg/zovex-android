@@ -10,7 +10,7 @@ import time
 import httpx
 
 from . import config
-from .keypool import KeyPool
+from .keypool import KeyPool, shared_budget
 
 log = logging.getLogger(__name__)
 
@@ -18,7 +18,8 @@ BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 # קירור קצר: הגבלת הקצב של גוגל מתאפסת בתוך שניות, וקירור ארוך
 # משבית את כל המפתחות בבת אחת ועוצר את העבודה לדקות
 _pool = KeyPool("gemini", config.GEMINI_API_KEYS, cooldown=15.0,
-                rpm=config.GEMINI_RPM_PER_KEY)
+                rpm=config.GEMINI_RPM_PER_KEY,
+                shared=shared_budget("gemini", config.GEMINI_RPM_TOTAL))
 
 # שמות מודלים אצל גוגל מתחלפים (2.5-pro הוסר, 3.1 נכנס). במקום לרדוף אחריהם
 # בקוד, אנחנו שואלים את ה-API מה זמין ובוחרים את הטוב ביותר, פעם אחת.

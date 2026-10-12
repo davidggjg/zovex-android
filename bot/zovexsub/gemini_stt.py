@@ -14,7 +14,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from .keypool import AllKeysBusy, KeyPool
+from .keypool import AllKeysBusy, KeyPool, shared_budget
 from . import config, media
 from .stt import Segment, Transcript, Word
 
@@ -114,7 +114,8 @@ def _one_chunk(path: Path, key: str, diarize: bool) -> list[dict]:
 
 # מאגר מפתחות משותף לכל הקטעים, כדי שתמלול מקבילי יתחלק ולא יצטופף
 _pool = KeyPool("gemini-stt", config.GEMINI_API_KEYS, cooldown=20.0,
-                rpm=config.GEMINI_RPM_PER_KEY)
+                rpm=config.GEMINI_RPM_PER_KEY,
+                shared=shared_budget("gemini", config.GEMINI_RPM_TOTAL))
 
 
 async def _chunk_words(path: Path, diarize: bool) -> tuple[list[dict], bool, str]:
