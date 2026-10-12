@@ -1102,6 +1102,47 @@ def _shared_rate_budget():
     assert fresh.rate == 5.0, fresh.rate
 
 
+@check("שלב שעומד במקום אומר זאת, ולא נראה פשוט כמו אפס")
+def _stage_stall_is_announced():
+    """"0%" לבדו אינו מבדיל בין קריאה ארוכה לבין תהליך מת.
+
+    זו הייתה התלונה החוזרת ביותר: המסך עומד על אפס דקות ארוכות
+    ואין דרך לדעת אם לחכות או להרוג. עכשיו זה נאמר במפורש, גם על
+    המסך וגם בלוג
+    """
+    import time as clock_mod
+
+    from zovexsub import progress
+
+    seen = []
+
+    async def edit(text):
+        seen.append(text)
+
+    async def drive():
+        stage = progress.Stage(edit, "🇮🇱 מתרגם")
+        # רגע לפני הסף — עוד לא מכריזים
+        stage.step_started = clock_mod.monotonic() - (progress.STALL_AFTER - 5)
+        await stage._flush(force=True)
+        assert "אין תזוזה" not in seen[-1], seen[-1]
+
+        # ואחריו — כן, ועם שעון
+        stage.step_started = clock_mod.monotonic() - (progress.STALL_AFTER + 60)
+        stage.last_edit = 0.0
+        await stage._flush(force=True)
+        assert "אין תזוזה" in seen[-1], seen[-1]
+        assert stage._said_stalled is True
+
+        # תזוזה אמיתית מנקה את ההכרזה, אחרת היא נדבקת לנצח
+        await stage.show(0.4)
+        assert stage._said_stalled is False
+        stage.last_edit = 0.0
+        await stage._flush(force=True)
+        assert "אין תזוזה" not in seen[-1], seen[-1]
+
+    asyncio.run(drive())
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

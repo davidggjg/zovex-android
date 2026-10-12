@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Awaitable, Callable
+
+log = logging.getLogger(__name__)
 
 Edit = Callable[[str], Awaitable[None]]
 
@@ -22,6 +25,10 @@ ETA_FROM = 0.08
 # נשענה על 53 שניות ו-15 אחוזים והכריזה על שש דקות, כי השלבים אינם
 # לינאריים בזמן: החקר הוא עלות קבועה שתופסת את רוב ההתחלה
 ETA_AFTER_SECONDS = 90.0
+# אחרי כמה שניות בלי שום תזוזה באחוז להכריז על תקיעה. שלב יכול לשבת
+# על 0% דקות ארוכות בלי שאיש יידע אם הוא עובד או מת, וזו הייתה התלונה
+# החוזרת ביותר. כאן זה נאמר על המסך ונרשם בלוג, במקום להישאר ניחוש
+STALL_AFTER = 120.0
 
 
 def bar(fraction: float) -> str:
@@ -126,6 +133,7 @@ class Stage:
         self.last_text = ""
         self._pulse: asyncio.Task | None = None
         self._lock = asyncio.Lock()
+        self._said_stalled = False
 
     @property
     def elapsed(self) -> float:
@@ -148,6 +156,14 @@ class Stage:
         waiting = time.monotonic() - self.step_started
         if waiting > STEP_CLOCK_FROM:
             parts.append(clock(waiting))
+        # תקיעה נאמרת במפורש. "0%" לבדו אינו מבדיל בין שלב שעובד על
+        # קריאה ארוכה לבין שלב שמת, והמשתמש נשאר לנחש דקות ארוכות
+        if waiting > STALL_AFTER:
+            parts.append(f"⚠️ אין תזוזה {clock(waiting)}")
+            if not self._said_stalled:
+                self._said_stalled = True
+                log.warning("השלב \"%s\" עומד על %.0f%% כבר %.0f שניות",
+                            self.title, self.fraction * 100, waiting)
         remaining = self.eta()
         if remaining > 1:
             parts.append(f"נותרו ~{clock(remaining)}")
@@ -173,6 +189,9 @@ class Stage:
             if fraction > self.fraction or force:
                 if fraction != self.fraction:
                     self.step_started = time.monotonic()
+                    if self._said_stalled:
+                        log.info("השלב \"%s\" זז שוב", self.title)
+                        self._said_stalled = False
                 self.fraction = fraction if force else max(self.fraction, fraction)
                 if force:
                     self.started = time.monotonic()   # גם הזמן המשוער מתאפס
