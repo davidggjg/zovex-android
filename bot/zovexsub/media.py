@@ -603,7 +603,9 @@ def rtl_copy(srt: Path) -> Path:
     הקובץ שנשלח למשתמש נשאר נקי — העטיפה רק בעותק הזה.
     """
     out = []
-    for line in srt.read_text(encoding="utf-8").splitlines():
+    from . import srt as srt_tools
+
+    for line in srt_tools.read_subtitle(srt).splitlines():
         stripped = line.strip()
         is_meta = (not stripped) or stripped.isdigit() or "-->" in stripped
         if is_meta:

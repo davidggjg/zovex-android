@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import (botapi, botmenu, config, fastio, fetch, fileid,
                localbot, media, pipeline)
+from . import srt as srt_tools
 
 log = logging.getLogger(__name__)
 
@@ -332,7 +333,7 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
         # יישאר ספק אם הוא נקלט
         holding = config.WORK_DIR / f"given-{chat}-{uuid.uuid4().hex[:6]}.srt"
         holding.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(found, holding)
+        srt_tools.normalize(found, holding)
         _given[chat] = holding
         log.info("כתוביות התקבלו לפני סיום ההורדה (%s)", name)
         await localbot.say(chat_id, "✅ קיבלתי את הכתוביות. "
@@ -342,7 +343,9 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     _waiting.pop(chat, None)
     work = source.parent
     srt_path = work / "given.srt"
-    shutil.copy2(found, srt_path)
+    # נורמליזציה כבר כאן: כל מי שקורא אחר כך מקבל UTF-8 ודאי, ואם
+    # הקידוד מוזר המשתמש שומע על כך מיד ולא באמצע הצריבה
+    srt_tools.normalize(found, srt_path)
     await localbot.say(chat_id, "✅ קיבלתי את הכתוביות.")
     await _offer_burn(chat_id, source, srt_path, work)
 

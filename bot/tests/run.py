@@ -853,6 +853,46 @@ def _download_revives():
 
 
 
+@check("קובץ כתוביות נקרא בכל קידוד, לא רק UTF-8")
+def _subtitle_encoding():
+    """תפס "codec can't decode byte 0xbb" שהפיל צריבה שלמה.
+
+    קובצי כתוביות בעברית מופצים לרוב ב-cp1255. קריאה עיוורת כ-UTF-8
+    נכשלת עליהם בשגיאה שאינה אומרת למשתמש דבר.
+    """
+    import inspect
+    import tempfile
+
+    from zovexsub import media
+    from zovexsub import srt as S
+
+    body = "1\n00:00:01,000 --> 00:00:04,000\nשלום עולם\n"
+    with tempfile.TemporaryDirectory() as room:
+        room = Path(room)
+        for name, enc in (("u.srt", "utf-8"), ("b.srt", "utf-8-sig"),
+                          ("w.srt", "cp1255"), ("i.srt", "iso-8859-8")):
+            (room / name).write_bytes(body.encode(enc))
+            got = S.read_subtitle(room / name)
+            assert "שלום עולם" in got, (name, enc, got[:40])
+            assert len(S.parse(got)) == 1, name
+
+        # הבייט שהפיל בפועל, בתוך קובץ שאינו UTF-8 תקין
+        broken = room / "x.srt"
+        broken.write_bytes(body.encode("utf-8")[:62] + b"\xbb" +
+                           body.encode("utf-8")[62:])
+        assert S.read_subtitle(broken), "קובץ פגום לא החזיר טקסט"
+
+        # והנורמליזציה כותבת UTF-8 ודאי
+        out = S.normalize(room / "w.srt", room / "out.srt")
+        assert out.read_bytes().decode("utf-8")
+
+    # ושני הקוראים משתמשים בה
+    assert "read_subtitle" in inspect.getsource(media.rtl_copy), \
+        "rtl_copy עדיין קורא UTF-8 בלבד"
+    assert "read_subtitle(source)" in inspect.getsource(S.slice_file)
+
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

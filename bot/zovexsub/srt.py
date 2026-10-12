@@ -425,6 +425,39 @@ def render(cues: list[Cue]) -> str:
     return "\n\n".join(blocks) + "\n"
 
 
+# סדר הניסיונות לפענוח קובץ כתוביות. BOM קודם, אחר כך UTF-8, ורק
+# אז הקידודים הישנים של עברית ומערב אירופה
+ENCODINGS = ("utf-8-sig", "utf-8", "cp1255", "iso-8859-8", "cp1252", "latin-1")
+
+
+def read_subtitle(path: "Path") -> str:
+    """קורא קובץ כתוביות בכל קידוד סביר.
+
+    קובצי כתוביות בעברית מופצים לרוב ב-cp1255 ולא ב-UTF-8 — כך הגיע
+    גם קובץ מקצועי שנבדק כאן. קריאה עיוורת כ-UTF-8 נכשלת עליהם
+    בשגיאה שאינה אומרת דבר למשתמש: "codec can't decode byte 0xbb".
+
+    latin-1 אחרון ברשימה בכוונה: הוא לעולם אינו נכשל, ולכן הוא רשת
+    ביטחון שמבטיחה שתמיד יוחזר טקסט כלשהו ולא תיזרק שגיאה
+    """
+    raw = path.read_bytes()
+    for name in ENCODINGS:
+        try:
+            text = raw.decode(name)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        if name not in ("utf-8-sig", "utf-8"):
+            log.info("קובץ הכתוביות פוענח כ-%s ולא כ-UTF-8", name)
+        return text
+    return raw.decode("latin-1", "replace")
+
+
+def normalize(source: "Path", target: "Path") -> "Path":
+    """כותב עותק ב-UTF-8, כדי שכל מי שקורא אחריו לא יצטרך לנחש."""
+    target.write_text(read_subtitle(source), encoding="utf-8")
+    return target
+
+
 def parse(text: str) -> list[Cue]:
     """קורא קובץ SRT בחזרה לרשימת כתוביות."""
     cues: list[Cue] = []
@@ -456,7 +489,7 @@ def _seconds(stamp: str) -> float:
 def slice_file(source: Path, start: float, end: float, dst: Path) -> Path:
     """עותק של הכתוביות לקטע אחד, מוזז כך שהקטע מתחיל בזמן אפס."""
     kept: list[Cue] = []
-    for cue in parse(source.read_text(encoding="utf-8", errors="replace")):
+    for cue in parse(read_subtitle(source)):
         if cue.end <= start or cue.start >= end:
             continue
         kept.append(Cue(
