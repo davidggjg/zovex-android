@@ -157,6 +157,17 @@ async def run(source: Path, work: Path, *, progress: Progress,
                           accurate=native_times or align.available())
     if not cues:
         raise RuntimeError("התרגום חזר ריק.")
+    # חיתוכי צילום: אריתמטיקה בלבד, בלי שום קריאת מודל. כתובית שחוצה
+    # חיתוך נקראת פעמיים על ידי הצופה, וזה החוק שמבדיל קובץ מקצועי
+    if config.SRT_SNAP_CUTS:
+        await progress("🎬 מרחיק כתוביות מחיתוכי צילום…")
+        cuts = await media.scene_cuts(source, config.SCENE_THRESHOLD)
+        if cuts:
+            fps = await media.video_fps(source) or 24.0
+            moved = srt.snap_to_cuts(cues, cuts, fps)
+            log.info("הוזזו %d כתוביות מחיתוכי צילום (מתוך %d, %.0f fps)",
+                     moved, len(cues), fps)
+
     srt_path = work / f"{source.stem}.he.srt"
     srt_path.write_text(srt.render(cues), encoding="utf-8")
     (work / "notes.md").write_text(notes, encoding="utf-8")

@@ -1156,3 +1156,37 @@ def _bitrate_cap(duration: float) -> int:
         return 0
     budget_bits = config.UPLOAD_LIMIT_MB * 1024 ** 2 * 8 * 0.90  # שוליים לאודיו ולמכולה
     return max(300, int(budget_bits / duration / 1000))
+
+
+async def scene_cuts(video: Path, threshold: float = 0.35) -> list[float]:
+    """זמני חיתוכי הצילום בסרטון, בשניות.
+
+    נטפליקס אוסרת על כתובית לחצות חיתוך צילום, ואם אין ברירה — לשמור
+    12 פריימים ממנו. הנימוק מתועד בפטנט של גוגל על איתור שגיאות תזמון:
+    כתובית שמופיעה רגע לפני חיתוך נקראת פעמיים על ידי הצופה, כי החיתוך
+    מושך את העין בחזרה אל הטקסט.
+
+    ffmpeg מזהה את זה לבדו דרך מסנן scene, בלי שום קריאת AI ובלי מודל
+    """
+    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-i", str(video),
+           "-vf", f"select='gt(scene,{threshold})',metadata=print:file=-",
+           "-an", "-sn", "-f", "null", "-"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await proc.communicate()
+    except OSError as exc:
+        log.warning("זיהוי חיתוכי צילום נכשל (%s)", exc)
+        return []
+    cuts = []
+    for line in (out or b"").decode("utf-8", "replace").splitlines():
+        found = re.search(r"pts_time:([0-9.]+)", line)
+        if found:
+            try:
+                cuts.append(float(found.group(1)))
+            except ValueError:
+                continue
+    cuts.sort()
+    log.info("זוהו %d חיתוכי צילום", len(cuts))
+    return cuts

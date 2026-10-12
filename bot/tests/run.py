@@ -986,6 +986,45 @@ def _speaker_gender_table():
     assert config.ADDRESSEE_ALWAYS == 0, "ברירת המחדל אמורה לדלג"
 
 
+@check("כתוביות מורחקות מחיתוכי צילום")
+def _snap_to_shot_changes():
+    """נטפליקס אוסרת על כתובית לחצות חיתוך צילום.
+
+    הנימוק מתועד: כתובית שמופיעה רגע לפני חיתוך נקראת פעמיים, כי
+    החיתוך מחזיר את העין אל הטקסט. זו אריתמטיקה בלבד — אפס קריאות
+    מודל ואפס המתנה
+    """
+    from zovexsub import config, srt
+
+    def cue(start, end, text="שלום"):
+        return srt.Cue(index=1, start=start, end=end, text=text)
+
+    # חיתוך ממש אחרי סוף הכתובית: הסוף נמשך אליו
+    cues = [cue(1.0, 3.0)]
+    assert srt.snap_to_cuts(cues, [3.2], 24.0) == 1
+    assert cues[0].end == 3.2, cues[0].end
+
+    # חיתוך ממש בהתחלה: הכתובית מתחילה עליו ולא לפניו
+    cues = [cue(1.0, 5.0)]
+    assert srt.snap_to_cuts(cues, [1.3], 24.0) == 1
+    assert cues[0].start == 1.3, cues[0].start
+
+    # חיתוך באמצע כתובית ארוכה נשאר כמו שהוא — פיצול שובר את הטקסט
+    cues = [cue(1.0, 6.0)]
+    assert srt.snap_to_cuts(cues, [3.5], 24.0) == 0
+    assert (cues[0].start, cues[0].end) == (1.0, 6.0)
+
+    # הזזה לא תקצר כתובית מתחת למינימום
+    cues = [cue(1.0, 1.0 + config.SRT_MIN_DURATION)]
+    before = cues[0].end
+    srt.snap_to_cuts(cues, [1.2], 24.0)
+    assert cues[0].end == before, "קיצר מתחת למינימום"
+
+    # ובלי חיתוכים כלום לא זז
+    cues = [cue(1.0, 3.0)]
+    assert srt.snap_to_cuts(cues, [], 24.0) == 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

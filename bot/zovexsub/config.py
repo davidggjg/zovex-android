@@ -489,6 +489,11 @@ SRT_MERGE_MAX_SPAN = float(os.getenv("SRT_MERGE_MAX_SPAN") or 5.0)
 # בגוף הסרט היה 25 שניות, והזנב ההזוי התחיל אחרי 87 — הפרדה חדה
 SRT_TAIL_GAP = float(os.getenv("SRT_TAIL_GAP") or 60.0)
 
+# היצמדות לחיתוכי צילום: כתובית שחוצה חיתוך נקראת פעמיים על ידי
+# הצופה. 0 מכבה את הזיהוי (הוא סורק את כל הווידאו ועולה זמן)
+SRT_SNAP_CUTS = _int("SRT_SNAP_CUTS", 1)
+SCENE_THRESHOLD = float(os.getenv("SCENE_THRESHOLD") or 0.35)
+
 
 # תקרה עליונה למקביליות, לא משנה כמה מפתחות יש
 PARALLEL_CEILING = _int("PARALLEL_CEILING", 16)

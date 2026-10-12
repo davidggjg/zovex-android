@@ -506,3 +506,50 @@ def slice_file(source: Path, start: float, end: float, dst: Path) -> Path:
         kept = [Cue(index=1, start=0.0, end=0.001, text=" ")]
     dst.write_text(render(kept), encoding="utf-8")
     return dst
+
+
+def snap_to_cuts(cues: list["Cue"], cuts: list[float],
+                 fps: float = 24.0) -> int:
+    """מרחיק כתוביות מחיתוכי צילום. מחזיר כמה שונו.
+
+    נטפליקס אוסרת על כתובית לחצות חיתוך, ואם אין ברירה — לשמור 12
+    פריימים ממנו. הנימוק: כתובית שמופיעה רגע לפני חיתוך נקראת פעמיים,
+    כי החיתוך מחזיר את העין אל הטקסט.
+
+    שמרני בכוונה: רק קצה שקרוב לחיתוך מוזז, ורק אם ההזזה אינה מקצרת
+    את הכתובית מתחת למינימום ואינה דורכת על השכנה. חיתוך שנופל באמצע
+    כתובית ארוכה נשאר כמו שהוא — פיצולה היה שובר את הטקסט, וזו החלטת
+    עריכה ולא חשבון
+    """
+    if not cues or not cuts:
+        return 0
+    guard = 12.0 / max(1.0, fps)
+    changed = 0
+
+    for index, cue in enumerate(cues):
+        floor = cues[index - 1].end + config.SRT_GAP if index else 0.0
+        roof = (cues[index + 1].start - config.SRT_GAP
+                if index + 1 < len(cues) else cue.end + guard)
+
+        inside = [c for c in cuts if cue.start < c < cue.end]
+        if not inside:
+            # קצה שיושב ממש לפני חיתוך — מושכים אותו אל החיתוך עצמו
+            near = [c for c in cuts if 0 < c - cue.end <= guard]
+            if near and near[0] <= roof:
+                cue.end = near[0]
+                changed += 1
+            continue
+
+        first, last = inside[0], inside[-1]
+        if first - cue.start <= guard:
+            # החיתוך ממש בהתחלה: הכתובית מתחילה עליו ולא לפניו
+            if first >= floor and cue.end - first >= config.SRT_MIN_DURATION:
+                cue.start = first
+                changed += 1
+                continue
+        if cue.end - last <= guard:
+            # החיתוך ממש בסוף: הכתובית נגמרת עליו
+            if last - cue.start >= config.SRT_MIN_DURATION:
+                cue.end = last
+                changed += 1
+    return changed
