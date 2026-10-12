@@ -1171,6 +1171,30 @@ def _stt_live_reporting():
     assert "note: str = \"\"" in inner, "on_chunk אינו מקבל הערה"
 
 
+@check("חלק תמלול תקוע או שנפל אינו מפיל את כל העבודה")
+def _stt_chunk_isolation():
+    """gather ממתין לאיטי שבחלקים, ובלי תקרה אין לזה גבול.
+
+    וללא return_exceptions חלק אחד שנפל מחק גם את השבעה שהצליחו
+    והעיף את כל התמלול ל-Groq מאפס
+    """
+    import inspect
+
+    from zovexsub import config, gemini_stt
+
+    src = inspect.getsource(gemini_stt.transcribe)
+    assert "GEMINI_STT_TIMEOUT" in src, "אין תקרה לחלק בודד"
+    assert "return_exceptions=True" in src, "חלק שנפל מפיל את כולם"
+    assert "GEMINI_STT_MIN_GOOD" in src, "אין סף לתמלול מחורר"
+
+    assert config.GEMINI_STT_TIMEOUT > 0
+    assert 0 < config.GEMINI_STT_MIN_GOOD <= 1.0
+
+    # והנפילה ל-Groq נשארת כשיותר מדי חלקים חסרים
+    assert "return None" in src.split("GEMINI_STT_MIN_GOOD")[1][:400], \
+        "לא נופל ל-Groq כשהתמלול מחורר"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -261,7 +261,11 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
             live[index] = ("מתמלל", time.monotonic())
             await refresh()
             try:
-                words, flags[0], found = await _chunk_words(piece, flags[0])
+                # תקרה לחלק בודד: בלעדיה חלק תקוע מחזיק את כל העבודה,
+                # כי gather ממתין לאיטי שבהם ואין לו גבול
+                words, flags[0], found = await asyncio.wait_for(
+                    _chunk_words(piece, flags[0]),
+                    timeout=config.GEMINI_STT_TIMEOUT)
             finally:
                 piece.unlink(missing_ok=True)
                 live.pop(index, None)
@@ -273,7 +277,24 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
 
     pulse = asyncio.ensure_future(ticker())
     try:
-        await asyncio.gather(*(one(i, b) for i, b in enumerate(starts)))
+        # return_exceptions: חלק אחד שנפל אינו מוחק את השבעה שהצליחו.
+        # קודם הוא היה מפיל את כל התמלול ומעיף אותנו ל-Groq מאפס
+        outcome = await asyncio.gather(
+            *(one(i, b) for i, b in enumerate(starts)),
+            return_exceptions=True)
+        broke = [r for r in outcome if isinstance(r, BaseException)]
+        for problem in broke:
+            log.warning("חלק תמלול נכשל (%s: %s)",
+                        type(problem).__name__, problem)
+        good = len(starts) - len(broke)
+        if good < len(starts) * config.GEMINI_STT_MIN_GOOD:
+            # תמלול מחורר גרוע מתמלול אחר: חור הוא דקות בלי כתוביות
+            log.warning("רק %d מתוך %d חלקים הצליחו — נופלים ל-Groq",
+                        good, len(starts))
+            return None
+        if broke:
+            log.warning("%d חלקים חסרים, ממשיכים עם %d שהצליחו",
+                        len(broke), good)
         tongue = found_any[0]
         # ההרכבה לפי הסדר, והחפיפה מסוננת כאן ולא תוך כדי
         for index in sorted(results):

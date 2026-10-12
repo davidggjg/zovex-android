@@ -589,6 +589,12 @@ GEMINI_RPM_PER_KEY = _int("GEMINI_RPM_PER_KEY", 10)
 # אחת. הערך הוא תקרה בלבד — הקצב בפועל מתכווץ לבד כשחוזרים 429
 # ומתאושש כשהם נפסקים. 0 מכבה את התקציב המשותף
 GEMINI_RPM_TOTAL = _int("GEMINI_RPM_TOTAL", 30)
+# תקרת זמן לחלק תמלול בודד. בלעדיה חלק אחד שנתקע מחזיק את כל העבודה
+# לנצח, כי asyncio.gather ממתין לאיטי שבהם
+GEMINI_STT_TIMEOUT = float(os.getenv("GEMINI_STT_TIMEOUT") or 900)
+# כמה מהחלקים מספיק שיצליחו כדי להשתמש בתוצאה. מתחת לזה עדיף Groq
+# על תמלול מחורר, כי חור פירושו דקות שלמות בלי כתוביות
+GEMINI_STT_MIN_GOOD = float(os.getenv("GEMINI_STT_MIN_GOOD") or 0.8)
 GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 1200)
 GEMINI_STT_OVERLAP = float(os.getenv("GEMINI_STT_OVERLAP") or 10)
 # איך לקבץ מילים לשורות כתוביות
