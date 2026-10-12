@@ -91,6 +91,82 @@ def chat_id_of(screen: "Screen"):
     return screen.chat_id
 
 
+async def _via_storage(chat_id, source_message: int, size: int,
+                       target: Path, screen: "Screen") -> bool:
+    """מוריד בחשבון משתמש, דרך ערוץ האחסון. מחזיר False כדי ליפול הלאה.
+
+    זה המסלול המהיר האמיתי, והוא קיים כי לטוקן של בוט יש תקרה משלו
+    ב-MTProto שאי אפשר לכוונן מסביבה. חשבון משתמש אינו כפוף לה — וזה
+    ההסבר לכל הבוטים שמורידים "כמו טיל": הם אינם בוטים אלא חשבונות.
+
+    הקושי הוא שחשבון אינו רואה את הצ'אט הפרטי שבין האדם לבוט, ולכן
+    אינו יכול להוריד משם. ערוץ האחסון פותר בדיוק את זה: הבוט מעביר
+    אליו את ההודעה — העברה מיידית, הקובץ כבר אצל טלגרם — והחשבון,
+    שהוא חבר בערוץ, מוריד משם בהרשאות שלו ובמקבול מלא.
+
+    אותו ערוץ שימש עד כה רק בכיוון ההעלאה. כאן הוא עובד גם בכיוון
+    ההורדה, וזאת החוליה שהייתה חסרה
+    """
+    user = botapi.premium()
+    if user is None or not config.STORAGE_CHAT or not source_message or not size:
+        return False
+    try:
+        where = await botapi.storage(user)
+    except Exception as exc:  # noqa: BLE001 — ערוץ לא נפתר, נופלים הלאה
+        log.info("ערוץ האחסון לא נפתר (%s) — מסלול הבוט", exc)
+        return False
+    if where is None:
+        return False
+
+    began = time.monotonic()
+    await screen.show("📤 מעביר לערוץ האחסון…", force=True)
+    try:
+        moved_msg = await localbot.forward(config.STORAGE_CHAT, chat_id,
+                                           source_message)
+        there = int(moved_msg.get("message_id") or 0)
+        if not there:
+            raise RuntimeError("ההעברה לא החזירה מזהה הודעה")
+        message = await user.get_messages(where, ids=there)
+        if message is None or message.media is None:
+            raise RuntimeError("ההודעה המועברת לא נמצאה בערוץ")
+    except Exception as exc:  # noqa: BLE001 — כל כשל כאן הוא נפילה הלאה
+        log.warning("ההעברה לאחסון נכשלה (%s: %s) — מסלול הבוט",
+                    type(exc).__name__, exc)
+        return False
+
+    workers = fastio._connections(size, max(1, config.TG_CONNECTIONS))
+    log.info("הורדה בחשבון משתמש דרך האחסון: %d חיבורים", workers)
+    moved = {"at": 0}
+
+    async def on_progress(done: int, total: int, note: str) -> None:
+        moved["at"] = done
+        elapsed = max(0.1, time.monotonic() - began)
+        await screen.show(
+            f"📥 מוריד (חשבון) ·{workers}× · "
+            f"{done * 100 // max(1, total)}% · "
+            f"{done / elapsed / 1048576:.1f}MB/s"
+            f"{' · ' + note if note else ''}")
+
+    try:
+        await fastio._parallel_download(user, message, target, size,
+                                        workers, on_progress)
+    except Exception as exc:  # noqa: BLE001 — נופלים למסלול הבוט
+        log.warning("ההורדה בחשבון נכשלה (%s: %s) — מסלול הבוט",
+                    type(exc).__name__, exc)
+        await localbot.say(chat_id_of(screen),
+                           f"⚠️ המסלול של החשבון נפל, מנסה את הבוט.\n"
+                           f"<code>{type(exc).__name__}: {exc}</code>")
+        target.unlink(missing_ok=True)
+        return False
+    if target.stat().st_size < size:
+        target.unlink(missing_ok=True)
+        return False
+    log.info("ירד בחשבון משתמש: %.0fMB ב-%.0f שניות (%.1fMB/s)",
+             size / 1048576, time.monotonic() - began,
+             size / 1048576 / max(0.1, time.monotonic() - began))
+    return True
+
+
 async def _fast(file_id: str, size: int, name: str, target: Path,
                 screen: "Screen") -> bool:
     """מנסה להוריד במסלול המקבילי. מחזיר False כדי ליפול לגיבוי."""
@@ -212,9 +288,16 @@ async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
 
 
 async def _fetch(chat_id, file_id: str, name: str, work: Path,
-                 screen: "Screen", size: int = 0) -> Path | None:
-    """מביא את הסרטון לתיקיית העבודה."""
+                 screen: "Screen", size: int = 0,
+                 source_message: int = 0) -> Path | None:
+    """מביא את הסרטון לתיקיית העבודה.
+
+    שלושה מסלולים בסדר יורד של מהירות: חשבון משתמש דרך ערוץ האחסון,
+    הבוט במקבול, ולבסוף getFile של השרת המקומי בחיבור אחד
+    """
     target = work / f"source{Path(name).suffix or '.mp4'}"
+    if await _via_storage(chat_id, source_message, size, target, screen):
+        return target
     if await _fast(file_id, size, name, target, screen):
         return target
     # getFile במצב --local מוריד את הקובץ מטלגרם לפני שהוא מחזיר נתיב.
@@ -270,7 +353,8 @@ async def run(choice) -> None:
             source = await _from_link(choice, work, screen)
         else:
             source = await _fetch(chat_id, choice.file_id, choice.name,
-                                  work, screen, choice.size_bytes)
+                                  work, screen, choice.size_bytes,
+                                  choice.source_message)
         if source is None:
             _waiting.pop(int(chat_id), None)
             _given.pop(int(chat_id), None)

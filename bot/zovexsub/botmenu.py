@@ -34,6 +34,7 @@ class Choice:
     done: object = None          # נקרא עם Choice כשהמשתמש סיים
     cancelled: bool = False
     file_id: str = ""            # הסרטון שהתקבל, כשהשיחה התחילה ממנו
+    source_message: int = 0      # ההודעה שבה הגיע הסרטון, להעברה לאחסון
     size_bytes: int = 0
     name: str = ""
     source: str = ""             # make / own
@@ -147,7 +148,8 @@ async def offer(chat_id, on_done) -> None:
     log.info("הצעת צריבה עם כפתורים (הודעה %s)", message_id)
 
 
-async def greet(chat_id, file_id: str, size: int, name: str) -> None:
+async def greet(chat_id, file_id: str, size: int, name: str,
+                source_message: int = 0) -> None:
     """שואל מה לעשות עם סרטון שהתקבל, לפני שמתחיל עיבוד."""
     sent = await localbot.say(chat_id, SOURCE,
                               buttons=localbot.keyboard(SOURCE_KEYS))
@@ -156,6 +158,7 @@ async def greet(chat_id, file_id: str, size: int, name: str) -> None:
         return
     choice = Choice(chat_id=int(chat_id), message_id=message_id)
     choice.file_id, choice.size_bytes, choice.name = file_id, size, name
+    choice.source_message = source_message
     _open[message_id] = choice
     log.info("סרטון התקבל בבוט: %s (%.0fMB)", name, size / 1048576)
 
@@ -302,7 +305,7 @@ async def _incoming(message: dict) -> None:
             await localbot.say(chat, "קיבלתי קובץ כתוביות אבל אין לי מה לעשות "
                                      "איתו. שלח קודם סרטון.")
         return
-    await greet(chat, file_id, size, name)
+    await greet(chat, file_id, size, name, message.get("message_id") or 0)
 
 
 async def _pump() -> None:

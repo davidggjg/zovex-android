@@ -53,6 +53,19 @@ async def call(method: str, read: float = 600.0, **fields):
     return {} if result is None else result
 
 
+async def forward(to_chat, from_chat, message_id: int) -> dict:
+    """מעביר הודעה לערוץ האחסון ומחזיר את ההודעה שנוצרה שם.
+
+    העברה אינה העלאה — הקובץ כבר אצל טלגרם — ולכן היא מיידית גם
+    לקובץ של שני ג'יגה. היא קיימת כאן בשביל ההורדה: חשבון משתמש
+    אינו רואה את הצ'אט הפרטי שבין האדם לבוט, ולכן אינו יכול להוריד
+    משם. בערוץ האחסון הוא כן חבר, וההודעה המועברת היא שלו לכל דבר
+    """
+    return await call("forwardMessage", read=120.0,
+                      chat_id=str(to_chat), from_chat_id=str(from_chat),
+                      message_id=str(message_id))
+
+
 async def probe() -> str:
     """מוודא שהשרת חי ושהטוקן תקף. מחזיר את שם הבוט.
 

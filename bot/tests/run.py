@@ -923,6 +923,36 @@ def _fetch_disk_progress():
     assert "note: str" in inner, "on_progress של הקישור אינו מקבל הערה"
 
 
+@check("ההורדה מנסה חשבון משתמש דרך האחסון לפני הבוט")
+def _storage_download_lane():
+    """תקרת ההורדה של טוקן בוט אינה ניתנת לכוונון מסביבה.
+
+    חשבון משתמש אינו כפוף לה, אבל אינו רואה את הצ'אט שבין האדם
+    לבוט. ערוץ האחסון — שעד כה שימש רק להעלאה — הוא הדרך לתת לו
+    לראות את הקובץ, וזה הסדר שחייב להתקיים
+    """
+    import inspect
+
+    from zovexsub import botjob, botmenu, localbot
+
+    assert hasattr(localbot, "forward"), "אין העברת הודעה לאחסון"
+    assert hasattr(botjob, "_via_storage"), "אין מסלול דרך האחסון"
+
+    order = inspect.getsource(botjob._fetch)
+    first = order.index("_via_storage")
+    assert first < order.index("_fast("), "מסלול החשבון אינו ראשון"
+    assert first < order.index("localbot.locate"), "getFile אינו אחרון"
+
+    lane = inspect.getsource(botjob._via_storage)
+    assert "botapi.premium()" in lane, "אינו משתמש בחשבון משתמש"
+    assert "return False" in lane, "אינו נופל אחורה בכשל"
+
+    # בלי מזהה ההודעה המקורית אין מה להעביר, וכל המסלול מתבטל
+    assert "source_message" in botmenu.Choice.__annotations__
+    greet = inspect.signature(botmenu.greet).parameters
+    assert "source_message" in greet, "greet אינו מקבל את ההודעה המקורית"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
