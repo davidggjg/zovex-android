@@ -1044,6 +1044,21 @@ def _research_budget():
     assert 'parts.append("")' in source, "כשל בקריאה אינו מדולג"
     assert config.RESEARCH_BUDGET > 0
 
+    # הדליפה שנמדדה: שלב שתוקצב ל-150 שניות נמדד ב-510, כי קריאת
+    # אימות הרשת רצה אחרי התקרה ולא בתוכה
+    assert "deadline" in source, "אין מועד סיום משותף לכל השלב"
+    assert source.count("deadline") >= 3, "האימות אינו חולק את התקרה"
+    assert "asyncio.wait_for(" in source, "האימות עדיין מחוץ לתקרה"
+    assert "VERIFY_MIN_SECONDS" in source, "אין רצפה לפתיחת חיפוש"
+    # הזמן שנותר מהתקרה, ולא תקרה חדשה משל עצמו
+    assert "deadline - time.monotonic()" in source, "האימות מקבל תקרה נפרדת"
+
+    # ושתיקת התמלול: בלי סיבה בלוג אי אפשר לדעת למה רץ יישור כפוי
+    from zovexsub import gemini_stt
+    why = inspect.getsource(gemini_stt.transcribe)
+    assert "GEMINI_STT" in why, "אינו אומר שהתמלול כבוי"
+    assert why.count("log.warning") >= 2, "עדיין מחזיר None בשקט"
+
 
 def main() -> int:
     failed = 0

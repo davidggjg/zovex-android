@@ -416,6 +416,7 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
     if on_step:
         await on_step(f"חוקר את התוכן 0/{total}", 0.0)
 
+    deadline = time.monotonic() + config.RESEARCH_BUDGET
     pulse = asyncio.create_task(ticker())
     jobs = [asyncio.ensure_future(call("דוברים", people()))]
     jobs += [asyncio.ensure_future(call(f"עובדות {i + 1}", facts(i, chunk)))
@@ -424,7 +425,7 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
         # תקרת זמן לכל השלב. החקר הוא שיפור ולא תנאי, וחיפוש אחד איטי
         # החזיק עד כה את המשתמש בלי שקיבל דבר. מה שהספיק נכנס, מה שלא
         # נזנח — ותרגום עם מסמך חלקי טוב מתרגום שמתחיל שלוש דקות מאוחר
-        await asyncio.wait(jobs, timeout=config.RESEARCH_BUDGET)
+        await asyncio.wait(jobs, timeout=max(1.0, deadline - time.monotonic()))
     finally:
         pulse.cancel()
 
@@ -457,11 +458,21 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
         trimmed = "\n".join(unsure[:config.VERIFY_MAX_ITEMS])
         log.info("אימות ברשת: %d פריטים לא ודאיים (מתוך %d שורות)",
                  len(unsure), len(merged.splitlines()))
-        try:
-            checked = await call("אימות ברשת", verify(trimmed))
-        except Exception as exc:                    # noqa: BLE001
-            log.warning("האימות נכשל ומדולג: %s", exc)
+        # האימות היה מחוץ לתקרה, ולכן שלב שתוקצב ל-150 שניות נמדד
+        # ב-510: שש דקות של חיפוש ברשת בלי שום גבול. הוא חולק את אותה
+        # תקרה עם השאר ומקבל את מה שנשאר ממנה
+        spare = deadline - time.monotonic()
+        if spare < config.VERIFY_MIN_SECONDS:
+            log.info("לא נותר זמן בתקרת החקר (%.0fש) — מדלגים על האימות",
+                     spare)
             checked = ""
+        else:
+            try:
+                checked = await asyncio.wait_for(
+                    call("אימות ברשת", verify(trimmed)), timeout=spare)
+            except (Exception, asyncio.TimeoutError) as exc:   # noqa: BLE001
+                log.warning("האימות נכשל או חרג ומדולג: %s", exc)
+                checked = ""
         if checked.strip():
             sections.append("איותים שאומתו:\n" + checked.strip())
     else:

@@ -101,6 +101,8 @@ VERIFY_MAX_ITEMS = _int("VERIFY_MAX_ITEMS", 40)
 # ייכתב אותו דבר בדקה 3 ובדקה 50. חיפוש אחד איטי מחזיק את המשתמש
 # בלי שהוא מקבל דבר, ולכן מה שהספיק נכנס ומה שלא — נזנח
 RESEARCH_BUDGET = float(os.getenv("RESEARCH_BUDGET") or 150)
+# מתחת לזה אין טעם לפתוח חיפוש ברשת — הוא לא יספיק לחזור
+VERIFY_MIN_SECONDS = float(os.getenv("VERIFY_MIN_SECONDS") or 20)
 # לכמה זמן לדלג על חיפוש גוגל אחרי שהוא נכשל. ראו gemini._search_failed
 SEARCH_REST = float(os.getenv("SEARCH_REST") or 900)
 

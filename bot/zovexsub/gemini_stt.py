@@ -189,6 +189,15 @@ def _segments(words: list[dict]) -> list[Segment]:
 async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     """מתמלל קובץ שלם. מחזיר None אם הספק אינו זמין או נכשל."""
     if not available():
+        # שתיקה כאן עלתה ביוקר: בלי התמלול הזה אין תזמוני מילים ואין
+        # זיהוי דוברים, ולכן רצים גם יישור כפוי של מאות חלונות וגם
+        # מעבר שלם לתיקון מגדר — ואיש לא ידע למה, כי לא נכתב דבר
+        if not config.GEMINI_API_KEYS:
+            log.warning("אין תמלול דרך ג'ימיני: חסר GEMINI_API_KEYS")
+        elif not config.GEMINI_STT:
+            log.warning("אין תמלול דרך ג'ימיני: GEMINI_STT כבוי. "
+                        "הפעלתו מבטלת את שלב היישור ונותנת זיהוי דוברים — "
+                        "הוסף GEMINI_STT=1 לקובץ .env")
         return None
 
     total = await media.duration_seconds(audio)
@@ -245,6 +254,7 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
         shutil.rmtree(work, ignore_errors=True)
 
     if not collected:
+        log.warning("תמלול ג'ימיני לא החזיר אף מילה — נופלים ל-Groq")
         return None
     segments = _segments(collected)
     speakers = {s.speaker for s in segments if s.speaker}
