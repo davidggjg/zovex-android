@@ -89,11 +89,22 @@ async def main() -> int:
 
     from zovexsub import config
 
-    client = TelegramClient(config.TG_SESSION, config.TG_API_ID,
+    bench = Path(tempfile.mkdtemp(prefix="tgbench-session-"))
+    session = _session(config.TG_SESSION, bench)
+    if session is None:
+        print("לא נמצא קובץ סשן. חיפשתי בשמות האלה:")
+        for path in _candidates(config.TG_SESSION):
+            print(f"  {path}")
+        print("הריצי את הכלי מתוך תיקיית העבודה של השירות, "
+              "או העבירי TG_SESSION עם נתיב מלא.")
+        return 2
+
+    client = TelegramClient(str(session), config.TG_API_ID,
                             config.TG_API_HASH)
     await client.connect()
     if not await client.is_user_authorized():
-        print("הסשן אינו מחובר")
+        print("הסשן אינו מחובר — הקובץ נמצא אבל אינו מאומת: "
+              f"{session}")
         return 2
 
     me = await client.get_me()
@@ -127,6 +138,7 @@ async def main() -> int:
     finally:
         shutil.rmtree(work, ignore_errors=True)
         await client.disconnect()
+        shutil.rmtree(bench, ignore_errors=True)
 
     if rows:
         best = max(rows, key=lambda r: r[1])
@@ -137,6 +149,50 @@ async def main() -> int:
             print("כל התצורות קרובות זו לזו — מספר החיבורים אינו "
                   "הגורם המגביל, והתקרה היא בצד של טלגרם.")
     return 0
+
+
+def _candidates(name: str):
+    """כל המקומות שבהם קובץ סשן בשם הזה יכול לשכון.
+
+    השירות רץ מתוך WorkingDirectory משלו, ולכן שם יחסי כמו
+    "zovexsub" מצביע על קובץ אחר כשמריצים את הכלי מתיקיית הריפו.
+    """
+    stem = Path(name)
+    names = [stem, stem.with_suffix(".session")] if not stem.suffix \
+        else [stem]
+    if stem.is_absolute():
+        return names
+    roots = [Path.cwd(), Path(__file__).resolve().parent.parent,
+             Path("/opt/zovexsub/bot"), Path("/opt/zovexsub"),
+             Path.home()]
+    seen, out = set(), []
+    for root in roots:
+        for leaf in names:
+            path = root / leaf
+            if path not in seen:
+                seen.add(path)
+                out.append(path)
+    return out
+
+
+def _session(name: str, work: Path):
+    """מעתיק את קובץ הסשן לעותק פרטי ומחזיר את נתיבו.
+
+    השירות הרץ מחזיק מנעול SQLite על הקובץ המקורי, ולכן פתיחה
+    ישירה שלו תיכשל או תפריע לבוט. עותק פותר את שניהם.
+    """
+    for path in _candidates(name):
+        if not path.is_file():
+            continue
+        copy = work / "bench.session"
+        shutil.copy2(path, copy)
+        for extra in ("-journal", "-wal", "-shm"):
+            side = path.with_name(path.name + extra)
+            if side.is_file():
+                shutil.copy2(side, copy.with_name(copy.name + extra))
+        print(f"סשן: {path} (עותק זמני)")
+        return copy
+    return None
 
 
 def _parse(link: str):
