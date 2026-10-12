@@ -1143,6 +1143,34 @@ def _stage_stall_is_announced():
     asyncio.run(drive())
 
 
+@check("התמלול מדווח מה קורה בתוך חלק, ומעלה בסיומת הנכונה")
+def _stt_live_reporting():
+    """חלק הוא 20 דקות, והאחוז זז רק כשהוא נגמר במלואו.
+
+    עד כה פירוש הדבר היה "0%" לאורך 13 דקות, שנראה זהה לתהליך מת.
+    ובדרך התגלה שהקובץ נקרא .wav אבל תוכנו FLAC, וה-SDK גוזר את
+    mime_type מהסיומת — כלומר הצהרנו audio/wav על בייטים של FLAC
+    """
+    import inspect
+
+    from zovexsub import gemini_stt, pipeline
+
+    src = inspect.getsource(gemini_stt.transcribe)
+    assert '.flac"' in src, "עדיין מעלה בסיומת wav"
+    assert '.wav"' not in src, "נשארה סיומת wav"
+    assert '"חותך"' in src and '"מתמלל"' in src, "אין דיווח על שלב בתוך חלק"
+    assert "ticker()" in src, "אין דופק בזמן חלק ארוך"
+    # הדופק נעצר גם כשחלק נופל, אחרת הוא נשאר חי אחרי השלב
+    tail = src[src.index("finally:", src.index("pulse =")):]
+    assert "pulse.cancel()" in tail, "הדופק אינו מבוטל ב-finally"
+
+    # והמקבל חייב להסכים לקבל הערה, אחרת כל דיווח יפיל את השלב
+    got = inspect.signature(pipeline.run).parameters
+    assert got is not None
+    inner = inspect.getsource(pipeline.run)
+    assert "note: str = \"\"" in inner, "on_chunk אינו מקבל הערה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

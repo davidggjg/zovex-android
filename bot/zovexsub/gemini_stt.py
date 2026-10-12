@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 from .keypool import AllKeysBusy, KeyPool, shared_budget
@@ -222,25 +223,55 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     found_any = [""]
     flags = [diarize]
 
+    # מה קורה ברגע זה, לפי חלק. בלי זה השלב מדווח רק בסיום חלק שלם,
+    # ובחלקים של 20 דקות פירושו "0%" לאורך דקות ארוכות — שנראה זהה
+    # לתהליך מת. זו הייתה התלונה, והיא הייתה מוצדקת
+    live: dict[int, tuple[str, float]] = {}
+
+    async def refresh() -> None:
+        if not on_step:
+            return
+        if live:
+            oldest = int(time.monotonic() - min(s for _, s in live.values()))
+            doing = sorted({what for what, _ in live.values()})
+            note = (f"{done}/{len(starts)} חלקים · {len(live)} בעבודה · "
+                    f"{', '.join(doing)} · {oldest}ש")
+        else:
+            note = f"{done}/{len(starts)} חלקים"
+        await on_step(done, len(starts), note)
+
+    async def ticker() -> None:
+        while True:
+            await asyncio.sleep(4)
+            await refresh()
+
     async def one(index: int, begin: float) -> None:
         nonlocal done
         length = min(span, total - begin)
         if length <= 0.5:
             return
         async with gate:
-            piece = work / f"part{index:03d}.wav"
+            # .flac ולא .wav: cut_audio כותב FLAC, וה-SDK גוזר את
+            # mime_type משם הקובץ. סיומת שגויה פירושה שאנחנו מצהירים
+            # audio/wav על בייטים של FLAC
+            piece = work / f"part{index:03d}.flac"
+            live[index] = ("חותך", time.monotonic())
+            await refresh()
             await media.cut_audio(audio, begin, begin + length, piece)
+            live[index] = ("מתמלל", time.monotonic())
+            await refresh()
             try:
                 words, flags[0], found = await _chunk_words(piece, flags[0])
             finally:
                 piece.unlink(missing_ok=True)
+                live.pop(index, None)
         found_any[0] = found_any[0] or found
         results[index] = [{**w, "start": begin + w["start"],
                            "end": begin + w["end"]} for w in words]
         done += 1
-        if on_step:
-            await on_step(done, len(starts))
+        await refresh()
 
+    pulse = asyncio.ensure_future(ticker())
     try:
         await asyncio.gather(*(one(i, b) for i, b in enumerate(starts)))
         tongue = found_any[0]
@@ -251,6 +282,8 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
                     continue
                 collected.append(word)
     finally:
+        # ב-finally ולא אחרי ה-gather: חלק שנפל היה משאיר את הדופק חי
+        pulse.cancel()
         import shutil
         shutil.rmtree(work, ignore_errors=True)
 

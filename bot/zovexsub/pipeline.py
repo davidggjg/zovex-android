@@ -67,8 +67,11 @@ async def run(source: Path, work: Path, *, progress: Progress,
     stage = make("✍️ מתמלל")
     stage.pulse()
 
-    async def on_chunk(done: int, total: int) -> None:
-        await stage.show(done / total, note=f"{done}/{total} קטעים")
+    async def on_chunk(done: int, total: int, note: str = "") -> None:
+        # note אופציונלי: ג'ימיני מדווח גם מה קורה בתוך חלק שעוד לא
+        # הסתיים, ו-Groq שולח שניים בלבד
+        await stage.show(done / max(1, total),
+                         note=note or f"{done}/{total} קטעים")
 
     # gemini-3.5-transcribe הוא מודל ASR ייעודי: הוא מחזיר תזמוני מילים
     # מדויקים במקור, ולכן התזמונים שלו לא צריכים יישור בדיעבד. הוא גם
