@@ -385,13 +385,17 @@ ARIA2_CONNECTIONS = _int("ARIA2_CONNECTIONS", 16)
 #
 # שישה הוא פשרה — מעל הארבעה של הלקוח הרשמי, הרחק מתחת לעשרים
 # שהביאו לחניקה. הערך שהיה כאן במקור היה ארבעה, והוא היה נכון
-TG_CONNECTIONS = _int("TG_CONNECTIONS", 6)
+TG_CONNECTIONS = _int("TG_CONNECTIONS", 20)
 # בקשה אחת לכל חיבור, כמו במימוש המוכר. ערימת בקשות על חיבור יחיד
 # מנתקת אותו
 TG_PIPELINE = _int("TG_PIPELINE", 1)
+# כמה פעמים לפתוח חיבורים מחדש כשכולם מתו באמצע ההורדה. בלי זה
+# הורדה שהגיעה ל-69 אחוזים הסתיימה בשגיאה וכל הבייטים נזרקו
+TG_REVIVALS = _int("TG_REVIVALS", 4)
+
 TG_FLOOD_MAX = float(os.getenv("TG_FLOOD_MAX") or 120)
 # תקרה עליונה לבקשות באוויר, שווה למספר החיבורים
-TG_INFLIGHT_MAX = _int("TG_INFLIGHT_MAX", 6)
+TG_INFLIGHT_MAX = _int("TG_INFLIGHT_MAX", 20)
 # כל כמה בייטים לסנכרן לדיסק ולשחרר את מטמון העמודים
 # 0 = בלי סנכרון תקופתי כלל
 TG_SYNC_EVERY = _int("TG_SYNC_EVERY", 64 * 1024 * 1024)

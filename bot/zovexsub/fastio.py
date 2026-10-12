@@ -531,11 +531,34 @@ async def _parallel_download(client, message, dst: Path, size: int,
                  part // 1024, total_parts, size / 1048576)
         guard = asyncio.create_task(watchdog())
         healthy = list(senders)
+        revivals = 0
         try:
             # סבבים: חיבור שמת מחזיר את החלק שלו לתור, ואם העובדים האחרים
             # כבר סיימו — סבב נוסף עם מי שנשאר חי לוקח אותו. בלי זה חיבור
             # אחד שנופל היה מכשיל את כל ההורדה
-            while healthy and not pending.empty():
+            while not pending.empty():
+                if not healthy:
+                    # כל החיבורים מתו אבל נשארו חלקים. קודם זה סיים את
+                    # ההורדה בשגיאה, והבייטים שכבר ירדו נזרקו — על קובץ
+                    # של שני ג'יגה זה אובדן של למעלה מגיגה־בייט וחצי.
+                    # הקובץ כתוב לפי היסטים בתוך שטח שהוקצה מראש, ולכן
+                    # חיבורים חדשים פשוט ממשיכים מאיפה שנעצרנו
+                    if revivals >= config.TG_REVIVALS:
+                        break
+                    revivals += 1
+                    left = pending.qsize() * part
+                    log.warning("כל החיבורים מתו ונשארו %.0fMB — פותחים "
+                                "מחדש (סבב %d/%d)", left / 1048576,
+                                revivals, config.TG_REVIVALS)
+                    if on_progress:
+                        await on_progress(done, size, "מתחבר מחדש")
+                    await asyncio.sleep(min(30, 5 * revivals))
+                    fresh = min(workers, -(-pending.qsize() // 1) or 1)
+                    healthy = await asyncio.wait_for(
+                        _open_senders(client, dc_id, fresh),
+                        timeout=config.TG_CONNECT_TIMEOUT)
+                    senders.extend(healthy)
+
                 outcomes = asyncio.gather(
                     *(worker(sender) for sender in healthy), return_exceptions=True)
                 finished, _ = await asyncio.wait(

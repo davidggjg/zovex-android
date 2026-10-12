@@ -368,8 +368,13 @@ def _one_request_per_connection():
     # אומר שמקביליות רק מקרבת את FLOOD_WAIT. עשרים חיבורים נתנו
     # 7.5MB/s בהתחלה, ואחרי שימוש ממושך שמונה שניות ללחיצת יד
     # ו-0.5MB/s — חניקה, לא איטיות
-    assert 4 <= config.TG_CONNECTIONS <= 8, (
-        f"{config.TG_CONNECTIONS} חיבורים — מעל שמונה מזמין חניקה")
+    # עשרים נמדדו כמהירים משמעותית אצל המשתמש, והוא ביקש אותם
+    # במפורש. זה מעל הארבעה של הלקוח הרשמי ומזמין FLOOD_WAIT — אבל
+    # עכשיו יש רשת ביטחון: חיבורים שמתו נפתחים מחדש וההורדה ממשיכה
+    # במקום להיזרק. בלי TG_REVIVALS הערך הזה מסוכן
+    assert config.TG_CONNECTIONS <= 24, config.TG_CONNECTIONS
+    assert config.TG_REVIVALS >= 2, (
+        "מספר חיבורים גבוה בלי פתיחה מחדש מאבד הורדות שלמות")
 
 
 
@@ -820,6 +825,31 @@ def _senders_parallel():
     assert config.TG_CONNECT_TIMEOUT >= 30, config.TG_CONNECT_TIMEOUT
     assert config.FAST_START_TIMEOUT >= config.TG_CONNECT_TIMEOUT, (
         "פסק הזמן לבייט הראשון קצר מפסק הזמן להקמת החיבורים")
+
+
+
+@check("הורדה שחיבוריה מתו ממשיכה במקום להיזרק")
+def _download_revives():
+    """תפס אובדן של יותר מגיגה־בייט וחצי.
+
+    הורדה של שני ג'יגה הגיעה ל-69 אחוזים, כל החיבורים מתו, והלולאה
+    יצאה אף שנשארו חלקים — מה שהסתיים בשגיאה והכל נזרק. הקובץ כתוב
+    לפי היסטים בתוך שטח שהוקצה מראש, ולכן חיבורים חדשים יכולים פשוט
+    להמשיך מאיפה שנעצרו.
+    """
+    import inspect
+
+    from zovexsub import config, fastio
+
+    body = inspect.getsource(fastio._parallel_download)
+    assert "while not pending.empty()" in body, \
+        "הלולאה עדיין יוצאת כשהחיבורים מתים"
+    assert "revivals" in body and "config.TG_REVIVALS" in body
+    assert "_open_senders(client, dc_id, fresh)" in body, \
+        "אין פתיחה מחדש של חיבורים"
+    # והמספר חסום, אחרת הורדה אבודה תסתובב לנצח
+    assert "revivals >= config.TG_REVIVALS" in body, "אין תקרה לסבבים"
+    assert 2 <= config.TG_REVIVALS <= 10, config.TG_REVIVALS
 
 
 
