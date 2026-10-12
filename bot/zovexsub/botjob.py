@@ -107,8 +107,16 @@ async def _via_storage(chat_id, source_message: int, size: int,
     אותו ערוץ שימש עד כה רק בכיוון ההעלאה. כאן הוא עובד גם בכיוון
     ההורדה, וזאת החוליה שהייתה חסרה
     """
-    user = botapi.premium()
+    # לא Premium בהכרח: ברוב ההתקנות מחובר רק החשבון הרגיל, ודרישת
+    # Premium הייתה מבטלת את כל המסלול בשקט ונופלת חזרה לבוט. להורדה
+    # אין ממילא מגבלת גודל כמו להעלאה — כל חשבון שרואה את ההודעה
+    # יכול להוריד אותה
+    user = botapi.downloader(size, botapi.premium())[0] \
+        if size else None
+    user = user or botapi.lite() or botapi.premium()
     if user is None or not config.STORAGE_CHAT or not source_message or not size:
+        log.info("מסלול החשבון לא זמין (חשבון=%s, ערוץ=%s) — מסלול הבוט",
+                 "יש" if user else "אין", config.STORAGE_CHAT or "לא הוגדר")
         return False
     try:
         where = await botapi.storage(user)
@@ -135,7 +143,9 @@ async def _via_storage(chat_id, source_message: int, size: int,
         return False
 
     workers = fastio._connections(size, max(1, config.TG_CONNECTIONS))
-    log.info("הורדה בחשבון משתמש דרך האחסון: %d חיבורים", workers)
+    me = await user.get_me()
+    log.info("הורדה בחשבון %s דרך האחסון: %d חיבורים",
+             getattr(me, "username", None) or me.first_name, workers)
     moved = {"at": 0}
 
     async def on_progress(done: int, total: int, note: str) -> None:

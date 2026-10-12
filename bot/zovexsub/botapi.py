@@ -35,6 +35,11 @@ def premium() -> TelegramClient | None:
     return _premium
 
 
+def lite() -> TelegramClient | None:
+    """החשבון הרגיל. קיים גם כשאין Premium, ולרוב הוא היחיד שמחובר."""
+    return _lite
+
+
 def have_bot() -> bool:
     return _bot is not None
 
