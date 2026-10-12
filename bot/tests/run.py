@@ -953,6 +953,39 @@ def _storage_download_lane():
     assert "source_message" in greet, "greet אינו מקבל את ההודעה המקורית"
 
 
+@check("מגדר הדוברים נקבע מהתמלול ומייתר סריקה שלמה")
+def _speaker_gender_table():
+    """המגדר נשרף קודם ממסמך החקר בביטוי רגולרי שחיפש "@מגדר:".
+
+    כשהמסמך ניסח אחרת לא ננעץ דבר, והתרגום חזר לנחש מגדר מהטקסט —
+    בדיוק הנקודה שבה זכר ונקבה מתהפכים. התמלול כבר מחזיר מי אמר כל
+    מילה, ולכן אפשר להכריע פעם אחת ולנעוץ
+    """
+    import inspect
+
+    from zovexsub import config, hebrew
+    from zovexsub.stt import Segment
+
+    assert hasattr(hebrew, "speaker_genders"), "אין טבלת מגדר מהדוברים"
+
+    # בלי זיהוי דוברים נשארים על מסמך החקר ולא נופלים
+    bare = [Segment(index=i, start=i, end=i + 1, text="שלום") for i in range(3)]
+    row, sure = asyncio.run(hebrew.speaker_genders(bare, "en", "@מגדר: דן זכר"))
+    assert row == "דן זכר", row
+    assert sure is False, "בלי דוברים אי אפשר להיות ודאי"
+
+    # הטבלה נעוצה בחלון התרגום, ואינה נשרפת שם מחדש מהפרוזה
+    window = inspect.getsource(hebrew._translate_all)
+    assert "genders: str" in window, "הטבלה אינה מועברת לתרגום"
+    assert "gender_table(notes)" not in window, "עדיין שורף מהפרוזה בכל חלון"
+
+    # מעבר התיקון מדולג כשהטבלה ודאית, אלא אם נדרש במפורש
+    flow = inspect.getsource(hebrew.build_hebrew)
+    assert "speaker_genders" in flow, "הטבלה אינה נבנית"
+    assert "ADDRESSEE_ALWAYS" in flow, "אין דילוג על מעבר התיקון"
+    assert config.ADDRESSEE_ALWAYS == 0, "ברירת המחדל אמורה לדלג"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

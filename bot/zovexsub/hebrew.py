@@ -475,12 +475,23 @@ async def build_hebrew(segments: list[Segment], language: str,
     if not notes:
         notes = "לא התקבל מסמך הנחיות. הסק מגדרים ונמענים מתוך הקונטקסט עצמו, בזהירות."
 
-    lines = await staged("תרגום",
-                         _translate_all(segments, language, notes, on_step))
+    # המגדר נקבע פעם אחת, מזיהוי הדוברים, ונעוץ בכל חלון תרגום. קריאה
+    # אחת קטנה שמייתרת סריקה שלמה אחריה
     if on_step:
-        await on_step("מתאים מגדר פנייה", TRANSLATE_TO)
-    lines = await staged("מגדר פנייה",
-                         enforce_addressee(segments, lines, notes, on_step))
+        await on_step("מזהה את מגדר הדוברים", RESEARCH_TO)
+    genders, sure = await staged("מגדר דוברים",
+                                 speaker_genders(segments, language, notes))
+
+    lines = await staged("תרגום",
+                         _translate_all(segments, language, notes, on_step,
+                                        genders))
+    if sure and not config.ADDRESSEE_ALWAYS:
+        log.info("מדלגים על מעבר מגדר הפנייה — הטבלה הכריעה את כל הדוברים")
+    else:
+        if on_step:
+            await on_step("מתאים מגדר פנייה", TRANSLATE_TO)
+        lines = await staged("מגדר פנייה",
+                             enforce_addressee(segments, lines, notes, on_step))
     if on_step:
         await on_step("בודק איכות ועקביות", ADDRESSEE_TO)
     lines = await staged("בקרת איכות",
@@ -500,7 +511,7 @@ async def build_hebrew(segments: list[Segment], language: str,
 
 
 async def _translate_all(segments: list[Segment], language: str, notes: str,
-                         on_step=None) -> list[str]:
+                         on_step=None, genders: str = "") -> list[str]:
     """מתרגם את כל החלונות במקביל.
 
     כל חלון עומד בפני עצמו: ההקשר שלו נלקח משורות המקור שלפניו ואחריו,
@@ -567,7 +578,6 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         before = segments[max(0, start - CONTEXT):start]
         after = segments[start + WINDOW:start + WINDOW + CONTEXT]
 
-        genders = gender_table(notes)
         pinned = f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else ""
 
         prompt = f"""{pinned}מסמך הנחיות לסרטון הזה:
@@ -822,6 +832,85 @@ def _window_text(segments: list[Segment], idx: int) -> str:
 
 
 _GENDER_LINE = re.compile(r"^@מגדר:\s*(.+)$", re.MULTILINE)
+
+
+SPEAKER_SYSTEM = (
+    "אתה מנתח דוברים בתסריט. מזהה לכל דובר את מגדרו הדקדוקי בעברית, "
+    "ואת מגדר מי שהוא פונה אליו. חשוב: בעברית צורת זכר משמשת גם כצורה "
+    "גנרית, ולכן אל תסיק מגדר נמען מצורת הפנייה בטקסט — הסק אותו ממי "
+    "שבפועל נמצא בשיחה. כשאין די ראיות החזר \"לא ידוע\" ולא ניחוש."
+)
+
+# כמה שורות לדגום מכל דובר. די בהן כדי להכריע מגדר, והן קטנות מספיק
+# כדי שכל הדוברים ייכנסו לקריאה אחת
+SPEAKER_SAMPLE = 12
+
+
+async def speaker_genders(segments: list[Segment], language: str,
+                          notes: str = "") -> tuple[str, bool]:
+    """טבלת דובר→מגדר מתוך זיהוי הדוברים. מחזיר (שורה לנעיצה, ודאי?).
+
+    עד כה המגדר נשרף ממסמך החקר בביטוי רגולרי שחיפש "@מגדר:". כשהמסמך
+    ניסח אחרת — וזה קורה — לא ננעץ דבר, והתרגום חזר לנחש מגדר מתוך
+    הטקסט. זו בדיוק הנקודה שבה הזכר והנקבה מתהפכים באמצע שיחה.
+
+    כאן המגדר נקבע מהנתון שכבר יש לנו ולא מניסוח: התמלול מחזיר מי אמר
+    כל מילה, ולכן אפשר לשאול פעם אחת, בשאלה ממוקדת, מה המגדר של כל
+    דובר — ולנעוץ את התשובה בכל חלון תרגום כעובדה ולא כהשערה.
+
+    קריאה אחת קטנה לכל הסרטון, והיא חוסכת מעבר תיקון שלם
+    """
+    speakers: dict[str, list[str]] = {}
+    for segment in segments:
+        who = getattr(segment, "speaker", "")
+        if who and len(speakers.setdefault(who, [])) < SPEAKER_SAMPLE:
+            speakers[who].append(segment.text)
+    if not speakers:
+        # אין זיהוי דוברים — נשארים עם מה שמסמך החקר הצליח לומר
+        return gender_table(notes), False
+
+    sample = "\n\n".join(
+        f"דובר {who}:\n" + "\n".join(f"- {line}" for line in lines)
+        for who, lines in speakers.items())
+    schema = {
+        "type": "object",
+        "properties": {"speakers": {"type": "array", "items": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "gender": {"type": "string",
+                           "enum": ["זכר", "נקבה", "לא ידוע"]},
+                "addressee": {"type": "string",
+                              "enum": ["זכר", "נקבה", "רבים", "לא ידוע"]},
+            },
+            "required": ["id", "gender", "addressee"]}}},
+        "required": ["speakers"],
+    }
+    try:
+        answer = await gemini.ask_json(
+            SPEAKER_SYSTEM,
+            f"שפת המקור: {language}\n\n{_cap(sample, 12_000)}\n\n"
+            "לכל דובר: מה מגדרו, ולאיזה מגדר הוא פונה ברוב דבריו?",
+            schema=schema)
+    except Exception as exc:  # noqa: BLE001 — נופלים למסמך החקר
+        log.warning("זיהוי מגדר הדוברים נכשל (%s) — נשארים על מסמך החקר", exc)
+        return gender_table(notes), False
+
+    rows, sure = [], True
+    for item in (answer or {}).get("speakers", []) if isinstance(answer, dict) else []:
+        who = str(item.get("id", "")).strip()
+        mine = str(item.get("gender", "")).strip()
+        theirs = str(item.get("addressee", "")).strip()
+        if not who or not mine:
+            continue
+        if mine == "לא ידוע" or theirs == "לא ידוע":
+            sure = False
+        rows.append(f"דובר {who}: מדבר כ{mine}, פונה ל{theirs}")
+    if not rows:
+        return gender_table(notes), False
+    log.info("מגדר הדוברים נקבע מזיהוי הדוברים: %d דוברים, %s",
+             len(rows), "ודאי" if sure else "חלקי")
+    return " · ".join(rows)[:600], sure
 
 
 def gender_table(notes: str) -> str:
