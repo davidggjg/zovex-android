@@ -874,9 +874,20 @@ async def main() -> None:
     else:
         log.warning("deno לא נמצא — הורדה מיוטיוב תיכשל. "
                     "התקנה: curl -fsSL https://deno.land/install.sh | sh")
-    log.info("מחובר כ-%s (id=%s) · %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
-             me.username or me.first_name, me.id, len(allowlist.listing()),
+    # מנוי Premium בפועל: זה החשבון שמעלה את הפלט הגדול, ותקרת
+    # ההעלאה שלו היא מגבלה של טלגרם שאף ערוץ אחסון אינו עוקף —
+    # 2GB לחשבון רגיל מול 4GB ל-Premium
+    premium_now = bool(getattr(me, "premium", False))
+    log.info("מחובר כ-%s (id=%s) · Premium בפועל: %s · תקרת העלאה %dGB "
+             "· %d מורשים · %d מפתחות Groq · %d מפתחות Gemini",
+             me.username or me.first_name, me.id,
+             "כן" if premium_now else "לא", 4 if premium_now else 2,
+             len(allowlist.listing()),
              len(config.GROQ_API_KEYS), len(config.GEMINI_API_KEYS))
+    if not premium_now:
+        log.warning("לחשבון הראשי אין מנוי Premium — פלט מעל 2GB ייכשל "
+                    "בהעלאה גם דרך ערוץ האחסון. בחר רזולוציה נמוכה יותר "
+                    "או חדש את המנוי")
     # הבוט והחשבון הרגיל עולים כאן. כשאחד מהם חסר או נכשל, הכל ממשיך
     # לעבוד בדיוק כמו קודם עם חשבון ה-Premium בלבד
     await botapi.start(client)

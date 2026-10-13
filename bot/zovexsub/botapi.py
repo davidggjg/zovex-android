@@ -128,8 +128,19 @@ async def _connect(session, *, bot_token: str = "",
         except Exception as inner:  # noqa: BLE001
             log.debug("ניתוק אחרי כשל נכשל: %s", inner)
         return None
-    log.info("%s מחובר: %s (id=%s)", label,
-             getattr(me, "username", None) or me.first_name, me.id)
+    # מנוי Premium בפועל, ולא רק שם התפקיד שנתנו לחשבון. חשבון רגיל
+    # מעלה עד 2GB וחשבון Premium עד 4GB, וזו מגבלה של טלגרם שאף ערוץ
+    # אחסון אינו עוקף. בלי השורה הזאת פלט של 3GB נכשל בלי שאיש יודע
+    # אם הבעיה בהגדרות שלנו או במנוי שפג
+    if not bot_token:
+        has = bool(getattr(me, "premium", False))
+        log.info("%s מחובר: %s (id=%s) · Premium בפועל: %s · תקרת "
+                 "העלאה %dGB", label,
+                 getattr(me, "username", None) or me.first_name, me.id,
+                 "כן" if has else "לא", 4 if has else 2)
+    else:
+        log.info("%s מחובר: %s (id=%s)", label,
+                 getattr(me, "username", None) or me.first_name, me.id)
     return candidate
 
 
