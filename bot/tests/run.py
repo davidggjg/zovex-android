@@ -1195,6 +1195,33 @@ def _stt_chunk_isolation():
         "לא נופל ל-Groq כשהתמלול מחורר"
 
 
+@check("קריאות חיפוש נחסמות בשער, והתקציב המשותף כבוי כברירת מחדל")
+def _search_gate_and_budget_default():
+    """מפתחות מחשבונות שונים הם מכסות נפרדות באמת.
+
+    תקרה משותפת רק תחנוק אותם ללא סיבה, ולכן היא כבויה כברירת
+    מחדל. ה-429 שנמדדו היו של מכסת החיפוש — נפרדת וקטנה — ושם
+    המפסק היה חסר אונים: בירי מקבילי כל הקריאות באוויר לפני
+    שהראשונה חוזרת ומספיקה לסגור אותו
+    """
+    import inspect
+
+    from zovexsub import config, gemini
+
+    assert config.GEMINI_RPM_TOTAL == 0, "תקרה משותפת פעילה כברירת מחדל"
+    assert config.SEARCH_PARALLEL >= 1
+    assert gemini._pool.shared is None, "המאגר חנוק בלי סיבה"
+
+    src = inspect.getsource(gemini.research)
+    assert "_search_gate" in src, "אין שער לקריאות חיפוש"
+    # נבדק שוב בתוך השער, אחרת ההמתנה מבזבזת את המפסק שכבר נסגר
+    after = src[src.index("async with _search_gate"):]
+    assert "_search_usable()" in after, "אינו נבדק שוב בתוך השער"
+    # והקוד שמריץ בפועל חייב להישאר נגיש, לא אחרי return
+    assert src.count("async def run(") == 1, "לולאת הניסיונות אינה פונקציה"
+    assert "return await run(" in src
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

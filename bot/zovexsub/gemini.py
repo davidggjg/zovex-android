@@ -345,6 +345,13 @@ async def ask_json(system: str, user: str, *, schema: dict | None = None,
 _search_down_until = 0.0
 
 
+# שער לקריאות מחוברות-חיפוש בלבד. המפסק למטה נסגר רק אחרי שקריאה
+# חוזרת, ובירי מקבילי כולן כבר באוויר עד אז — ואז 65 מתוך 69 חוזרות
+# עם 429 אף שהמפסק "עובד". השער מחזיק מעטות באוויר כדי שלכישלון
+# הראשון יהיה זמן לסגור אותו בפני השאר
+_search_gate = asyncio.Semaphore(max(1, config.SEARCH_PARALLEL))
+
+
 def _search_usable() -> bool:
     return time.monotonic() >= _search_down_until
 
@@ -372,28 +379,41 @@ async def research(system: str, user: str, *, grounded: bool = True) -> str:
 
     # חיפוש מאט מאוד — המודל יוצא לרשת וממתין. חלק מהמעברים לא צריכים
     # אותו בכלל, ואז מדלגים ישר על הניסיון האיטי
-    attempts = [(with_search, "עם חיפוש")] if grounded and _search_usable() else []
+    want_search = grounded and _search_usable()
+    attempts = [(with_search, "עם חיפוש")] if want_search else []
     attempts.append((base, "בלי חיפוש"))
 
     # המעבר הזה לא קריטי לתרגום, ולכן הוא לא מחזיק את התור יותר מדי זמן
-    for body, label in attempts:
-        try:
-            text = _text_of(await asyncio.wait_for(
-                _call(config.GEMINI_MODEL, body), timeout=config.RESEARCH_TIMEOUT))
-            if text:
-                return text
-            log.warning("החקר %s חזר ריק", label)
-        except asyncio.TimeoutError:
-            log.warning("החקר %s עבר את תקרת הזמן (%ds)", label, config.RESEARCH_TIMEOUT)
-            if body is with_search:
-                _search_failed("תקרת זמן")
-        except GeminiError as exc:
-            log.warning("החקר %s נכשל: %s", label, exc)
-            if body is with_search:
-                _search_failed(str(exc)[:60])
+    async def run(plan) -> str:
+        for body, label in plan:
+            try:
+                text = _text_of(await asyncio.wait_for(
+                    _call(config.GEMINI_MODEL, body),
+                    timeout=config.RESEARCH_TIMEOUT))
+                if text:
+                    return text
+                log.warning("החקר %s חזר ריק", label)
+            except asyncio.TimeoutError:
+                log.warning("החקר %s עבר את תקרת הזמן (%ds)",
+                            label, config.RESEARCH_TIMEOUT)
+                if body is with_search:
+                    _search_failed("תקרת זמן")
+            except GeminiError as exc:
+                log.warning("החקר %s נכשל: %s", label, exc)
+                if body is with_search:
+                    _search_failed(str(exc)[:60])
+        log.warning("ממשיכים בלי מסמך הנחיות")
+        return ""
 
-    log.warning("ממשיכים בלי מסמך הנחיות")
-    return ""
+    if not want_search:
+        return await run(attempts)
+    async with _search_gate:
+        # נבדק שוב בתוך השער: בזמן ההמתנה קריאה אחרת עשויה כבר
+        # להיתקל ב-429 ולסגור את המפסק, ואז אין טעם לנסות בכלל
+        if not _search_usable():
+            log.info("המפסק נסגר בזמן ההמתנה — מדלגים על החיפוש")
+            return await run(attempts[1:])
+        return await run(attempts)
 
 
 async def transcribe_audio(path, language_hint: str = "") -> dict | None:
