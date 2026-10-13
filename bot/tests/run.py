@@ -1248,6 +1248,37 @@ def _cue_length_mismatch():
     srt.build_cues(segments, ["שלום"] * 14)
 
 
+@check("פלט מעל תקרת הבוט נמסר דרך ערוץ האחסון ולא מסורב")
+def _large_output_relay():
+    """הבוט סירב "נדרש חשבון Premium" אחרי שהצריבה כבר הסתיימה.
+
+    זו לא גזירה: חשבון משתמש מעלה לערוץ האחסון והבוט מעביר משם.
+    העברה אינה העלאה, ולכן תקרת הבוט אינה חלה עליה — אותו מבנה
+    שבנינו להורדה, בכיוון ההפוך. התשתית הייתה קיימת ולא מחוברת
+    """
+    import inspect
+
+    from zovexsub import botjob, fastio, localbot
+
+    assert hasattr(botjob, "_relay_video"), "אין מסירה דרך האחסון"
+
+    burn = inspect.getsource(botjob._burn)
+    assert "localbot.MAX_BYTES" in burn, "אינו בודק את תקרת הבוט"
+    assert "_relay_video" in burn, "אינו עובר לאחסון מעל התקרה"
+    # והקטנים ממשיכים בדרך הזולה, דרך השרת המקומי
+    assert "localbot.send_video" in burn, "הקטנים אינם עוברים בשרת המקומי"
+
+    relay = inspect.getsource(botjob._relay_video)
+    assert "localbot.forward" in relay, "אינו מעביר מהאחסון למשתמש"
+    assert "botapi.uploader" in relay, "אינו בוחר חשבון לפי גודל"
+    assert "return False" in relay, "כשל אינו מדווח לקורא"
+
+    # fastio.upload קורא עם שלושה ארגומנטים, טלתון עם שניים.
+    # חתימה צרה מדי הייתה מפוצצת את ההעלאה אחרי צריבה שלמה
+    got = [line for line in relay.splitlines() if "async def on_upload" in line]
+    assert got and "note" in got[0], got
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

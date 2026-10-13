@@ -499,12 +499,25 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
 
         pulse = asyncio.create_task(beat())
         try:
-            await localbot.send_video(
-                chat_id, dst, caption="🔥 וידאו עם כתוביות צרובות",
-                duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
-                width=int(stream.get("width", 0) or 0),
-                height=int(stream.get("height", 0) or 0),
-                thumb=await media.poster(dst, work))
+            poster = await media.poster(dst, work)
+            # מעל תקרת הבוט עוברים דרך האחסון במקום לסרב. קודם הפלט
+            # פשוט הוכרז "נדרש חשבון Premium" אחרי שהצריבה כבר הסתיימה
+            if dst.stat().st_size > localbot.MAX_BYTES:
+                log.info("הפלט %.2fGB מעל תקרת הבוט — דרך ערוץ האחסון",
+                         dst.stat().st_size / 1024 ** 3)
+                if not await _relay_video(chat_id, dst, info, stream,
+                                          poster, screen):
+                    raise RuntimeError(
+                        f"{dst.stat().st_size / 1024 ** 3:.2f}GB מעל תקרת "
+                        "הבוט, והמסירה דרך ערוץ האחסון לא זמינה. ודא "
+                        "ש-STORAGE_CHAT מוגדר ושחשבון המשתמש חבר בערוץ.")
+            else:
+                await localbot.send_video(
+                    chat_id, dst, caption="🔥 וידאו עם כתוביות צרובות",
+                    duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
+                    width=int(stream.get("width", 0) or 0),
+                    height=int(stream.get("height", 0) or 0),
+                    thumb=poster)
         finally:
             pulse.cancel()
         await screen.show("✅ הסתיים", force=True)
@@ -513,6 +526,70 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         await screen.show(f"❌ {exc}", force=True)
     finally:
         pipeline.cleanup(work)
+
+
+async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
+                       thumb, screen: "Screen") -> bool:
+    """מעלה מחשבון משתמש לערוץ האחסון, והבוט מעביר משם. מחזיר הצלחה.
+
+    לבוט יש תקרת העלאה קשיחה, ומעליה הוא פשוט מסרב — "נדרש חשבון
+    Premium". זו אינה גזירה: התשתית לעקוף אותה קיימת מזמן ופשוט לא
+    הייתה מחוברת למסלול הזה.
+
+    חשבון משתמש אינו יכול לכתוב לצ'אט פרטי שבין אדם לבוט, ולכן הוא
+    מעלה לערוץ האחסון — שם הוא חבר — והבוט מעביר משם למשתמש. העברה
+    אינה העלאה, ולכן תקרת הבוט אינה חלה עליה כלל. זה המבנה שבו
+    בוטים מוסרים קבצים גדולים, וזה בדיוק הכיוון ההפוך להורדה
+    """
+    size = dst.stat().st_size
+    user, which = botapi.uploader(size, botapi.premium())
+    if user is None or not config.STORAGE_CHAT:
+        log.info("אין מסלול אחסון להעלאה (חשבון=%s, ערוץ=%s)",
+                 which if user else "אין", config.STORAGE_CHAT or "לא הוגדר")
+        return False
+    try:
+        where = await botapi.storage(user)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("ערוץ האחסון לא נפתר (%s) — אין מסירה גדולה", exc)
+        return False
+    if where is None:
+        return False
+
+    began = time.monotonic()
+
+    # שלושה ארגומנטים ל-fastio.upload ושניים ל-progress_callback של
+    # טלתון. הערה אופציונלית מספקת את שניהם
+    async def on_upload(done, total, note: str = "") -> None:
+        elapsed = max(0.1, time.monotonic() - began)
+        await screen.show(
+            f"📤 מעלה (חשבון {which}) · "
+            f"{done * 100 // max(1, total)}% · "
+            f"{done / elapsed / 1048576:.1f}MB/s"
+            f"{' · ' + note if note else ''}")
+
+    seconds = float(info.get("format", {}).get("duration", 0) or 0)
+    attributes = fastio.video_attributes(
+        dst, seconds, int(stream.get("width", 0) or 0),
+        int(stream.get("height", 0) or 0))
+    common = dict(caption="🔥 וידאו עם כתוביות צרובות",
+                  supports_streaming=True, attributes=attributes,
+                  thumb=str(thumb) if thumb else None)
+    try:
+        handle = await fastio.upload(user, dst, on_progress=on_upload)
+        if handle is not None:
+            sent = await user.send_file(where, handle, **common)
+        else:
+            sent = await user.send_file(where, str(dst),
+                                        progress_callback=on_upload, **common)
+        await screen.show("📨 מעביר אליך…", force=True)
+        await localbot.forward(chat_id, config.STORAGE_CHAT, sent.id)
+    except Exception as exc:  # noqa: BLE001 — הקורא יודיע למשתמש
+        log.warning("המסירה דרך האחסון נכשלה (%s: %s)",
+                    type(exc).__name__, exc)
+        return False
+    log.info("נמסר דרך האחסון: %.2fGB מחשבון %s ב-%.0f שניות",
+             size / 1024 ** 3, which, time.monotonic() - began)
+    return True
 
 
 def waiting_for(chat_id) -> bool:
