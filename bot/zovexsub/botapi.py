@@ -27,7 +27,11 @@ log = logging.getLogger(__name__)
 _bot: TelegramClient | None = None
 _lite: TelegramClient | None = None
 _premium: TelegramClient | None = None
-_storage = None            # ישות הערוץ, נפתרת פעם אחת
+# ישות הערוץ לכל חשבון בנפרד. access_hash של ערוץ הוא ייחודי לחשבון,
+# ולכן peer שחשבון אחד פתר אינו תקף אצל אחר — טלגרם עונה "invalid
+# Peer". מטמון יחיד גרם בדיוק לזה: ההורדה פתרה עם החשבון הרגיל,
+# וההעלאה קיבלה את הישות שלו במקום של Premium
+_storage: dict[int, object] = {}
 
 
 def premium() -> TelegramClient | None:
@@ -130,14 +134,15 @@ async def _connect(session, *, bot_token: str = "",
 
 
 async def stop() -> None:
-    global _bot, _lite, _storage, _premium
+    global _bot, _lite, _premium
     for client in (_bot, _lite):
         if client is not None:
             try:
                 await client.disconnect()
             except Exception as exc:  # noqa: BLE001
                 log.debug("ניתוק נכשל: %s", exc)
-    _bot, _lite, _storage, _premium = None, None, None, None
+    _storage.clear()
+    _bot, _lite, _premium = None, None, None
 
 
 def uploader(size: int, premium: TelegramClient):
@@ -167,13 +172,35 @@ def downloader(size: int, premium: TelegramClient):
 
 
 async def storage(client: TelegramClient):
-    """ערוץ האחסון שאליו מעלים ושממנו הבוט מעביר."""
-    global _storage
-    if _storage is None and config.STORAGE_CHAT:
-        target = config.STORAGE_CHAT
-        _storage = await client.get_input_entity(
-            int(target) if str(target).lstrip("-").isdigit() else target)
-    return _storage
+    """ערוץ האחסון, כפי שהחשבון הזה רואה אותו.
+
+    המטמון לפי חשבון ולא גלובלי: ראו ההערה ליד _storage.
+
+    ‏get_input_entity נכשל כשהחשבון עוד לא "ראה" את הערוץ בסשן הזה,
+    גם כשהוא בעליו. משיכת הדיאלוגים ממלאת את המטמון הפנימי של
+    טלתון, וזה התיקון המקובל לתקלה הזאת
+    """
+    if not config.STORAGE_CHAT:
+        return None
+    key = id(client)
+    if key in _storage:
+        return _storage[key]
+
+    target = config.STORAGE_CHAT
+    want = int(target) if str(target).lstrip("-").isdigit() else target
+    try:
+        found = await client.get_input_entity(want)
+    except (ValueError, TypeError) as exc:
+        log.info("הערוץ לא נפתר ישירות (%s) — ממלא את רשימת הצ'אטים", exc)
+        try:
+            await client.get_dialogs(limit=None)
+            found = await client.get_input_entity(want)
+        except Exception as inner:  # noqa: BLE001 — הקורא נופל אחורה
+            log.warning("ערוץ האחסון %s אינו נגיש לחשבון הזה: %s",
+                        target, inner)
+            return None
+    _storage[key] = found
+    return found
 
 
 def ready_for_relay() -> bool:

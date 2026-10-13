@@ -1279,6 +1279,41 @@ def _large_output_relay():
     assert got and "note" in got[0], got
 
 
+@check("ערוץ האחסון נפתר לכל חשבון בנפרד")
+def _storage_entity_per_account():
+    """access_hash של ערוץ ייחודי לחשבון.
+
+    peer שחשבון אחד פתר אינו תקף אצל אחר, וטלגרם עונה "invalid
+    Peer". מטמון גלובלי יחיד גרם בדיוק לזה: ההורדה פתרה את הערוץ
+    עם החשבון הרגיל, וההעלאה קיבלה את הישות שלו במקום של Premium
+    """
+    import inspect
+
+    from zovexsub import botapi
+
+    assert isinstance(botapi._storage, dict), "המטמון עדיין גלובלי יחיד"
+
+    src = inspect.getsource(botapi.storage)
+    assert "id(client)" in src, "המטמון אינו לפי חשבון"
+    # וגם: חשבון שלא "ראה" את הערוץ בסשן הזה נכשל ב-get_input_entity
+    assert "get_dialogs" in src, "אין מילוי מטמון כשהערוץ לא נפתר"
+    assert "return None" in src, "כשל אינו מדווח לקורא"
+
+    class Fake:
+        def __init__(self, tag):
+            self.tag = tag
+
+        async def get_input_entity(self, want):
+            return f"peer-{self.tag}"
+
+    one, two = Fake("a"), Fake("b")
+    got_one = asyncio.run(botapi.storage(one))
+    got_two = asyncio.run(botapi.storage(two))
+    if config.STORAGE_CHAT:
+        assert got_one != got_two, "שני חשבונות קיבלו אותו peer"
+    botapi._storage.clear()
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
