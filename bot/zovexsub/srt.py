@@ -44,6 +44,16 @@ LEAD_IN = 0.12
 def build_cues(segments: list[Segment], lines: list[str],
                speech: list[tuple[float, float]] | None = None,
                accurate: bool = False) -> list[Cue]:
+    # zip עוצר ברשימה הקצרה, בשקט. אם התרגום חזר קצר ולו בשורה אחת,
+    # כל הזנב של הסרט נעלם בלי שגיאה ובלי לוג — וזה נראה למשתמש
+    # כמו "חור בכתוביות" שאי אפשר לאבחן. כאן זה נאמר, והרשימה
+    # מרופדת כדי שהאובדן יהיה שורה אחת ולא כל מה שאחריה
+    if len(lines) != len(segments):
+        log.error("התרגום החזיר %d שורות מול %d סגמנטים — מרפדים "
+                  "כדי לא לאבד את הזנב", len(lines), len(segments))
+        lines = list(lines)[:len(segments)]
+        lines += [""] * (len(segments) - len(lines))
+
     cues: list[Cue] = []
     for seg, hebrew in zip(segments, lines):
         text = (hebrew or "").strip()

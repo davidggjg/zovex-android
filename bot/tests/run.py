@@ -1222,6 +1222,32 @@ def _search_gate_and_budget_default():
     assert "return await run(" in src
 
 
+@check("תרגום קצר מהמקור אינו מוחק בשקט את זנב הסרט")
+def _cue_length_mismatch():
+    """zip עוצר ברשימה הקצרה ואינו אומר דבר.
+
+    שורת תרגום אחת חסרה הייתה מוחקת את כל מה שאחריה — למשתמש זה
+    נראה כמו "חור בכתוביות" בלי שום דרך לאבחן אותו
+    """
+    from zovexsub import srt
+    from zovexsub.stt import Segment
+
+    segments = [Segment(index=i, start=i * 2.0, end=i * 2.0 + 1.5,
+                        text=f"line {i}") for i in range(10)]
+
+    # התרגום חזר קצר בשלוש שורות — הזנב חייב לשרוד
+    cues = srt.build_cues(segments, ["שלום"] * 7)
+    assert cues, "לא נוצרו כתוביות"
+    assert cues[-1].start >= segments[6].start, "הזנב נמחק בשקט"
+
+    # ואורך זהה ממשיך לעבוד בדיוק כמו קודם
+    same = srt.build_cues(segments, ["שלום"] * 10)
+    assert len(same) >= len(cues), (len(same), len(cues))
+
+    # וגם רשימה ארוכה מדי אינה מפילה
+    srt.build_cues(segments, ["שלום"] * 14)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
