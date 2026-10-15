@@ -4,6 +4,8 @@ import {colors} from '../theme/tokens';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
 import NativePlayer, {vtFallbackSrc} from '../components/NativePlayer';
+import LiveVlcPlayer from '../components/LiveVlcPlayer';
+import {vlcLiveAllowed} from '../api/liveEngine';
 import TvFocusable from '../components/TvFocusable';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
@@ -1300,6 +1302,19 @@ export default function PlayerScreen({route, navigation}) {
   // כנפילה-אחורה אם הנייטיב נכשל, מה שלא היה קיים קודם.
   const [nativeFailed, setNativeFailed] = useState(false);
   const useNative = !isIframe && !!src && !nativeFailed;
+  // שידור חי בטלפון: libVLC. אותה כתובת ש-ExoPlayer מתאמץ עליה ארוכות עולה
+  // ב-VLC תוך שנייה. null = עדיין בודקים את שומר-הקריסה (api/liveEngine);
+  // false = חסום (קריסה קודמת) או נכשל — ואז ממשיכים ל-ExoPlayer כמו קודם.
+  // ההוקים כאן, לפני ה-return המוקדם למטה — סדר הוקים קבוע.
+  const [vlcOk, setVlcOk] = useState(null);
+  useEffect(() => {
+    if (!isLive || isTv) return undefined;
+    let alive = true;
+    vlcLiveAllowed().then(ok => { if (alive) setVlcOk(ok); });
+    return () => { alive = false; };
+  }, [isLive, isTv]);
+  const useVlcLive = isLive && !isTv && !isIframe && !!src && !nativeFailed && vlcOk === true;
+  const vlcPending = isLive && !isTv && !isIframe && !!src && vlcOk === null;
   // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
   const [nativeStart, setNativeStart] = useState(startTime || 0);
   // אין כאן עוד מסך שגיאה משלנו: כשהנייטיב נכשל הוא נופל ל-WebView,
@@ -1425,7 +1440,26 @@ export default function PlayerScreen({route, navigation}) {
           ומעכשיו זה המסלול הרגיל: אחרת תוכן רגיל היה נופל לענף הטלוויזיה
           ומקבל את הפקדים המובנים של ExoPlayer, שנראים כמו אפליקציה אחרת.
           בטלוויזיה כן ממשיכים עם המובנים — הם אלה שעובדים עם השלט. */}
-      {useNative && !isTv ? (
+      {vlcPending ? (
+        // רגע של בדיקת שומר-הקריסה (קריאת AsyncStorage) — מסך שחור, כדי
+        // שלא יתחיל ExoPlayer ויוחלף מיד ב-VLC.
+        <View style={{flex: 1, backgroundColor: '#000'}} />
+      ) : useVlcLive ? (
+        <LiveVlcPlayer
+          src={src}
+          title={movie.title}
+          onClose={() => navigation.goBack()}
+          // VLC נכשל (שגיאה או לא התחיל תוך 20 שניות) — מורידים ל-ExoPlayer
+          // במקום מסך שגיאה. vlcOk=false מפיל את התנאי של useVlcLive.
+          onFail={() => setVlcOk(false)}
+          onPlayingChange={v => PipModule?.setVideoPlaying(!!v)}
+          onFullscreen={enter => {
+            StatusBar.setHidden(enter, 'fade');
+            PipModule?.setFullscreen(enter);
+            PipModule?.setLandscape(enter);
+          }}
+        />
+      ) : useNative && !isTv ? (
         <NativePlayer
           // ה-key חייב להשתנות בכל מעבר מסלול. ExoPlayer ממשיך עם המקור
           // הישן כשהוא מקבל רק source חדש, ולכן מעבר ל-/vh היה נראה
