@@ -5,9 +5,9 @@
 // (TvFocusable) וגם במגע, עם אזור לחיצה נדיב ו-RTL.
 
 import React from 'react';
-import {View, Text, ActivityIndicator, StyleSheet} from 'react-native';
+import {View, Text, ActivityIndicator, Animated, StyleSheet} from 'react-native';
 import TvFocusable from '../components/TvFocusable';
-import {colors, spacing, radius, font} from './tokens';
+import {colors, spacing, radius, font, IS_TV} from './tokens';
 
 // ── כפתור ראשי ─────────────────────────────────────────────────────────
 export function PrimaryButton({label, onPress, icon, style, hasFocus, disabled}) {
@@ -108,6 +108,63 @@ export function DarkGradient({style, tint = colors.bg}) {
   );
 }
 
+// ── זוהר "אורורה" סטטי מאחורי התוכן ─────────────────────────────────────
+// רקע שחור שטוח הוא מה שגורם למסך להיראות "בלי טעם". בלי ספריית blur
+// (ראה AmbientGlow: אין תלות נייטיבית חדשה) מקרבים זוהר רדיאלי בעיגולים
+// קונצנטריים בשקיפות נמוכה — קצוות רכים, אפס JS, אפס אנימציה.
+// לא בטלוויזיה: שם כל View נוסף עולה מעבד חלש.
+const GLOW_RINGS = 7;
+function GlowBlob({size, color, style}) {
+  return (
+    <View style={[{position: 'absolute', width: size, height: size}, style]}>
+      {Array.from({length: GLOW_RINGS}, (_, i) => {
+        const k = (i + 1) / GLOW_RINGS;           // 1/7 … 1
+        const d = size * (1 - i / GLOW_RINGS);    // קוטר יורד
+        return (
+          <View key={i} style={{
+            position: 'absolute', width: d, height: d, borderRadius: d / 2,
+            left: (size - d) / 2, top: (size - d) / 2,
+            backgroundColor: color, opacity: 0.045 + k * 0.012,
+          }} />
+        );
+      })}
+    </View>
+  );
+}
+export const AuroraBackdrop = React.memo(function AuroraBackdrop({height = 520}) {
+  if (IS_TV) return null;
+  return (
+    <View pointerEvents="none"
+      style={{position: 'absolute', top: 0, left: 0, right: 0, height, overflow: 'hidden'}}>
+      <GlowBlob size={520} color={colors.auroraViolet} style={{top: -200, left: -160}} />
+      <GlowBlob size={460} color={colors.auroraRed} style={{top: -170, right: -190}} />
+      <GlowBlob size={420} color={colors.auroraBlue} style={{top: 120, left: -230}} />
+    </View>
+  );
+});
+
+// ── נקודת LIVE פועמת ────────────────────────────────────────────────────
+// opacity בלבד עם useNativeDriver — רץ בשרשור הנייטיב, לא נוגע ב-JS.
+// בטלוויזיה נקודה סטטית: אנימציה אינסופית שם היא עומס בלי ערך.
+export function PulseDot({size = 8, color = colors.primary}) {
+  const a = React.useRef(new Animated.Value(1)).current;
+  React.useEffect(() => {
+    if (IS_TV) return undefined;
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(a, {toValue: 0.25, duration: 700, useNativeDriver: true}),
+      Animated.timing(a, {toValue: 1, duration: 700, useNativeDriver: true}),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [a]);
+  return (
+    <Animated.View style={{
+      width: size, height: size, borderRadius: size / 2,
+      backgroundColor: color, opacity: a,
+    }} />
+  );
+}
+
 // ── Badge — רק כשיש נתון אמיתי (איכות/שנה/סוג) ──────────────────────────
 export function Badge({text, tone = 'default'}) {
   if (!text) return null;
@@ -127,7 +184,8 @@ const s = StyleSheet.create({
   },
   primaryTxt: {color: '#fff', fontSize: font.body, fontWeight: font.weightBold},
   secondary: {
-    backgroundColor: colors.hairline, borderRadius: radius.button,
+    backgroundColor: colors.glass, borderRadius: radius.button,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: colors.glassBorder,
     paddingVertical: 14, paddingHorizontal: spacing.xl,
     alignItems: 'center', justifyContent: 'center', minHeight: 48,
   },
@@ -157,5 +215,6 @@ const s = StyleSheet.create({
 
 export default {
   PrimaryButton, SecondaryButton, SectionHeader, DarkGradient,
+  AuroraBackdrop, PulseDot,
   EmptyState, LoadingState, ErrorState, Badge,
 };
