@@ -49,6 +49,9 @@ const VlcVideo = forwardRef(function VlcVideo(props, fwdRef) {
     onProgress,
     onEnd,
     onError,
+    // שידור חי: אין אורך, ולכן onLoad (שמחכה לאורך) לא נורה לעולם. מי שרוצה
+    // לדעת ש"התחיל לנגן" מקבל את זה כאן, ישירות מ-libVLC.
+    onPlaying: onPlayingProp,
     // props של ExoPlayer בלבד. מתקבלים ונזרקים בכוונה, כדי שהנגנים לא
     // יצטרכו להשתנות ושלא ייווצר prop לא מוכר על הרכיב הנייטיבי.
     controls: _controls,
@@ -104,6 +107,7 @@ const VlcVideo = forwardRef(function VlcVideo(props, fwdRef) {
       resizeMode={resizeMode || 'contain'}
       onPlaying={e => {
         fireLoadOnce(e && e.duration);
+        onPlayingProp && onPlayingProp(e);
       }}
       onProgress={e => {
         const curMs = (e && e.currentTime) || 0;
