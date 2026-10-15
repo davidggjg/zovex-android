@@ -8,9 +8,15 @@
 // (ZOVEX הוא כהה בלבד), ולכן אובייקט קבוע הוא הפשוט והזול ביותר — בלי
 // provider, בלי re-render, נקרא ישירות ב-StyleSheet.create בכל מסך.
 
-import {Platform} from 'react-native';
+import {Platform, Dimensions} from 'react-native';
 
 export const IS_TV = Platform.isTV;
+
+// התאמה למסך צר: הגדלים כוילו ל-~400dp רוחב. במסך צר יותר (טלפון קטן, או
+// "גודל תצוגה" מוגדל) מקטינים יחסית, עד רצפה של 85% — כדי שכותרות לא יישברו
+// ושורות לא יידחסו. לא משפיע על מסך 400dp ומעלה ולא על טלוויזיה.
+export const SCREEN_W = Dimensions.get('window').width;
+export const UI_SCALE = IS_TV ? 1 : Math.max(0.85, Math.min(1, SCREEN_W / 400));
 
 // ── צבעים ────────────────────────────────────────────────────────────────
 export const colors = {
@@ -34,7 +40,7 @@ export const colors = {
 
   // ── שפה עתידנית: זכוכית וזוהר ───────────────────────────────────────
   // "זכוכית" בלי ספריית blur: משטח כהה כמעט-אטום + קו דק בהיר בקצה.
-  glass: 'rgba(24,26,38,0.88)',           // קפסולת ניווט, צ'יפים
+  glass: 'rgba(24,26,38,0.94)',           // קפסולת ניווט, צ'יפים (כמעט אטום: תגי LIVE לא מבצבצים דרכו)
   glassBorder: 'rgba(255,255,255,0.12)',  // קו הקצה של הזכוכית
   glassActive: 'rgba(255,255,255,0.14)',  // גלולת הפריט הפעיל
   glowRed: 'rgba(229,9,36,0.55)',         // זוהר אדום (LIVE, פעיל)
@@ -64,7 +70,7 @@ export const radius = {
 // ── טיפוגרפיה ───────────────────────────────────────────────────────────
 // טקסט בטלוויזיה גדול יותר ונקרא ממרחק. tv(phone, tv) בוחר לפי הפלטפורמה,
 // כך שאותו token נותן גודל נכון בשני העולמות בלי תנאים בכל מסך.
-const tv = (phone, tvSize) => (IS_TV ? tvSize : phone);
+const tv = (phone, tvSize) => (IS_TV ? tvSize : Math.round(phone * UI_SCALE));
 export const font = {
   hero: tv(32, 44),       // כותרת ראשית
   screenTitle: tv(26, 34),
