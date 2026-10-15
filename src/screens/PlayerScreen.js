@@ -1443,6 +1443,7 @@ export default function PlayerScreen({route, navigation}) {
           hasNext={hasNext}
           nextLabel={nextEp?.episode_title || ''}
           knownDuration={knownDuration}
+          isLive={isLive}
           // כבוי. שורת האבחון עשתה את שלה — הקול עובד — ואין סיבה שצופה
           // יראה שמות קודקים על המסך.
           debug={false}
