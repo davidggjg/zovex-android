@@ -97,12 +97,34 @@ export function ErrorState({title = 'משהו השתבש', desc, onRetry, retryL
 // אפשר עם מה שכבר קיים. ערימת שכבות שקיפות עולה בהדרגה היא הקירוב
 // המקובל בלי תלות, והיא מספיק טובה בתור מסך (scrim) מאחורי טקסט. סטטי
 // לגמרי — בלי JS, בלי focus — ולכן חינם לשים בכל מקום, כולל hero.
-const GRADIENT_STEPS = [0, 0.05, 0.15, 0.32, 0.55, 0.8];
+//
+// "קווים" שנראו על הפוסטרים: הגרסה הקודמת הייתה 6 פסים שווים בשקיפויות
+// קבועות, ובין פס לפס רואים קצה ברור. עכשיו: שכבות מצטברות. כל שכבה מתחילה
+// ב-i/N מהגובה וממשיכה עד **התחתית** (לא פס בודד), בשקיפות קטנה מאוד, כך
+// שהשקיפות הכוללת עולה בצעדים זעירים (עד ~3.5% בנקודה התחתונה) בלי שום תפר בין פסים. הערך
+// הכולל בכל נקודה הוא 0.86·t² (t=0 למעלה, 1 למטה) — אותה צורה כמו קודם.
+// בטלוויזיה פחות שכבות (מעבד חלש); עדיין הרבה יותר מ-6.
+const GRADIENT_N = IS_TV ? 20 : 48;
+const GRADIENT_ALPHAS = (() => {
+  const out = [];
+  let prev = 0;
+  for (let i = 0; i < GRADIENT_N; i++) {
+    const t = (i + 1) / GRADIENT_N;
+    const target = 0.86 * t * t;                       // שקיפות כוללת רצויה
+    out.push(Math.max(0, 1 - (1 - target) / (1 - prev))); // תרומת השכבה הזו
+    prev = target;
+  }
+  return out;
+})();
 export function DarkGradient({style, tint = colors.bg}) {
   return (
-    <View style={[StyleSheet.absoluteFill, s.gradientCol, style]} pointerEvents="none">
-      {GRADIENT_STEPS.map((op, i) => (
-        <View key={i} style={{flex: 1, backgroundColor: tint, opacity: op}} />
+    <View style={[StyleSheet.absoluteFill, style]} pointerEvents="none">
+      {GRADIENT_ALPHAS.map((a, i) => (
+        <View key={i} style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0,
+          top: `${(i / GRADIENT_N) * 100}%`,
+          backgroundColor: tint, opacity: a,
+        }} />
       ))}
     </View>
   );
