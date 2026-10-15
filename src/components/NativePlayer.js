@@ -46,6 +46,28 @@ export function vtFallbackSrc(src) {
 const ACCENT = '#e91e8c';
 const HIDE_AFTER = 3500;
 
+// ── שידור חי ─────────────────────────────────────────────────────────────────
+// דווח: אותו קישור מתנגן ב-VLC תוך ~10 שניות, באפליקציה לוקח "נצח", ויש ערוצים
+// שלא עולים בכלל. הקישור תקין — ההבדל הוא בנגן:
+//
+//  1. type: ExoPlayer מסיק פורמט מסיומת הכתובת. כתובות ה-relay לא תמיד נגמרות
+//     ב-.m3u8, ואז הוא מנסה לנגן playlist כקובץ רגיל ונכשל. בנגן הטלוויזיה זה
+//     כבר מתוקן (type מפורש); בנגן הטלפון זה חסר, ומשם הנפילה ל-WebView עם
+//     timeout של 35 שניות × 4 ניסיונות — ה"נצח".
+//  2. User-Agent: ספקי IPTV רבים מגיבים לאט, או חוסמים, לכל מה שאינו נגן
+//     מוכר. VLC מזדהה בשמו וכך עובר; ExoPlayer מזדהה כ-Android גנרי.
+//  3. באפר התחלתי: ברירת המחדל מחכה 2.5 שניות של וידאו לפני שמתחילים, ו-5 אחרי
+//     כל עצירה. לשידור חי מספיק פחות, והניגון מתחיל מוקדם יותר.
+const LIVE_UA = 'VLC/3.0.20 LibVLC/3.0.20';
+const LIVE_BUFFER = {
+  minBufferMs: 8000,
+  maxBufferMs: 30000,
+  bufferForPlaybackMs: 1000,
+  bufferForPlaybackAfterRebufferMs: 2500,
+};
+// קישורים שהם בבירור לא HLS (מכולה/זרם ישיר) — לא כופים עליהם type=m3u8.
+const NOT_HLS = /\.(ts|mp4|mkv|flv|avi|mpd)(\?|$)/i;
+
 const fmt = s => {
   s = Math.max(0, Math.floor(s || 0));
   const h = Math.floor(s / 3600);
@@ -74,9 +96,15 @@ export default function NativePlayer({
   // (/vt) הרשימה גדלה תוך כדי, ולכן הנגן לבדו מכיר רק את מה שכבר הומר
   // ומראה אורך שמטפס בכמה שניות כל פעם. כשיש מספר אמיתי הוא מנצח.
   knownDuration = 0,
+  // שידור חי: בלי סרגל התקדמות/דילוג, עם באפר קצר וזיהוי HLS מפורש.
+  isLive = false,
   debug = false,
 }) {
   const ref = useRef(null);
+  // ניסיון חוזר אחד אוטומטי לפני שמדווחים כשלון — פנייה ראשונה לערוץ "ישן"
+  // מעירה את ה-relay, והשנייה כבר מהירה. מחליפים key כדי שה-Video ייבנה מחדש.
+  const [retryKey, setRetryKey] = useState(0);
+  const liveRetried = useRef(false);
   // כשהניגון הישיר נכשל, עוברים פעם אחת למסלול ההמרה בשרת.
   const [vtSrc, setVtSrc] = useState(null);
   const [paused, setPaused] = useState(false);
@@ -172,11 +200,22 @@ export default function NativePlayer({
 
   const frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
 
+  const curSrc = vtSrc || src || '';
+  const liveHls = isLive && !NOT_HLS.test(curSrc);
+  const vidSource = {
+    uri: curSrc,
+    minLoadRetryCount: isLive ? 3 : 6,
+    ...(liveHls || /\.m3u8|Manifest\.ism/i.test(curSrc) ? {type: 'm3u8'} : {}),
+    ...(isLive ? {headers: {'User-Agent': LIVE_UA}} : {}),
+  };
+
   return (
     <View style={styles.wrap}>
       <Video
+        key={retryKey}
         ref={ref}
-        source={{uri: vtSrc || src, minLoadRetryCount: 6}}
+        source={vidSource}
+        bufferConfig={isLive ? LIVE_BUFFER : undefined}
         style={StyleSheet.absoluteFill}
         controls={false}
         paused={paused}
@@ -234,6 +273,13 @@ export default function NativePlayer({
         }}
         onEnd={() => onEnd && onEnd()}
         onError={e => {
+          if (isLive && !liveRetried.current) {
+            liveRetried.current = true;
+            if (debug) setDiag(d => `${d}\nשידור חי: ניסיון חוזר`);
+            setReady(false);
+            setRetryKey(k => k + 1);
+            return;
+          }
           // ניסיון אחד למסלול ההמרה לפני שמדווחים כשלון. מנסים על כל
           // שגיאה ולא לפי קוד מסוים: מיפוי קודי ExoPlayer שביר, והמחיר
           // של ניסיון מיותר הוא שנייה אחת, בזמן שהמחיר של פספוס הוא
@@ -294,32 +340,40 @@ export default function NativePlayer({
           {/* אחורה תמיד משמאל וקדימה תמיד מימין. תחת היפוך הפריסה השניים
               התחלפו ביניהם, וזה היה מבלבל יותר מכל: הכפתור השמאלי קידם. */}
           <View style={[styles.mid, ltrRow()]} pointerEvents="box-none">
-            <TouchableOpacity style={styles.cbtn} onPress={() => skip(-10)} hitSlop={8}>
-              <Image source={BACK10} style={styles.skipIcon} resizeMode="contain" />
-            </TouchableOpacity>
+            {!isLive && (
+              <TouchableOpacity style={styles.cbtn} onPress={() => skip(-10)} hitSlop={8}>
+                <Image source={BACK10} style={styles.skipIcon} resizeMode="contain" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.cbtn}
               onPress={() => { setPaused(p => !p); poke(); }}>
               <Text style={styles.play}>{paused ? '▶' : '❚❚'}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.cbtn} onPress={() => skip(10)} hitSlop={8}>
-              <Image source={FWD10} style={styles.skipIcon} resizeMode="contain" />
-            </TouchableOpacity>
+            {!isLive && (
+              <TouchableOpacity style={styles.cbtn} onPress={() => skip(10)} hitSlop={8}>
+                <Image source={FWD10} style={styles.skipIcon} resizeMode="contain" />
+              </TouchableOpacity>
+            )}
           </View>
 
           <View style={styles.bottombar} pointerEvents="box-none">
-            <View style={styles.progwrap} {...pan.panHandlers}
-              onLayout={e => { barWRef.current = e.nativeEvent.layout.width || 1;
-                               setBarW(barWRef.current); }}>
-              {/* pinLeft: הפס והנקודה נמדדים מהקצה השמאלי הפיזי. תחת היפוך
-                  הפריסה left הפך ל-right, והפס התמלא מהצד ההפוך לכיוון
-                  שבו הסרט מתקדם. */}
-              <View style={styles.track}>
-                <View style={[styles.fill, pinLeft(0), {width: `${frac * 100}%`}]} />
-                <View style={[styles.dot, pinLeft(Math.max(0, frac * barW - 6.5))]} />
+            {!isLive && (
+              <View style={styles.progwrap} {...pan.panHandlers}
+                onLayout={e => { barWRef.current = e.nativeEvent.layout.width || 1;
+                                 setBarW(barWRef.current); }}>
+                {/* pinLeft: הפס והנקודה נמדדים מהקצה השמאלי הפיזי. תחת היפוך
+                    הפריסה left הפך ל-right, והפס התמלא מהצד ההפוך לכיוון
+                    שבו הסרט מתקדם. */}
+                <View style={styles.track}>
+                  <View style={[styles.fill, pinLeft(0), {width: `${frac * 100}%`}]} />
+                  <View style={[styles.dot, pinLeft(Math.max(0, frac * barW - 6.5))]} />
+                </View>
               </View>
-            </View>
+            )}
             <View style={[styles.brow, ltrRow()]}>
-              <Text style={styles.time}>{fmt(pos)} / {fmt(dur)}</Text>
+              {isLive
+                ? <Text style={[styles.time, {color: '#ff4d5e', fontWeight: '800'}]}>● LIVE</Text>
+                : <Text style={styles.time}>{fmt(pos)} / {fmt(dur)}</Text>}
               <View style={[styles.bright, ltrRow()]}>
                 {hasNext && (
                   <TouchableOpacity style={styles.nextBtn} onPress={onNext}>
@@ -328,11 +382,13 @@ export default function NativePlayer({
                     </Text>
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity style={[styles.gearBtn, ltrRow()]} hitSlop={8}
-                  onPress={() => { setRateSheet(v => !v); poke(); }}>
-                  <Text style={styles.gearTxt}>⚙</Text>
-                  {rate !== 1 && <Text style={styles.gearRate}>{rate}x</Text>}
-                </TouchableOpacity>
+                {!isLive && (
+                  <TouchableOpacity style={[styles.gearBtn, ltrRow()]} hitSlop={8}
+                    onPress={() => { setRateSheet(v => !v); poke(); }}>
+                    <Text style={styles.gearTxt}>⚙</Text>
+                    {rate !== 1 && <Text style={styles.gearRate}>{rate}x</Text>}
+                  </TouchableOpacity>
+                )}
                 {!!onFullscreen && (
                   <TouchableOpacity style={styles.fsBtn} onPress={toggleFs} hitSlop={8}>
                     <Image source={fs ? FS_EXIT : FS_ENTER} style={styles.fsIcon}
