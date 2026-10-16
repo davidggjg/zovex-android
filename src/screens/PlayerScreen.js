@@ -5,7 +5,7 @@ import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
 import NativePlayer, {vtFallbackSrc} from '../components/NativePlayer';
 import LiveVlcPlayer from '../components/LiveVlcPlayer';
-import {vlcLiveAllowed} from '../api/liveEngine';
+import {vlcLiveAllowed, lastGuard} from '../api/liveEngine';
 import TvFocusable from '../components/TvFocusable';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
@@ -1311,7 +1311,11 @@ export default function PlayerScreen({route, navigation}) {
   useEffect(() => {
     if (!isLive || isTv) return undefined;
     let alive = true;
-    vlcLiveAllowed().then(ok => { if (alive) setVlcOk(ok); });
+    vlcLiveAllowed().then(ok => {
+      if (!alive) return;
+      if (!ok) setVlcWhy('guard:' + lastGuard);
+      setVlcOk(ok);
+    });
     return () => { alive = false; };
   }, [isLive, isTv]);
   // אבחון זמני: מודדים מתוך האפליקציה עצמה כמה זמן ה-relay לוקח לענות על
