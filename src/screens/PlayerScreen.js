@@ -1307,12 +1307,29 @@ export default function PlayerScreen({route, navigation}) {
   // false = חסום (קריסה קודמת) או נכשל — ואז ממשיכים ל-ExoPlayer כמו קודם.
   // ההוקים כאן, לפני ה-return המוקדם למטה — סדר הוקים קבוע.
   const [vlcOk, setVlcOk] = useState(null);
+  const [vlcWhy, setVlcWhy] = useState('');   // אבחון זמני: למה VLC ירד
   useEffect(() => {
     if (!isLive || isTv) return undefined;
     let alive = true;
     vlcLiveAllowed().then(ok => { if (alive) setVlcOk(ok); });
     return () => { alive = false; };
   }, [isLive, isTv]);
+  // אבחון זמני: מודדים מתוך האפליקציה עצמה כמה זמן ה-relay לוקח לענות על
+  // אותה כתובת ומה הוא מחזיר. מבדיל "הנגן איטי" מ"השרת/הכתובת איטיים".
+  const [probe, setProbe] = useState('');
+  useEffect(() => {
+    if (!isLive || isTv || !src) return undefined;
+    let alive = true;
+    const t0 = Date.now();
+    const put = t => { if (alive) setProbe(t); };
+    put('probe…');
+    fetch(src, {headers: {'User-Agent': 'VLC/3.0.20 LibVLC/3.0.20'}})
+      .then(r => r.text().then(t => put(
+        'HTTP ' + r.status + ' ' + (Date.now() - t0) + 'ms ' + t.length + 'B | '
+        + t.replace(/\s+/g, ' ').slice(0, 70))))
+      .catch(e => put('fetch ERR ' + (Date.now() - t0) + 'ms ' + (e && e.message)));
+    return () => { alive = false; };
+  }, [isLive, isTv, src]);
   const useVlcLive = isLive && !isTv && !isIframe && !!src && !nativeFailed && vlcOk === true;
   const vlcPending = isLive && !isTv && !isIframe && !!src && vlcOk === null;
   // מיקום התחלה לנגן הנייטיב: startTime מפורש, אחרת "המשך צפייה" שנטען מהשרת.
@@ -1410,6 +1427,13 @@ export default function PlayerScreen({route, navigation}) {
 
   return (
     <View style={styles.container}>
+      {isLive && !isTv ? (
+        <Text pointerEvents="none" style={{position: 'absolute', zIndex: 99,
+          left: 8, right: 8, top: 96, color: '#0ff', fontSize: 10,
+          textAlign: 'center'}}>
+          {'…' + String(src).slice(-48) + '\n' + probe}
+        </Text>
+      ) : null}
       {resumeAsk != null ? (
         <View style={styles.resumeWrap}>
           <View style={styles.resumeCard}>
@@ -1451,7 +1475,7 @@ export default function PlayerScreen({route, navigation}) {
           onClose={() => navigation.goBack()}
           // VLC נכשל (שגיאה או לא התחיל תוך 20 שניות) — מורידים ל-ExoPlayer
           // במקום מסך שגיאה. vlcOk=false מפיל את התנאי של useVlcLive.
-          onFail={() => setVlcOk(false)}
+          onFail={why => { setVlcWhy(String(why)); setVlcOk(false); }}
           onPlayingChange={v => PipModule?.setVideoPlaying(!!v)}
           onFullscreen={enter => {
             StatusBar.setHidden(enter, 'fade');
@@ -1460,6 +1484,14 @@ export default function PlayerScreen({route, navigation}) {
           }}
         />
       ) : useNative && !isTv ? (
+        <>
+        {isLive ? (
+          <Text pointerEvents="none" style={{position: 'absolute', zIndex: 99,
+            left: 8, right: 8, bottom: 110, color: '#ff0', fontSize: 11,
+            textAlign: 'center'}}>
+            {'ExoPlayer · vlcOk=' + String(vlcOk) + (vlcWhy ? ' · ' + vlcWhy : '')}
+          </Text>
+        ) : null}
         <NativePlayer
           // ה-key חייב להשתנות בכל מעבר מסלול. ExoPlayer ממשיך עם המקור
           // הישן כשהוא מקבל רק source חדש, ולכן מעבר ל-/vh היה נראה
@@ -1547,6 +1579,7 @@ export default function PlayerScreen({route, navigation}) {
             }
           }}
         />
+        </>
       ) : useNative ? (
         <TvNativePlayer
           // key: כשעוברים לכאן באמצע צפייה (תיקון קול) צריך מופע נקי, אחרת
