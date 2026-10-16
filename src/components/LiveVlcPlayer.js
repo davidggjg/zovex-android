@@ -29,8 +29,6 @@ export default function LiveVlcPlayer({
   const hideTimer = useRef(null);
   const started = useRef(false);
   const failed = useRef(false);
-  const [dbg, setDbg] = useState('start');
-  const note = useCallback(t => setDbg(d => (d + ' › ' + t).slice(-90)), []);
 
   const poke = useCallback(() => {
     setShown(true);
@@ -84,26 +82,18 @@ export default function LiveVlcPlayer({
         style={StyleSheet.absoluteFill}
         paused={paused}
         resizeMode="contain"
-        onLoadStart={() => note('loadStart')}
-        onOpen={() => note('open')}
-        onBuffering={() => note('buf')}
-        onStopped={() => note('stopped')}
         onPlaying={() => {
-          note('PLAY');
           if (!started.current) { started.current = true; markVlcOk(); }
           setPlaying(true);
         }}
         onError={e => {
           const m = (e && e.error && e.error.errorString) || 'error';
-          note('ERR ' + m);
           fail('err:' + m);
         }}
       />
 
       <Pressable style={StyleSheet.absoluteFill}
         onPress={() => (shown ? setShown(false) : poke())} />
-
-      <Text style={styles.dbg} pointerEvents="none">{'VLC ' + dbg}</Text>
 
       {!playing && (
         <ActivityIndicator style={styles.center} color={ACCENT} size="large"
@@ -164,8 +154,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 20, paddingBottom: 18,
     alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: 'rgba(0,0,0,0.45)'},
-  dbg: {position: 'absolute', left: 8, right: 8, bottom: 70, color: '#0f0',
-    fontSize: 11, textAlign: 'center'},
   live: {color: '#ff4d5e', fontSize: 13, fontWeight: '800'},
   fsBtn: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center'},
   fsIcon: {width: 21, height: 21},
