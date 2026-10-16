@@ -86,6 +86,11 @@ jobs:
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)
         run: bash scripts/enable-ffmpeg-decoder.sh
 
+      # שידורי IPTV חיים עם keyframes שאינם IDR: בלי זה ExoPlayer נתקע על
+      # ספינר לנצח ו-VLC מנגן. ראו הסבר בראש הסקריפט.
+      - name: Allow non-IDR keyframes in ExoPlayer HLS (IPTV live)
+        run: bash scripts/enable-hls-nonidr.sh
+
       # גם זה חייב לרוץ אחרי npm install. בלעדיו האפליקציה קורסת בלחיצה על
       # פליי: החבילה קוראת src.getBoolean("autoplay") על מפתח שלא קיים.
       - name: Fix libVLC crash on play (missing autoplay key)
