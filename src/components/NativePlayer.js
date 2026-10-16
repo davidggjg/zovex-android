@@ -198,6 +198,43 @@ export default function NativePlayer({
     onFullscreen && onFullscreen(next);
   };
 
+  // ── שידור חי: שומר-זמן נגד ספינר נצחי ──────────────────────────────────
+  //
+  // שרשרת הנפילה-אחורה שלנו (VLC → ExoPlayer → WebView) נדרכת רק על onError,
+  // ו-ExoPlayer לא תמיד זורק אותה: בקשה שלא נענית, או זרם שה-extractor זורק
+  // ממנו את הווידאו, משאירים אותו ב-BUFFERING בלי שום אירוע. אז לא נורה
+  // onLoad, לא נורה onError, והצופה רואה ספינר עד שהוא סוגר את האפליקציה.
+  //
+  // טלאי ה-timeouts (scripts/exoplayer-http-timeouts.sh) מטפל בסיבה הנפוצה,
+  // אבל הוא לא יכול לכסות כל מקרה — ולכן גם שעון עצר כאן: אם לא התחילה
+  // נגינה, בונים את הנגן מחדש פעם אחת, ואם גם זה לא עזר מדווחים כשל כדי
+  // שהמסך יעבור לנגן הבא. אף מסלול לא נגמר בהמתנה אינסופית.
+  const LIVE_WAIT_MS = 12000;
+  const [liveMsg, setLiveMsg] = useState('');
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+
+  useEffect(() => {
+    if (!isLive || ready) {
+      setLiveMsg('');
+      return;
+    }
+    const second = liveRetried.current;
+    setLiveMsg(second ? 'מנסה שוב…' : 'מתחבר לערוץ…');
+    const t = setTimeout(() => {
+      if (second) {
+        // כבר ניסינו פעם אחת — מוותרים ומעבירים לנגן הבא בשרשרת.
+        setLiveMsg('מחליף נגן…');
+        onErrorRef.current && onErrorRef.current({watchdog: true});
+        return;
+      }
+      liveRetried.current = true;
+      setReady(false);
+      setRetryKey(k => k + 1);
+    }, LIVE_WAIT_MS);
+    return () => clearTimeout(t);
+  }, [isLive, ready, retryKey]);
+
   const frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
 
   const curSrc = vtSrc || src || '';
@@ -316,7 +353,14 @@ export default function NativePlayer({
         </View>
       )}
 
-      {!ready && <ActivityIndicator style={styles.center} color={ACCENT} size="large" />}
+      {!ready && (
+        <View style={styles.center} pointerEvents="none">
+          <ActivityIndicator color={ACCENT} size="large" />
+          {/* ספינר עירום לא אומר לצופה כלום, ובשידור חי ההמתנה ארוכה
+              ממילא. טקסט קצר מבדיל בין "עובד" לבין "נתקע". */}
+          {!!liveMsg && <Text style={styles.liveMsg}>{liveMsg}</Text>}
+        </View>
+      )}
 
       {shown && (
         <>
@@ -452,6 +496,8 @@ const styles = StyleSheet.create({
   wrap: {flex: 1, backgroundColor: '#000'},
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     justifyContent: 'center', alignItems: 'center'},
+  liveMsg: {color: 'rgba(255,255,255,0.75)', fontSize: 14, marginTop: 14,
+    fontWeight: '600'},
 
   topbar: {
     position: 'absolute', top: 0, left: 0, right: 0, paddingHorizontal: 16,

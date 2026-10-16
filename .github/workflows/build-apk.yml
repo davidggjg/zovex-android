@@ -91,6 +91,13 @@ jobs:
       - name: Allow non-IDR keyframes in ExoPlayer HLS (IPTV live)
         run: bash scripts/enable-hls-nonidr.sh
 
+      # ה-OkHttpClient של React Native מוגדר עם timeouts של 0 (אינסוף), ו-
+      # react-native-video משתמש בו כמו שהוא. ערוץ שפותח חיבור ולא שולח
+      # בייטים תקע את הנגן לנצח בלי לזרוק שגיאה — ולכן גם הנפילה-אחורה
+      # מעולם לא נדרכה. ראו הסבר בראש הסקריפט.
+      - name: Give ExoPlayer real HTTP timeouts (endless-spinner fix)
+        run: bash scripts/exoplayer-http-timeouts.sh
+
       # גם זה חייב לרוץ אחרי npm install. בלעדיו האפליקציה קורסת בלחיצה על
       # פליי: החבילה קוראת src.getBoolean("autoplay") על מפתח שלא קיים.
       - name: Fix libVLC crash on play (missing autoplay key)
