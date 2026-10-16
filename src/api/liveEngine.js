@@ -15,6 +15,7 @@
 //
 // הסימון קשור לגרסת האפליקציה: גרסה חדשה (שאולי תיקנה את הקריסה) מקבלת
 // הזדמנות חדשה, ולא נשארת חסומה לנצח.
+import {Platform} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {APP_VERSION} from './movies';
 
@@ -37,6 +38,8 @@ function write(s) {
 
 // נקרא פעם אחת בפתיחת מסך שידור חי. true = מותר להשתמש ב-VLC.
 export async function vlcLiveAllowed() {
+  // libVLC דורשת אנדרואיד 8 (API 26) ומעלה; מתחת לזה נשארים על ExoPlayer.
+  if (Platform.OS !== 'android' || Platform.Version < 26) return false;
   const st = await read();
   if (st.s === 'pending') { write('crashed'); return false; }
   return st.s !== 'crashed';
