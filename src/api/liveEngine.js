@@ -19,7 +19,11 @@ import {Platform} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {APP_VERSION} from './movies';
 
-const KEY = 'zovex_vlc_live_state';
+// v2: מאפסים סימון 'crashed' שנשאר בטעות (ראו AppState ב-LiveVlcPlayer).
+const KEY = 'zovex_vlc_live_state_v2';
+
+// אבחון זמני: למה vlcLiveAllowed החזירה מה שהחזירה.
+export let lastGuard = '';
 
 async function read() {
   try {
@@ -39,8 +43,9 @@ function write(s) {
 // נקרא פעם אחת בפתיחת מסך שידור חי. true = מותר להשתמש ב-VLC.
 export async function vlcLiveAllowed() {
   // libVLC דורשת אנדרואיד 8 (API 26) ומעלה; מתחת לזה נשארים על ExoPlayer.
-  if (Platform.OS !== 'android' || Platform.Version < 26) return false;
+  if (Platform.OS !== 'android' || Platform.Version < 26) { lastGuard = 'api' + Platform.Version; return false; }
   const st = await read();
+  lastGuard = st.s;
   if (st.s === 'pending') { write('crashed'); return false; }
   return st.s !== 'crashed';
 }
