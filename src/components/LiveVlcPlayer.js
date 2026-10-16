@@ -1,6 +1,6 @@
 import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
-  View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image, Pressable,
+  AppState, View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image, Pressable,
 } from 'react-native';
 import VlcVideo from './VlcVideo';
 import {FS_ENTER, FS_EXIT} from './playerIcons';
@@ -29,6 +29,8 @@ export default function LiveVlcPlayer({
   const hideTimer = useRef(null);
   const started = useRef(false);
   const failed = useRef(false);
+  const [dbg, setDbg] = useState('start');
+  const note = useCallback(t => setDbg(d => (d + ' › ' + t).slice(-90)), []);
 
   const poke = useCallback(() => {
     setShown(true);
@@ -40,19 +42,26 @@ export default function LiveVlcPlayer({
   // תלות ה-effect היה מתאפס (וטיימר ה-STALL מתחיל מחדש) בכל רינדור שלו.
   const onFailRef = useRef(onFail);
   onFailRef.current = onFail;
-  const fail = useCallback(() => {
+  const fail = useCallback(why => {
     if (failed.current) return;
     failed.current = true;
-    onFailRef.current && onFailRef.current();
+    onFailRef.current && onFailRef.current(why || '?');
   }, []);
 
   // סימון לשומר-הקריסה: pending בעלייה, ok ברגע שמנגן או ביציאה רגילה.
   useEffect(() => {
     markVlcPending();
     poke();
-    const stall = setTimeout(() => { if (!started.current) fail(); }, STALL_MS);
+    // יציאה מהאפליקציה (מעבר לרקע / סגירה בהחלקה) איננה קריסה. בלי זה סגירה
+    // של האפליקציה בזמן שהנגן עוד טוען השאירה 'pending', והפעלה הבאה חסמה את
+    // VLC לתמיד. קריסה נייטיבית קורית בחזית ולכן לא מפעילה את זה.
+    const appSub = AppState.addEventListener('change', st => {
+      if (st !== 'active') markVlcOk();
+    });
+    const stall = setTimeout(() => { if (!started.current) fail('stall20s'); }, STALL_MS);
     return () => {
       clearTimeout(stall);
+      appSub && appSub.remove && appSub.remove();
       if (hideTimer.current) clearTimeout(hideTimer.current);
       markVlcOk();
     };
@@ -75,15 +84,26 @@ export default function LiveVlcPlayer({
         style={StyleSheet.absoluteFill}
         paused={paused}
         resizeMode="contain"
+        onLoadStart={() => note('loadStart')}
+        onOpen={() => note('open')}
+        onBuffering={() => note('buf')}
+        onStopped={() => note('stopped')}
         onPlaying={() => {
+          note('PLAY');
           if (!started.current) { started.current = true; markVlcOk(); }
           setPlaying(true);
         }}
-        onError={() => fail()}
+        onError={e => {
+          const m = (e && e.error && e.error.errorString) || 'error';
+          note('ERR ' + m);
+          fail('err:' + m);
+        }}
       />
 
       <Pressable style={StyleSheet.absoluteFill}
         onPress={() => (shown ? setShown(false) : poke())} />
+
+      <Text style={styles.dbg} pointerEvents="none">{'VLC ' + dbg}</Text>
 
       {!playing && (
         <ActivityIndicator style={styles.center} color={ACCENT} size="large"
@@ -144,6 +164,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20, paddingTop: 20, paddingBottom: 18,
     alignItems: 'center', justifyContent: 'space-between',
     backgroundColor: 'rgba(0,0,0,0.45)'},
+  dbg: {position: 'absolute', left: 8, right: 8, bottom: 70, color: '#0f0',
+    fontSize: 11, textAlign: 'center'},
   live: {color: '#ff4d5e', fontSize: 13, fontWeight: '800'},
   fsBtn: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center'},
   fsIcon: {width: 21, height: 21},
