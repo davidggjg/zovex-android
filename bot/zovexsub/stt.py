@@ -171,6 +171,109 @@ async def _transcribe_chunk(client: httpx.AsyncClient, pool: KeyPool, chunk: Chu
     return merged if merged["segments"] else None
 
 
+def _segments_from(payload: dict, offset: float) -> list[Segment]:
+    """בונה סגמנטים מתשובת תמלול אחת, מוזזים לזמן האמיתי בסרטון."""
+    out: list[Segment] = []
+    raw_words = payload.get("words") or []
+    for seg in payload.get("segments") or []:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", start))
+        words = [
+            Word(float(w["start"]) + offset, float(w["end"]) + offset,
+                 str(w.get("word", "")).strip())
+            for w in raw_words
+            if w.get("start") is not None
+            and start - 0.01 <= float(w["start"]) <= end + 0.01
+        ]
+        out.append(Segment(
+            index=0, start=start + offset,
+            end=max(end + offset, start + offset + 0.2),
+            text=text, words=_unstretch(words),
+            no_speech=float(seg.get("no_speech_prob") or 0.0),
+        ))
+    return out
+
+
+def speech_gaps(segments: list[Segment], speech: list[tuple[float, float]],
+                least: float) -> list[tuple[float, float]]:
+    """קטעים שבהם זוהה דיבור ולא נוצר שום תמלול."""
+    found = []
+    for begin, end in speech:
+        if end - begin < least:
+            continue
+        if not any(s.start < end and s.end > begin for s in segments):
+            found.append((begin, end))
+    return found
+
+
+async def recover_gaps(segments: list[Segment],
+                       speech: list[tuple[float, float]],
+                       audio: Path, work: Path, on_step=None) -> int:
+    """מתמלל שוב רק היכן שהדיבור נשמע והתמלול שתק. מחזיר כמה נוספו.
+
+    נמדד בשטח: בין 19 ל-45 שניות דיבור בכל פרק זוהו על ידי ה-VAD
+    וחזרו מהתמלול ריקות. עד כה זה רק נרשם ללוג.
+
+    החור אינו נשאר חור: הכתוביות סביבו נמתחות כדי לכסות אותו, וכתובית
+    שנמתחה על פני עשר שניות מופיעה בזמן הלא נכון. לכן מילים חסרות
+    נראות למשתמש כבעיית תזמון, ותיקון התזמון לבדו לא היה עוזר.
+
+    קטע קצר ומבודד מקבל את מלוא תשומת הלב של המודל, בניגוד לאותו
+    דיבור בתוך קטע של עשרים דקות — ולכן הניסיון החוזר מצליח היכן
+    שהראשון ויתר
+    """
+    gaps = speech_gaps(segments, speech, config.RECOVER_MIN)
+    if not gaps:
+        log.info("אין קטעי דיבור ללא תמלול — אין מה להציל")
+        return 0
+    gaps = gaps[:config.RECOVER_MAX]
+    lost = sum(end - begin for begin, end in gaps)
+    log.warning("%d קטעי דיבור ללא תמלול (%.0f שניות) — מתמלל אותם שוב",
+                len(gaps), lost)
+
+    pool = KeyPool("groq", config.GROQ_API_KEYS)
+    pad = config.RECOVER_PAD
+    added = 0
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0,
+                                                       connect=20.0)) as web:
+        for number, (begin, end) in enumerate(gaps, 1):
+            # ריפוד משני הצדדים: מילה שנחתכה בדיוק בגבול הקטע אינה
+            # ניתנת לזיהוי, וההקשר שלפניה עוזר למודל
+            start = max(0.0, begin - pad)
+            piece = work / f"gap{number:03d}.flac"
+            try:
+                await media.cut_audio(audio, start, end + pad, piece)
+                payload = await _transcribe_chunk(
+                    web, pool, Chunk(piece, start), None, work)
+            except Exception as exc:  # noqa: BLE001 — חור אחד אינו מפיל
+                log.warning("הצלת קטע %d נכשלה: %s", number, exc)
+                payload = None
+            finally:
+                piece.unlink(missing_ok=True)
+
+            if payload:
+                # רק מה שנופל בתוך החור עצמו. הריפוד נועד להקשר,
+                # והטקסט שבו כבר קיים בכתוביות השכנות
+                for found in _segments_from(payload, start):
+                    if found.end > begin and found.start < end:
+                        segments.append(found)
+                        added += 1
+            if on_step:
+                await on_step(number, len(gaps))
+
+    if added:
+        segments.sort(key=lambda s: s.start)
+        for position, segment in enumerate(segments):
+            segment.index = position
+        log.warning("הוצלו %d שורות דיבור שהתמלול הראשון פספס", added)
+    else:
+        log.info("הניסיון החוזר לא הוסיף שורות — כנראה אין שם דיבור ברור")
+    return added
+
+
 async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
                      on_chunk=None, work: Path | None = None) -> Transcript:
     """מתמלל את כל הקטעים במקביל, קטע לכל מפתח.

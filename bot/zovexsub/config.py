@@ -500,6 +500,12 @@ SRT_TAIL_GAP = float(os.getenv("SRT_TAIL_GAP") or 60.0)
 # הצופה. 0 מכבה את הזיהוי (הוא סורק את כל הווידאו ועולה זמן)
 # סחיפה מתקדמת נמדדת רק על קובץ ארוך מספיק: בקליפ קצר ההפרש בין
 # שני החצאים הוא רעש מדידה ולא סחיפה אמיתית
+# הצלת קטעי דיבור שהתמלול פספס: אורך מינימלי שראוי לנסות שוב,
+# תקרה למספר הניסיונות, וריפוד להקשר משני צידי החור
+RECOVER_GAPS = _int("RECOVER_GAPS", 1)
+RECOVER_MIN = float(os.getenv("RECOVER_MIN") or 1.2)
+RECOVER_MAX = _int("RECOVER_MAX", 40)
+RECOVER_PAD = float(os.getenv("RECOVER_PAD") or 0.8)
 DRIFT_MIN_SPAN = float(os.getenv("DRIFT_MIN_SPAN") or 900)
 # הפרש מינימלי בין שני החצאים שנחשב סחיפה ולא רעש
 DRIFT_MIN_CHANGE = float(os.getenv("DRIFT_MIN_CHANGE") or 0.35)

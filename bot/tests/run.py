@@ -1348,6 +1348,43 @@ def _progressive_drift():
     assert config.DRIFT_MIN_SPAN > 0 and config.DRIFT_MAX_RATE > 0
 
 
+@check("דיבור שהתמלול פספס מתומלל שוב ולא רק נרשם בלוג")
+def _gap_recovery():
+    """נמדד בשרת: 19 עד 45 שניות דיבור בכל פרק נשמעו ל-VAD וחזרו
+    ריקות מהתמלול, וכל מה שקרה היה שורת אזהרה.
+
+    וחור אינו נשאר חור: הכתוביות סביבו נמתחות לכסות אותו, וכתובית
+    שנמתחה על פני עשר שניות מופיעה בזמן הלא נכון — ולכן מילים
+    חסרות נראות למשתמש כבעיית תזמון
+    """
+    import inspect
+
+    from zovexsub import config, pipeline, stt
+    from zovexsub.stt import Segment
+
+    # רק מה שגם זוהה כדיבור וגם אין לו תמלול, ורק מעל אורך מינימלי
+    segments = [Segment(index=0, start=0.0, end=5.0, text="a"),
+                Segment(index=1, start=30.0, end=35.0, text="b")]
+    speech = [(0.0, 5.0), (10.0, 14.0), (30.0, 35.0), (40.0, 40.4)]
+    gaps = stt.speech_gaps(segments, speech, 1.2)
+    assert gaps == [(10.0, 14.0)], gaps
+
+    # קטע קצר מהסף אינו נבחר, גם כשאין לו תמלול
+    assert stt.speech_gaps(segments, [(40.0, 40.4)], 1.2) == []
+
+    # והבנייה מתשובת תמלול מזיזה לזמן האמיתי בסרטון
+    built = stt._segments_from(
+        {"segments": [{"text": "שלום", "start": 1.0, "end": 2.0}],
+         "words": [{"start": 1.0, "end": 2.0, "word": "שלום"}]}, offset=100.0)
+    assert built and abs(built[0].start - 101.0) < 0.01, built[0].start
+
+    flow = inspect.getsource(pipeline.run)
+    assert "recover_gaps" in flow, "ההשלמה אינה רצה בצינור"
+    # לפני התרגום, אחרת אין טעם — המילים כבר אבדו
+    assert flow.index("recover_gaps") < flow.index("build_hebrew")
+    assert config.RECOVER_GAPS == 1
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

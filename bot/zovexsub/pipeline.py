@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 
 from . import (align, config, gemini_stt, hebrew, media,
                progress as prog, realign, srt, vad)
-from .stt import transcribe
+from .stt import recover_gaps, transcribe
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +119,27 @@ async def run(source: Path, work: Path, *, progress: Progress,
     speech = await vad.speech_spans(audio)
     if speech is None:
         speech = await media.speech_spans(audio)
+
+    # הצלת דיבור שהתמלול פספס. נמדד בשטח: 19 עד 45 שניות בכל פרק
+    # נשמעו ל-VAD וחזרו ריקות מהתמלול, וזה נרשם ללוג בלבד. חור אינו
+    # נשאר חור — הכתוביות סביבו נמתחות לכסות אותו, וכתובית שנמתחה על
+    # פני עשר שניות מופיעה בזמן הלא נכון. לכן מילים חסרות נראות
+    # למשתמש כבעיית תזמון, וכאן הן מטופלות במקור
+    if config.RECOVER_GAPS and speech:
+        stage = make("🔁 משלים דיבור חסר")
+        stage.pulse()
+
+        async def on_gap(done: int, total: int) -> None:
+            await stage.show(done / max(1, total), note=f"{done}/{total} קטעים")
+
+        try:
+            await recover_gaps(transcript.segments, speech, audio, work,
+                               on_step=on_gap)
+        except Exception as exc:  # noqa: BLE001 — השלמה אינה תנאי
+            log.warning("השלמת הדיבור החסר נכשלה (%s) — ממשיכים בלעדיה", exc)
+        finally:
+            stage.stop()
+        await stage.finish()
 
     # ההקשבה החוזרת מתמללת עד 60 קליפים מחדש, אחד-אחד בטור, כל אחד עם
     # חיתוך ffmpeg וקריאת Groq — דקות ארוכות. היא נבנתה כדי לתקן בדיוק
