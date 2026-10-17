@@ -326,6 +326,15 @@ export default function NativePlayer({
             if (alt) {
               if (debug) setDiag(d => `${d}\nנפילה ל-/vt`);
               setVtSrc(alt);
+              // ה-key חייב להשתנות יחד עם המקור. ExoPlayer ממשיך עם
+              // המקור הישן כשהוא מקבל source חדש בלבד — זה מתועד כאן
+              // כבר ב-PlayerScreen, שמחליף key בכל מעבר מסלול, אבל
+              // המעבר הפנימי הזה החליף רק את ה-source. התוצאה: קובץ
+              // AVI אמנם נפל ל-/vt, אבל הנגן נשאר על ה-AVI שהוא לא
+              // יודע לפתוח — ולכן "AVI לא מתנגן" למרות שההמרה קיימת
+              // בשרת ועובדת.
+              setReady(false);
+              setRetryKey(k => k + 1);
               return;
             }
           }
