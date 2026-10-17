@@ -868,7 +868,10 @@ setTimeout(function(){
     document.getElementById('playerrd').textContent=d;
     document.getElementById('playerr').style.display='flex';
   }catch{}
-  postMsg({type:'play_error',detail:d,soft:true});
+  // empty: האם נכנס ולו בית אחד לבאפר. 'טעינה איטית מטלגרם' תמיד מגיעה
+  // עם משהו בבאפר; מיכל שהדפדפן לא יודע לפתוח (AVI) נשאר על ריק מוחלט.
+  // זה ההבדל שמאפשר להסלים להמרה בלי להרוס טעינה איטית לגיטימית.
+  postMsg({type:'play_error',detail:d,soft:true,empty:b==='ריק'});
 },30000);
 
 if(IS_HLS){
@@ -1348,7 +1351,12 @@ export default function PlayerScreen({route, navigation}) {
         // כי אחרי החזרה הבדיקה תזהה שוב שאין קול ותרצה להחליף בחזרה.
         // soft = שומר-הסף, לא שגיאה אמיתית. מציגים ולא מחזירים, כי טעינה
         // איטית מטלגרם היא מצב לגיטימי כאן.
-        if (!m.soft) {
+        // תקיעה רכה שבה *שום דבר* לא נכנס לבאפר אינה טעינה איטית אלא
+        // מיכל שהדפדפן לא פותח — וזה בדיוק המקרה של AVI. מסלימים להמרה
+        // בשרת פעם אחת, בדיוק כמו בשגיאה קשה. תקיעה רכה שכן התחילה
+        // לצבור בייטים ממשיכה להתנהג כמו קודם: מציגים ולא נוגעים.
+        const hardOrEmptyStall = !m.soft || (m.empty && !vtFix && !vtFixFailedRef.current);
+        if (hardOrEmptyStall) {
           if (vtFix) {
             // גם ההמרה נכשלה. משאירים את השגיאה על המסך ולא חוזרים למקור,
             // שממילא ייכשל — טעינה נוספת רק מאריכה את ההמתנה לשום דבר.
