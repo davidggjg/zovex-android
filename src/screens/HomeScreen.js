@@ -2931,7 +2931,16 @@ const styles = StyleSheet.create({
   epBadgeText: {color: '#fff', fontSize: 10, fontWeight: '800'},
 
   // ── Grid ──
-  grid: {paddingHorizontal: 8, paddingBottom: 20, paddingTop: 4},
+  // paddingBottom מחושב מהסרגל התחתון ולא מספר שנבחר בעין. הסרגל צף
+  // (position:absolute) ולכן הוא לא תופס מקום בפריסה, והרשימה גוללת
+  // *מתחתיו* — כך שהשורה האחרונה הגיעה לסוף הגלילה והשמות נשארו מוסתרים
+  // מאחוריו. 20 פיקסלים לא כיסו אפילו את המרווח מהקצה.
+  //
+  // הסרגל יושב ב-bottom:56, וגובהו padding 6 + 7 + אייקון 24 + תווית ~16
+  // + 7 + 6 ≈ 66. יחד ~122, ועוד אוויר כדי שהשם האחרון לא ייצמד לסרגל.
+  // בטלוויזיה אין סרגל (BottomNav הוא ‎!IS_TV‎) ולכן שם לא השתנה כלום.
+  grid: {paddingHorizontal: 8, paddingTop: 4,
+         paddingBottom: IS_TV ? 20 : 150},
   empty: {color: colors.textSecondary, textAlign: 'center', marginTop: 60, fontSize: font.body},
   emptySearchWrap: {marginTop: 30, alignItems: 'center'},
   emptyClearBtn: {marginTop: 4, paddingVertical: 10, paddingHorizontal: 20,
