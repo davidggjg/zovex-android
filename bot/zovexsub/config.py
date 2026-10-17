@@ -498,6 +498,13 @@ SRT_TAIL_GAP = float(os.getenv("SRT_TAIL_GAP") or 60.0)
 
 # היצמדות לחיתוכי צילום: כתובית שחוצה חיתוך נקראת פעמיים על ידי
 # הצופה. 0 מכבה את הזיהוי (הוא סורק את כל הווידאו ועולה זמן)
+# סחיפה מתקדמת נמדדת רק על קובץ ארוך מספיק: בקליפ קצר ההפרש בין
+# שני החצאים הוא רעש מדידה ולא סחיפה אמיתית
+DRIFT_MIN_SPAN = float(os.getenv("DRIFT_MIN_SPAN") or 900)
+# הפרש מינימלי בין שני החצאים שנחשב סחיפה ולא רעש
+DRIFT_MIN_CHANGE = float(os.getenv("DRIFT_MIN_CHANGE") or 0.35)
+# קצב סחיפה שמעליו ההנחה שגויה וההתערבות תזיק יותר משתועיל
+DRIFT_MAX_RATE = float(os.getenv("DRIFT_MAX_RATE") or 0.01)
 SRT_SNAP_CUTS = _int("SRT_SNAP_CUTS", 1)
 SCENE_THRESHOLD = float(os.getenv("SCENE_THRESHOLD") or 0.35)
 

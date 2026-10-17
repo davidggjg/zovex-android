@@ -1314,6 +1314,40 @@ def _storage_entity_per_account():
     botapi._storage.clear()
 
 
+@check("סחיפה שגדלה עם הזמן מתוקנת ליניארית, לא בהיסט אחד")
+def _progressive_drift():
+    """היסט קבוע אחד מיישר את האמצע ומשאיר את שני הקצוות שגויים.
+
+    פרק של 20 דקות נראה תקין וסרט של שעתיים מתפרק — בדיוק הדפוס
+    שדווח. התיקון חייב להיות ליניארי, ועם שמרנות: בקובץ קצר ההפרש
+    בין שני החצאים הוא רעש מדידה ולא סחיפה
+    """
+    from zovexsub import config, srt
+
+    def cue(start, text="שלום"):
+        return srt.Cue(index=1, start=start, end=start + 1.2, text=text)
+
+    # דיבור כל 10 שניות לאורך שעה
+    speech = [(i * 10.0, i * 10.0 + 1.0) for i in range(360)]
+
+    # כתוביות שמאחרות יותר ויותר: אפס בהתחלה, שתי שניות בסוף
+    total = 3590.0
+    cues = [cue(i * 10.0 + 2.0 * (i * 10.0) / total) for i in range(360)]
+    base, rate, pivot = srt.drift_fit(cues, speech)
+    assert rate > 0, (base, rate)
+    srt.apply_drift(cues, base, rate, pivot)
+    # אחרי התיקון שני הקצוות אמורים לשבת על תחילת דיבור
+    for probe in (cues[5], cues[-5]):
+        near = min(abs(probe.start - a) for a, _ in speech)
+        assert near <= 0.6, (probe.start, near)
+
+    # קליפ קצר: אין מספיק טווח, ואין להתערב
+    short = [cue(i * 10.0) for i in range(12)]
+    assert srt.drift_fit(short, speech[:12])[1] == 0.0, "התערב בקליפ קצר"
+
+    assert config.DRIFT_MIN_SPAN > 0 and config.DRIFT_MAX_RATE > 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

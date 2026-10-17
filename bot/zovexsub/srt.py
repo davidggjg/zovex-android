@@ -64,13 +64,19 @@ def build_cues(segments: list[Segment], lines: list[str],
     if speech:
         # קודם מתקנים שעון מוסט, ורק אחר כך מצמידים נקודתית. הסדר
         # ההפוך היה מצמיד כל כתובית לדיבור הלא נכון
-        drift = global_offset(cues, speech)
-        if abs(drift) >= config.OFFSET_MIN:
-            log.warning("הכתוביות %s ב-%.2f שניות באופן שיטתי — מתוקן",
-                        "מאחרות" if drift > 0 else "מקדימות", abs(drift))
-            cues = apply_offset(cues, drift)
+        # סחיפה מתקדמת קודמת להיסט קבוע: כשהיא קיימת, היסט אחד לכל
+        # הקובץ הוא ממילא הממוצע שלה ומשאיר את שני הקצוות שגויים
+        base, rate, pivot = drift_fit(cues, speech)
+        if rate:
+            cues = apply_drift(cues, base, rate, pivot)
         else:
-            log.info("אין היסט שיטתי בתזמונים (%.2fש)", drift)
+            drift = global_offset(cues, speech)
+            if abs(drift) >= config.OFFSET_MIN:
+                log.warning("הכתוביות %s ב-%.2f שניות באופן שיטתי — מתוקן",
+                            "מאחרות" if drift > 0 else "מקדימות", abs(drift))
+                cues = apply_offset(cues, drift)
+            else:
+                log.info("אין היסט שיטתי בתזמונים (%.2fש)", drift)
         cues = _snap_to_speech(cues, speech, accurate)
     cues = trim_tail(cues)
     cues = merge_short(cues)
@@ -171,6 +177,63 @@ def missed_speech(cues: list[Cue], speech: list[tuple[float, float]]
         if not covered:
             gaps.append((begin, end))
     return gaps
+
+
+def drift_fit(cues: list[Cue], speech: list[tuple[float, float]],
+              ) -> tuple[float, float, float]:
+    """מודד סחיפה שגדלה עם הזמן. מחזיר (היסט בציר, קצב לשנייה, ציר).
+
+    ‏global_offset מחשב היסט קבוע אחד לכל הקובץ, וזה נכון כשכל
+    הכתוביות מוסטות באותו שיעור. אבל כשההיסט **גדל** עם הזמן —
+    שעון שרץ מעט מהר מדי — שיפט אחד מיישר את האמצע ומשאיר את שני
+    הקצוות שגויים, והפער גדל ככל שהקובץ ארוך יותר.
+
+    זה בדיוק מה שנצפה: פרק של 20 דקות נראה תקין וסרט של שעתיים
+    מתפרק. כאן נמדד ההיסט בנפרד בתחילת הקובץ ובסופו, והישר שביניהם
+    הוא הסחיפה. התיקון הוא ליניארי ולא קבוע
+    """
+    if not cues or not speech:
+        return 0.0, 0.0, 0.0
+    ordered = sorted(cues, key=lambda c: c.start)
+    span = ordered[-1].start - ordered[0].start
+    if (span < config.DRIFT_MIN_SPAN
+            or len(ordered) < config.OFFSET_MIN_SAMPLES * 2):
+        return 0.0, 0.0, 0.0
+
+    cut = len(ordered) // 2
+    early, late = ordered[:cut], ordered[cut:]
+    first = global_offset(early, speech)
+    second = global_offset(late, speech)
+
+    def middle(group) -> float:
+        return group[len(group) // 2].start
+
+    t_one, t_two = middle(early), middle(late)
+    if t_two - t_one < config.DRIFT_MIN_SPAN / 2:
+        return 0.0, 0.0, 0.0
+
+    change = second - first
+    if abs(change) < config.DRIFT_MIN_CHANGE:
+        # הפרש זעיר בין שני החצאים הוא רעש מדידה, לא סחיפה
+        return 0.0, 0.0, 0.0
+    rate = change / (t_two - t_one)
+    if abs(rate) > config.DRIFT_MAX_RATE:
+        log.warning("קצב סחיפה חריג (%.4f ש/ש) — מתעלמים", rate)
+        return 0.0, 0.0, 0.0
+    log.warning("סחיפה מתקדמת: %.2fש בתחילת הקובץ מול %.2fש בסופו "
+                "(%.4f ש לכל שנייה) — מתוקן ליניארית", first, second, rate)
+    return first, rate, t_one
+
+
+def apply_drift(cues: list[Cue], base: float, rate: float,
+                pivot: float) -> list[Cue]:
+    """מזיז כל כתובית לפי ההיסט שלה עצמה, ולא לפי היסט אחד לכולן."""
+    for cue in cues:
+        shift = base + rate * (cue.start - pivot)
+        length = max(0.05, cue.end - cue.start)
+        cue.start = max(0.0, cue.start - shift)
+        cue.end = cue.start + length
+    return cues
 
 
 def apply_offset(cues: list[Cue], seconds: float) -> list[Cue]:
