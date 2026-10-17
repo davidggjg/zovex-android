@@ -1,6 +1,7 @@
 package com.zovexapp
 
 import android.content.Context
+import android.os.SystemClock
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.util.TypedValue
@@ -27,6 +28,10 @@ import com.facebook.react.views.view.ReactViewGroup
  * השלט מת. המעבר לפורק היה משנה את ה-Maven namespace של אנדרואיד ומסכן את
  * הקישור הנייטיב הידני שלנו, ולכן מוסיפים כאן רכיב עצמאי וקטן במקום.
  */
+/** כמה זמן אחרי שחלון קיבל focus עדיין נחשב "נפתח עכשיו". מספיק כדי
+ *  לכסות את ה-Dialog של Modal, וקצר מכדי לפגוע בניווט רגיל. */
+private const val INITIAL_FOCUS_GRACE_MS = 1000L
+
 class TvFocusableView(context: Context) : ReactViewGroup(context) {
 
     private fun dp(v: Float) = TypedValue.applyDimension(
@@ -159,6 +164,15 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
     private var focusTries = 0
     private var focusWanted = false
 
+    /** מתי החלון הזה קיבל focus לאחרונה.
+     *
+     *  צריך להבדיל בין שני מצבים שנראים זהים מבפנים: "המשתמש עומד על
+     *  משהו" לעומת "אנדרואיד בחר בעצמו את ה-view הראשון ברגע שהחלון
+     *  נפתח". בשני המקרים יש מחזיק focus, אבל רק הראשון הוא בחירה של
+     *  אדם — ועל השני אסור לוותר, אחרת בקשת ה-focus ההתחלתית ב-Modal
+     *  מפסידה תמיד למי שאנחנו לא בחרנו. ראה את ההסבר ב-someoneElseHasIt. */
+    private var windowFocusedAt = 0L
+
     /** האם הבקשה ההתחלתית כבר מולאה **עבור התצוגה הזאת**.
      *
      *  ‎hasFocus‎ פירושו "התחל כאן", ולא "החזר אליי focus בכל הזדמנות".
@@ -210,7 +224,24 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
             // שהתיבה מאבדת focus — ולכן נכנסה אות אחת בדיוק, וזה מה
             // שדווח מהשטח. אותו דבר קרה בניווט: כל אצווה חדשה החזירה את
             // הסמן לכרטיס הראשון, ו"היה צריך שוב לנווט למקום הנכון".
-            val someoneElseHasIt = (rootView?.findFocus() != null) && findFocus() == null
+            // ── אבל "מישהו אחר" יכול להיות גם הבחירה של אנדרואיד ──────
+            //
+            // כשחלון נפתח, ‎ViewRootImpl‎ נותן focus ל-view הראשון שמסוגל
+            // לקבל אותו. ב-Modal זה קרה לפני שהבקשה שלנו רצה, ולכן
+            // הבדיקה שלמטה מצאה "מחזיק" — ויתרה לצמיתות
+            // (‎focusWanted = false‎), ו-‎initialFocusDone‎ כבר מנע ניסיון
+            // נוסף. התוצאה: בחלון הפרטים בטלוויזיה לא היה סימון על
+            // ההפעלה ולא הייתה דרך להגיע לבורר העונות.
+            //
+            // הזמן הוא ההבדל. משתמש שעומד על משהו עשה את זה מתישהו;
+            // הבחירה האוטומטית קורית באותו רגע שהחלון מקבל focus. לכן
+            // בחלון שרק עכשיו נפתח הבקשה ההתחלתית מנצחת, ובמסך שכבר
+            // פתוח מזמן ההגנה נשארת בדיוק כפי שהייתה — וזה מה שמונע
+            // מכרטיס שנבנה מחדש לגנוב focus מתיבת החיפוש.
+            val windowJustOpened =
+                SystemClock.uptimeMillis() - windowFocusedAt < INITIAL_FOCUS_GRACE_MS
+            val someoneElseHasIt = !windowJustOpened &&
+                (rootView?.findFocus() != null) && findFocus() == null
             if (someoneElseHasIt) {
                 focusWanted = false
                 return@post
@@ -231,6 +262,7 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
 
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
         super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus) windowFocusedAt = SystemClock.uptimeMillis()
         if (hasWindowFocus && focusWanted && !isFocused) tryFocusSoon()
     }
 }

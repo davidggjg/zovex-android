@@ -321,8 +321,16 @@ function MovieDetailModal({
     // הרקע ממסלול ה-focus, וגם נותן טיפול נכון בכפתור "חזור".
     <Modal transparent animationType="fade" visible onRequestClose={onClose}>
     <View style={mdStyles.overlay}>
-      {/* רקע לסגירה בלחיצה — נשאר Touchable כדי שלא ייתפס כיעד focus בשלט */}
-      <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose} activeOpacity={1} />
+      {/* רקע לסגירה בלחיצה.
+          focusable/accessible=false אינם קישוט: TouchableOpacity ב-RN הוא
+          accessible כברירת מחדל, ומשם הוא יוצא focusable באנדרואיד. הרקע
+          הזה פרוס על כל המסך והוא הראשון בעץ, ולכן כשחלון ה-Modal נפתח
+          אנדרואיד נתן *לו* את ה-focus ההתחלתי. משם גם לא הייתה דרך לזוז:
+          חיפוש focus כיווני עובד לפי גאומטריה, וכל שאר הכפתורים נמצאים
+          בתוך המלבן שלו — אז שום חץ לא מצא יעד. זה מה שנראה כמו "השלט
+          מת": אין סימון על ההפעלה, ואי אפשר להגיע לבורר העונות. */}
+      <TouchableOpacity style={StyleSheet.absoluteFillObject} onPress={onClose}
+        activeOpacity={1} focusable={false} accessible={false} />
       <View style={mdStyles.sheet}>
         <TvFocusable style={mdStyles.closeBtn} onPress={onClose}>
           <Text style={mdStyles.closeTxt}>✕</Text>
