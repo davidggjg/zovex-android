@@ -38,14 +38,15 @@ import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
 // נייטיבית חדשה ובלי לוותר על אנדרואיד 7.
 export function vtFallbackSrc(src) {
   if (!src) return null;
-  // גם /fs ולא רק /stream. זה היה הבאג שהשאיר קבצי AVI בלי מסלול המרה:
-  // PlayerScreen מעביר ל-NativePlayer את ‎fsSrc(src)‎ — כלומר כתובת /fs —
-  // והתנאי שחיפש /stream בלבד לא התקיים אף פעם. הנפילה ל-/vt פשוט לא
-  // נדרכה, ובלוג של השרת לא הופיעה ולו שורת vt אחת.
-  // שני המסלולים מצביעים על אותם (chat, message) ועל אותה חתימה, ולכן
-  // ההמרה מקבלת בדיוק את מה שהיא צריכה.
-  const m = String(src).match(/^(.*)\/(?:stream|fs)\/(-?\d+)\/(\d+)(\?.*)?$/);
-  if (!m) return null;                       // לא קישור שלנו
+  // /stream בלבד, ובכוונה. ניסיתי להרחיב את זה גם ל-/fs, כי NativePlayer
+  // מקבל ‎fsSrc(src)‎ ולכן התנאי לא התקיים אף פעם — אבל /fs אינו מנותב
+  // ב-nginx, כלומר הוא *תמיד* נכשל. עם ההרחבה כל סרט בקטלוג נפל להמרת
+  // ffmpeg בשרת במקום ליפול מהר ל-WebView, וזה האט את הכול.
+  //
+  // הנפילה ל-/vt נשארת היכן שהיא נכונה: ב-PlayerScreen, שבונה אותה מתוך
+  // buildSrc (כתובת /stream) כשה-WebView מדווח שהוא לא פתח את הקובץ.
+  const m = String(src).match(/^(.*)\/stream\/(-?\d+)\/(\d+)(\?.*)?$/);
+  if (!m) return null;                       // לא קישור /stream שלנו
   return `${m[1]}/vt/${m[2]}/${m[3]}/index.m3u8${m[4] || ''}`;
 }
 
