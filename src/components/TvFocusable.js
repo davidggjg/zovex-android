@@ -21,6 +21,13 @@ export default function TvFocusable({
   onPress,
   onFocusChange,
   hasFocus = false,
+  // שכבה שנפתחה בתוך חלון שכבר פתוח — ראה requestFocusTakeover בצד
+  // הנייטיב. hasFocus פירושו "התחל כאן" ומוותר למחזיק קיים; focusNow
+  // פירושו "קח", וזה מה שבורר שהמשתמש פתח עכשיו צריך.
+  focusNow = false,
+  // חוסם יציאה של החצים מקבוצת האחים — חובה בכל שכבה מודאלית, כי
+  // חיפוש ה-focus של אנדרואיד גאומטרי ולא מתחשב ב-zIndex.
+  trapFocus = false,
   focusChildOnSelect = false,
   allowChildFocus = false,
   // עמעום האפשרות שאינה ממוקדת, בקבוצת בחירה.
@@ -57,6 +64,8 @@ export default function TvFocusable({
       <NativeTvFocusable
         style={[style, needsJs && focused && focusStyle]}
         hasFocus={hasFocus}
+        focusNow={focusNow}
+        trapFocus={trapFocus}
         reportFocus={needsJs}
         dimUnfocused={dimUnfocused}
         focusChildOnSelect={focusChildOnSelect}

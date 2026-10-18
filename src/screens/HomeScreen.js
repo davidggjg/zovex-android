@@ -215,6 +215,19 @@ function MovieDetailModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item?.id]);
   const [showSeasonPicker, setShowSeasonPicker] = useState(false);
+  // מזהה שמתקדם בכל סגירה של הבורר, ומשמש כ-key לכפתור "עונה X ▾".
+  //
+  // למה key ולא סתם פרופ: הבקשה לקחת focus רצה פעם אחת לכל *תצוגה*
+  // (initialFocusDone בצד הנייטיב), אחרת כל רינדור מחדש היה גונב את
+  // הסמן. הדרך לבקש אותה שוב היא תצוגה חדשה, כלומר key חדש.
+  //
+  // בלי זה: ברגע הסגירה הפריט הממוקד בבורר נעלם מהעץ, אנדרואיד מחפש
+  // יעד חדש גאומטרית, והסמן נוחת במקום שרירותי בחלון — או בכלום.
+  const [pickerClosedCount, setPickerClosedCount] = useState(0);
+  const closeSeasonPicker = useCallback(() => {
+    setShowSeasonPicker(false);
+    setPickerClosedCount(c => c + 1);
+  }, []);
   // בורר העונות עבר מ-Modal שני לשכבת View רגילה (ראה ההסבר ליד
   // seasonPickerWrap) — Modal נתן "חזור" אוטומטי בחינם, View לא. בלי
   // זה "חזור" בזמן שהבורר פתוח היה נופל ישר ל-detailItem שבמסך הבית
@@ -222,12 +235,12 @@ function MovieDetailModal({
   // ה-BackHandler שכבר קיים ב-HomeScreen עצמו.
   useEffect(() => {
     const onBack = () => {
-      if (showSeasonPicker) { setShowSeasonPicker(false); return true; }
+      if (showSeasonPicker) { closeSeasonPicker(); return true; }
       return false;
     };
     const sub = BackHandler.addEventListener('hardwareBackPress', onBack);
     return () => sub.remove();
-  }, [showSeasonPicker]);
+  }, [showSeasonPicker, closeSeasonPicker]);
   const [seasonLoading, setSeasonLoading] = useState(false);
   // ה-description לא נשלח ב-/content/lite (זה השדה הכבד). כשפותחים סרט
   // מושכים אותו לפי דרישה מ-/content/item/{id}. אם הפריט כבר מכיל description
@@ -286,14 +299,14 @@ function MovieDetailModal({
   );
 
   const handleSeasonSelect = useCallback((s) => {
-    setShowSeasonPicker(false);
+    closeSeasonPicker();
     if (s === activeSeason) return;
     setSeasonLoading(true);
     // ההשהיה כאן הייתה כדי להספיק להראות ספינר, אבל היא נוספה לכל החלפת
     // עונה — ובשלט זה מרגיש כמו אפליקציה תקועה. הרשימה מתחלפת מיד.
     setSelectedSeason(s);
     setSeasonLoading(false);
-  }, [activeSeason]);
+  }, [activeSeason, closeSeasonPicker]);
 
   const displayTitle = item ? (item.series_name || item.title || item.name || '') : '';
 
@@ -503,7 +516,12 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
               {seasons.length > 0 && (
                 <View style={mdStyles.seasonRow}>
                   {seasons.length > 1 ? (
-                    <TvFocusable style={mdStyles.seasonBtn} onPress={() => setShowSeasonPicker(true)} activeOpacity={0.8}>
+                    <TvFocusable
+                      key={'seasonBtn' + pickerClosedCount}
+                      focusNow={IS_TV && pickerClosedCount > 0}
+                      style={mdStyles.seasonBtn}
+                      onPress={() => setShowSeasonPicker(true)}
+                      activeOpacity={0.8}>
                       <Text style={mdStyles.seasonBtnTxt}>עונה {activeSeason} ▾</Text>
                     </TvFocusable>
                   ) : (
@@ -583,16 +601,30 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
         // המחיר: Modal נתן "חזור" בחינם; View לא. ראה ה-BackHandler
         // שנוסף למעלה, שסוגר רק את הבורר ולא את כל חלון הפרטים.
         <View style={mdStyles.seasonPickerWrap}>
-          <TouchableOpacity style={mdStyles.seasonPickerOverlay} activeOpacity={1} onPress={() => setShowSeasonPicker(false)}>
+          <TouchableOpacity
+            style={mdStyles.seasonPickerOverlay}
+            activeOpacity={1}
+            // ‎accessible‎ הופך ל-‎focusable‎ באנדרואיד, ולכן הרקע עצמו היה
+            // תחנת focus לשלט — מסך שחור בלי שום סימון.
+            focusable={false}
+            accessible={false}
+            onPress={closeSeasonPicker}>
             <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
               {seasons.map((s, i) => (
                 <TvFocusable
                   key={s}
+                  // focusNow ולא hasFocus: הבורר נפתח בתוך חלון הפרטים
+                  // שפתוח מזמן, וה-focus יושב על כפתור "עונה X ▾"
+                  // שמאחוריו. hasFocus מוותר למחזיק קיים מחוץ לחלון
+                  // שנפתח עכשיו — ולכן הבורר הופיע תמיד בלי סימון.
+                  //
                   // ה-fallback ל-i === 0 חשוב: אם activeSeason אינו ברשימה
                   // (למשל עונה שנעלמה מהקטלוג) שום פריט לא היה מתאים, והבורר
                   // היה נפתח שוב בלי focus.
-                  hasFocus={IS_TV && (s === activeSeason ||
+                  focusNow={IS_TV && (s === activeSeason ||
                                       (!seasons.includes(activeSeason) && i === 0))}
+                  // חוסם יציאה של החצים אל הפקדים שמוסתרים מאחורי השכבה.
+                  trapFocus={IS_TV}
                   style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]}
                   onPress={() => handleSeasonSelect(s)}>
                   <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>

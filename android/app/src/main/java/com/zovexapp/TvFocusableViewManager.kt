@@ -94,6 +94,35 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         if (reportFocus) emit("topFocusChange", gainFocus)
     }
 
+    /** החצים לא יוצאים מקבוצת האחים שבתוך אותו מיכל.
+     *
+     *  zIndex ו-elevation קובעים מה *נראה* מעל מה, ולא לאן focus זז:
+     *  חיפוש ה-focus של אנדרואיד הוא גאומטרי על כל החלון, והוא שמח לנחות
+     *  על פקד שמוסתר לגמרי מאחורי שכבה. בבורר העונות זה אומר שחץ למטה
+     *  מוציא את הסמן מהבורר אל רשימת הפרקים שמאחוריו — הסימון נעלם, ומה
+     *  שהמשתמש רואה הוא בורר שלא מגיב.
+     *
+     *  לכן בשכבה מודאלית צריך גם לחסום יציאה, לא רק לבקש focus. הבדיקה
+     *  היא מול *ההורה* שלנו, שהוא תיבת הבורר, ולכן היא מתארת בדיוק את
+     *  קבוצת הפריטים שמותר לנוע ביניהם — בלי להעביר מזהים בין רכיבים.
+     */
+    var trapFocus = false
+
+    override fun focusSearch(direction: Int): View? {
+        val found = super.focusSearch(direction)
+        if (!trapFocus) return found
+        val box = parent as? ViewGroup ?: return found
+        if (found != null) {
+            var p: android.view.ViewParent? = found.parent
+            while (p != null) {
+                if (p === box) return found
+                p = p.parent
+            }
+        }
+        // היעד מחוץ לקבוצה (או שאין יעד) — נשארים במקום במקום להיעלם.
+        return this
+    }
+
     /** true לשדה החיפוש: לחיצה על המקש המרכזי מעבירה את ה-focus לתיבת הטקסט
      *  שבפנים, וכך נפתחת המקלדת של הטלוויזיה ואפשר להקליד. */
     var focusChildOnSelect = false
@@ -163,6 +192,9 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
     // לולאה אם משהו אחר מונע אותו לגמרי.
     private var focusTries = 0
     private var focusWanted = false
+    /** האם הבקשה הנוכחית מורשית לקחת focus ממחזיק קיים. ראה
+     *  requestFocusTakeover. */
+    private var takeover = false
 
     /** מתי החלון הזה קיבל focus לאחרונה.
      *
@@ -191,6 +223,32 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         initialFocusDone = true
         focusWanted = true
         focusTries = 0
+        tryFocusSoon()
+    }
+
+    /** שכבה שנפתחה *בתוך* חלון שכבר פתוח — ולכן מותר לה לקחת focus.
+     *
+     *  ‎requestFocusWhenReady‎ מוותר כשמישהו אחר מחזיק focus, וההגנה הזאת
+     *  נכונה: בלעדיה כל כרטיס שנבנה מחדש היה גונב את הסמן. היא מוותרת רק
+     *  בחלון שנפתח עכשיו (‎INITIAL_FOCUS_GRACE_MS‎), כי שם המחזיק הוא
+     *  בחירה אוטומטית של ‎ViewRootImpl‎ ולא של אדם.
+     *
+     *  בורר העונות אינו חלון. הוא נפתח כשכבה בתוך חלון הפרטים שפתוח
+     *  מזמן, וה-focus יושב על כפתור "עונה X ▾" שמאחוריו — מחזיק *אמיתי*,
+     *  מלפני יותר משנייה. לכן הבקשה ויתרה תמיד, הבורר הופיע בלי סימון,
+     *  והחצים הזיזו focus לפקדים שמוסתרים מאחורי השכבה. זה מה שדווח
+     *  כ"אי אפשר לעבור בין עונות".
+     *
+     *  הבקשה הזאת אומרת במפורש "קח", ולכן היא פרופ נפרד מ-‎hasFocus‎
+     *  ואין בה את התנאי הזה. מי שמבקש אותה הוא שכבה שהמשתמש פתח בעצמו
+     *  באותו רגע, ולכן לקיחת ה-focus היא בדיוק מה שהוא ציפה לו.
+     */
+    fun requestFocusTakeover() {
+        if (initialFocusDone) return
+        initialFocusDone = true
+        focusWanted = true
+        focusTries = 0
+        takeover = true
         tryFocusSoon()
     }
 
@@ -240,7 +298,7 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
             // מכרטיס שנבנה מחדש לגנוב focus מתיבת החיפוש.
             val windowJustOpened =
                 SystemClock.uptimeMillis() - windowFocusedAt < INITIAL_FOCUS_GRACE_MS
-            val someoneElseHasIt = !windowJustOpened &&
+            val someoneElseHasIt = !takeover && !windowJustOpened &&
                 (rootView?.findFocus() != null) && findFocus() == null
             if (someoneElseHasIt) {
                 focusWanted = false
@@ -248,6 +306,7 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
             }
             if (isAttachedToWindow && requestFocus()) {
                 focusWanted = false
+                takeover = false
                 return@post
             }
             if (focusTries++ < 30) postDelayed({ tryFocusSoon() }, 50)
@@ -324,6 +383,19 @@ class TvFocusableViewManager : ViewGroupManager<TvFocusableView>() {
     @ReactProp(name = "hasFocus")
     fun setHasFocus(view: TvFocusableView, hasFocus: Boolean) {
         if (hasFocus) view.requestFocusWhenReady()
+    }
+
+    /** שכבה שנפתחה בתוך חלון פתוח ולכן מותר לה לקחת focus מהמחזיק —
+     *  ראה requestFocusTakeover. נפרד מ-hasFocus בכוונה. */
+    @ReactProp(name = "focusNow")
+    fun setFocusNow(view: TvFocusableView, v: Boolean) {
+        if (v) view.requestFocusTakeover()
+    }
+
+    /** חוסם יציאה של החצים מקבוצת האחים — ראה trapFocus. */
+    @ReactProp(name = "trapFocus")
+    fun setTrapFocus(view: TvFocusableView, v: Boolean) {
+        view.trapFocus = v
     }
 
     override fun getExportedCustomDirectEventTypeConstants(): MutableMap<String, Any> =
