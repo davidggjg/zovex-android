@@ -1422,6 +1422,30 @@ def _uniform_lead():
     assert config.SRT_LEAD > 0
 
 
+@check("כל קטע בצריבה המקבילית נצרב בקצב פריימים קבוע")
+def _segments_always_cfr():
+    """נמדד בשרת: הפלט יצא 0.381 פריימים לשנייה במקום 23.976.
+
+    הכפייה הוחלה רק כשהמקור זוהה כ-VFR, והמקורות שנכשלו היו CFR
+    נקי. ההנחה הייתה שגויה: concat אינו דורש קצב קבוע מ-VFR בלבד,
+    הוא דורש אותו מכל קטע — כל קטע נחתך מאמצע הסרט ומקבל חותמות
+    זמן יחסיות למקור
+    """
+    import inspect
+
+    from zovexsub import media
+
+    source = inspect.getsource(media._burn_parallel)
+    assert "cfr_args(fps)" in source, "אין כפיית קצב בקטעים"
+    # ללא גייט: שורת הכפייה אינה יושבת בתוך "if vfr"
+    where = source.index("cfr_args(fps)")
+    before = source[:where]
+    assert "if vfr:\n            cmd" not in before, "הכפייה עדיין מותנית"
+    # והבדיקה שתפסה את זה חייבת להישאר
+    verify = inspect.getsource(media._verify)
+    assert "איבדה פריימים" in verify, "בדיקת הפריימים הוסרה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

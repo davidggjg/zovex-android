@@ -965,7 +965,10 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     # 0.374 פריימים לשנייה במקום 23.976, עם אובדן כמעט כל הפריימים.
     # קצב מפורש וזהה לכל הקטעים מסיר את הניחוש מהתמונה
     fps = await video_fps(video)
+    # נשמר לדיווח בלבד: הכפייה עצמה חלה על כל מקור
     vfr = await is_vfr(video)
+    if vfr:
+        log.info("המקור בקצב פריימים משתנה")
     if fps <= 0:
         log.warning("קצב הפריימים של המקור לא נקרא — ההרכבה עלולה להישבר")
     else:
@@ -1000,10 +1003,16 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         ] + _encoder_args(settings, threads, duration)
         # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח
         # סיבוב נוסף על כל הקובץ. נמדד כ-1.9 שניות מבוזבזות לכל קטע
-        # רק מקור VFR זקוק לכפיית קצב. על CFR הדגלים מיותרים, והם
-        # כבר הפילו צריבה שלמה פעם אחת
-        if vfr:
-            cmd += await cfr_args(fps)
+        # קצב קבוע לכל קטע, תמיד — לא רק למקור VFR. ההנחה הקודמת
+        # הייתה שגויה: concat אינו דורש קצב קבוע מ-VFR בלבד, הוא
+        # דורש אותו מכל קטע. כל קטע נחתך מאמצע הסרט ומקבל חותמות
+        # זמן יחסיות למקור, ובלי קצב מפורש הוא יוצא עם אורך מלא
+        # ומספר פריימים זעום. נמדד בשרת על מקור 23.976 CFR לגמרי:
+        # הפלט יצא 0.381 פריימים לשנייה, פחות מ-2% מהפריימים.
+        #
+        # החשש שבגללו נוסף הגייט — ש--fps_mode יפיל את ffmpeg 4.x —
+        # כבר נפתר בתוך cfr_args, שבודק את הגרסה ונופל ל--vsync
+        cmd += await cfr_args(fps)
         cmd += ["-an", str(piece)]
 
         async def progress(fraction: float, speed: str) -> None:
