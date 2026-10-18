@@ -1481,6 +1481,34 @@ def _revival_is_not_a_stall():
     assert config.TG_STALL_TIMEOUT > 0 and config.TG_CONNECT_TIMEOUT > 0
 
 
+@check("סף התקיעה גדול מתקציב הניסיונות של חלק בודד")
+def _stall_beats_retry_budget():
+    """נמדד בשרת: "ההורדה תקועה 184 שניות על 36%".
+
+    חלק בודד רשאי לנסות שלוש פעמים, 60 שניות כל אחת, עם המתנות
+    ביניהן — 186 שניות. סף התקיעה היה 180. כלומר חלק שנזקק למלוא
+    זכות הניסיונות שלו לא יכול לסיים לעולם, כי השומר הורג את
+    ההורדה לפניו. 184 נופל בדיוק בחלון שבין 180 ל-186.
+    """
+    from zovexsub import config
+
+    budget = config._retry_budget()
+    assert budget > 0
+
+    # החשבון עצמו: ניסיונות מלאים ועוד ההמתנות שביניהם
+    waits = sum(min(8, 2 ** step)
+                for step in range(1, config.TG_READ_RETRIES))
+    expected = config.TG_READ_TIMEOUT * config.TG_READ_RETRIES + waits
+    assert abs(budget - expected) < 0.01, (budget, expected)
+
+    # והיחס שחייב להתקיים תמיד
+    assert config.TG_STALL_TIMEOUT > budget, \
+        f"סף {config.TG_STALL_TIMEOUT} אינו גדול מתקציב {budget}"
+    # עם שוליים של ממש, לא בשערה
+    assert config.TG_STALL_TIMEOUT >= budget + 30, \
+        "השוליים צרים מדי — ניסיון תקין ייחתך"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

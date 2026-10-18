@@ -449,6 +449,26 @@ TG_READ_TIMEOUT = float(os.getenv("TG_READ_TIMEOUT") or 60)
 TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
 # אם לא ירד אף בייט בפרק הזמן הזה, ההעברה מוכרזת תקועה ונופלת חזרה
 TG_STALL_TIMEOUT = float(os.getenv("TG_STALL_TIMEOUT") or 180)
+
+
+def _retry_budget() -> float:
+    """כמה זמן חלק בודד רשאי לנסות, במקרה הגרוע.
+
+    שלושה ניסיונות של 60 שניות ועוד ההמתנות ביניהם הם 186 שניות —
+    יותר מסף התקיעה של 180. כלומר חלק שנזקק למלוא זכות הניסיונות
+    שלו לא יכול לסיים לעולם: השומר הורג את ההורדה לפניו. נמדד
+    בשרת כ"ההורדה תקועה 184 שניות על 36%", בדיוק בחלון שבין
+    180 ל-186.
+    """
+    waits = sum(min(8, 2 ** step) for step in range(1, TG_READ_RETRIES))
+    return TG_READ_TIMEOUT * TG_READ_RETRIES + waits
+
+
+# הסף חייב להיות גדול מתקציב הניסיונות, אחרת הוא חותך ניסיון תקין
+# באמצע. רצפה ולא דריסה: ערך גבוה יותר שנקבע ידנית נשמר
+TG_STALL_FLOOR = _retry_budget() + 60
+if TG_STALL_TIMEOUT < TG_STALL_FLOOR:
+    TG_STALL_TIMEOUT = TG_STALL_FLOOR
 TG_FAST_TIMEOUT = float(os.getenv("TG_FAST_TIMEOUT") or 0)   # 0 = בלי תקרה
 
 # מגבלת גודל לקובץ שנשלח ל-Groq (25MB בתוכנית החינמית). נשאיר שולי ביטחון.
