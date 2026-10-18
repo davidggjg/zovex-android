@@ -511,6 +511,11 @@ DRIFT_MIN_SPAN = float(os.getenv("DRIFT_MIN_SPAN") or 900)
 DRIFT_MIN_CHANGE = float(os.getenv("DRIFT_MIN_CHANGE") or 0.35)
 # קצב סחיפה שמעליו ההנחה שגויה וההתערבות תזיק יותר משתועיל
 DRIFT_MAX_RATE = float(os.getenv("DRIFT_MAX_RATE") or 0.01)
+# הקדמה אחידה לכל הכתוביות. זיהוי הדיבור מכריז "יש דיבור" רק אחרי
+# שהאנרגיה הצטברה, כלומר באיחור קל וקבוע — וכיוון שאנחנו גם מצמידים
+# אליו וגם מודדים את ההיסט מולו, ההטיה הזאת בלתי נראית למדידה שלנו
+# ומופיעה למשתמש כדיליי. בעריכת כתוביות מקצועית מקדימים מעט ממילא
+SRT_LEAD = float(os.getenv("SRT_LEAD") or 0.18)
 SRT_SNAP_CUTS = _int("SRT_SNAP_CUTS", 1)
 SCENE_THRESHOLD = float(os.getenv("SCENE_THRESHOLD") or 0.35)
 

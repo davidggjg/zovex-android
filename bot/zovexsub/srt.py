@@ -81,6 +81,13 @@ def build_cues(segments: list[Segment], lines: list[str],
     cues = trim_tail(cues)
     cues = merge_short(cues)
     cues = _fix_timing(cues)
+    # ההקדמה אחרונה, ובכוונה. היא מקטינה כל מרווח בין כתוביות, וקודם
+    # לכן היא שינתה גם את החלטות המיזוג — תופעת לוואי שלא ביקשנו.
+    # כאן היא נוגעת רק בתזמון הסופי.
+    # LEAD_IN שבהצמדה חל על מיעוט הכתוביות בלבד, ולכן רוב הכתוביות
+    # נשארו עם האיחור הקבוע של זיהוי הדיבור — וזה הדיליי שנראה בעין
+    if config.SRT_LEAD > 0:
+        cues = apply_lead(cues, config.SRT_LEAD)
 
     if speech:
         gaps = missed_speech(cues, speech)
@@ -233,6 +240,25 @@ def apply_drift(cues: list[Cue], base: float, rate: float,
         length = max(0.05, cue.end - cue.start)
         cue.start = max(0.0, cue.start - shift)
         cue.end = cue.start + length
+    return cues
+
+
+def apply_lead(cues: list[Cue], seconds: float) -> list[Cue]:
+    """מקדים כל כתובית במעט, בלי לדרוך על זו שלפניה.
+
+    לא אותו דבר כמו תיקון היסט: שם מתקנים שעון שיצא מסנכרון, וכאן
+    מפצים על הטיה ידועה וקבועה של זיהוי הדיבור, שמכריז על דיבור רק
+    אחרי שהאנרגיה הצטברה. הסוף נשאר במקומו, כדי שהכתובית רק תופיע
+    מוקדם יותר ולא תיעלם מוקדם יותר
+    """
+    # None ולא 0.0: לכתובית הראשונה אין שכנה לפניה, ורצפה של פער
+    # הייתה דוחפת אותה קדימה בלי סיבה
+    previous_end: float | None = None
+    for cue in cues:
+        floor = 0.0 if previous_end is None else previous_end + config.SRT_GAP
+        cue.start = max(0.0, floor, cue.start - seconds)
+        cue.end = max(cue.end, cue.start + config.SRT_MIN_DURATION)
+        previous_end = cue.end
     return cues
 
 

@@ -1229,7 +1229,7 @@ def _cue_length_mismatch():
     שורת תרגום אחת חסרה הייתה מוחקת את כל מה שאחריה — למשתמש זה
     נראה כמו "חור בכתוביות" בלי שום דרך לאבחן אותו
     """
-    from zovexsub import srt
+    from zovexsub import config, srt
     from zovexsub.stt import Segment
 
     segments = [Segment(index=i, start=i * 2.0, end=i * 2.0 + 1.5,
@@ -1238,7 +1238,11 @@ def _cue_length_mismatch():
     # התרגום חזר קצר בשלוש שורות — הזנב חייב לשרוד
     cues = srt.build_cues(segments, ["שלום"] * 7)
     assert cues, "לא נוצרו כתוביות"
-    assert cues[-1].start >= segments[6].start, "הזנב נמחק בשקט"
+    assert len(cues) == 7, (len(cues), "שורות אבדו")
+    # ההקדמה האחידה מזיזה כל כתובית מעט אחורה, ולכן ההשוואה עם
+    # סבילות: מה שנבדק כאן הוא שהזנב קיים, לא מיקומו המדויק
+    assert cues[-1].start >= segments[6].start - config.SRT_LEAD - 0.01, \
+        "הזנב נמחק בשקט"
 
     # ואורך זהה ממשיך לעבוד בדיוק כמו קודם
     same = srt.build_cues(segments, ["שלום"] * 10)
@@ -1383,6 +1387,39 @@ def _gap_recovery():
     # לפני התרגום, אחרת אין טעם — המילים כבר אבדו
     assert flow.index("recover_gaps") < flow.index("build_hebrew")
     assert config.RECOVER_GAPS == 1
+
+
+@check("כל הכתוביות מוקדמות מעט, לא רק אלה שהוצמדו")
+def _uniform_lead():
+    """זיהוי הדיבור מכריז על דיבור רק אחרי שהאנרגיה הצטברה.
+
+    האיחור הזה קבוע, ומכיוון שאנחנו גם מצמידים אליו וגם מודדים את
+    ההיסט מולו — הוא בלתי נראה למדידה שלנו. הלוג אומר "אין היסט
+    שיטתי" והמשתמש רואה דיליי, ושניהם צודקים
+    """
+    from zovexsub import config, srt
+
+    def cue(start, end):
+        return srt.Cue(index=1, start=start, end=end, text="שלום")
+
+    cues = [cue(10.0, 12.0), cue(20.0, 22.0)]
+    srt.apply_lead(cues, 0.2)
+    assert abs(cues[0].start - 9.8) < 0.01, cues[0].start
+    assert abs(cues[1].start - 19.8) < 0.01, cues[1].start
+    # הסוף נשאר במקומו: הכתובית מופיעה מוקדם יותר, לא נעלמת מוקדם יותר
+    assert abs(cues[0].end - 12.0) < 0.01, cues[0].end
+
+    # ואינה דורכת על הכתובית שלפניה
+    tight = [cue(10.0, 12.0), cue(12.05, 14.0)]
+    srt.apply_lead(tight, 0.5)
+    assert tight[1].start >= tight[0].end, (tight[0].end, tight[1].start)
+
+    # ולא לפני תחילת הסרטון
+    edge = [cue(0.1, 2.0)]
+    srt.apply_lead(edge, 0.5)
+    assert edge[0].start == 0.0, edge[0].start
+
+    assert config.SRT_LEAD > 0
 
 
 def main() -> int:
