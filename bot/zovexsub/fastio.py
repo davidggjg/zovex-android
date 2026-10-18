@@ -532,6 +532,7 @@ async def _parallel_download(client, message, dst: Path, size: int,
         guard = asyncio.create_task(watchdog())
         healthy = list(senders)
         revivals = 0
+        # נכתב בתוך לולאת ההחייאה שלמטה, ולכן חייב להיות מוצהר כאן
         try:
             # סבבים: חיבור שמת מחזיר את החלק שלו לתור, ואם העובדים האחרים
             # כבר סיימו — סבב נוסף עם מי שנשאר חי לוקח אותו. בלי זה חיבור
@@ -552,12 +553,27 @@ async def _parallel_download(client, message, dst: Path, size: int,
                                 revivals, config.TG_REVIVALS)
                     if on_progress:
                         await on_progress(done, size, "מתחבר מחדש")
-                    await asyncio.sleep(min(30, 5 * revivals))
+                    # ההתאוששות היא המתנה לגיטימית, בדיוק כמו המתנה
+                    # שטלגרם ביקש: בזמנה לא יורד אף בייט מעצם טבעה.
+                    # בלי לסמן אותה השומר ספר אותה כתקיעה והרג את
+                    # ההתאוששות בדיוק כשהיא עבדה — נמדד בשרת כ"ההורדה
+                    # תקועה 184 שניות על 36%" על קובץ של 2.7GB, כלומר
+                    # קרוב לג'יגה־בייט שנזרק. השומר כבר יודע לכבד את
+                    # state["until"]; כאן הוא פשוט לא עודכן
+                    rest = min(30, 5 * revivals)
+                    state["until"] = max(
+                        state["until"],
+                        time.monotonic() + rest + config.TG_CONNECT_TIMEOUT + 5)
+                    await asyncio.sleep(rest)
                     fresh = min(workers, -(-pending.qsize() // 1) or 1)
                     healthy = await asyncio.wait_for(
                         _open_senders(client, dc_id, fresh),
                         timeout=config.TG_CONNECT_TIMEOUT)
                     senders.extend(healthy)
+                    # החיבורים קמו — השעון מתחיל מכאן, ולא מהבייט האחרון
+                    # שירד לפני הנפילה
+                    last_progress = time.monotonic()
+                    state["until"] = 0.0
 
                 outcomes = asyncio.gather(
                     *(worker(sender) for sender in healthy), return_exceptions=True)

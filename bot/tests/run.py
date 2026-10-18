@@ -1446,6 +1446,41 @@ def _segments_always_cfr():
     assert "איבדה פריימים" in verify, "בדיקת הפריימים הוסרה"
 
 
+@check("התאוששות מחיבורים שמתו אינה נספרת כתקיעה")
+def _revival_is_not_a_stall():
+    """נמדד בשרת: "ההורדה תקועה 184 שניות על 36%" על קובץ 2.7GB.
+
+    כשכל החיבורים מתים ההורדה מנסה להתאושש, וההתאוששות לוקחת עד
+    30 שניות המתנה ועוד עד 45 לפתיחת חיבורים — זמן שבו לא יורד אף
+    בייט מעצם טבעה. השומר ספר אותו כתקיעה והרג את ההתאוששות בדיוק
+    כשהיא עבדה, וכמעט ג'יגה־בייט שכבר ירד נזרק.
+
+    המנגנון כבר היה שם: השומר מכבד state["until"] עבור המתנה
+    שטלגרם ביקש. ההתאוששות פשוט לא עדכנה אותו
+    """
+    import inspect
+
+    from zovexsub import config, fastio
+
+    src = inspect.getsource(fastio._parallel_download)
+    revival = src[src.index("revivals += 1"):]
+
+    # הסימון חייב לקרות לפני ההמתנה, אחרת השומר כבר ספר אותה
+    mark = revival.index('state["until"] = max(')
+    assert mark < revival.index("await asyncio.sleep(rest)"), \
+        "ההמתנה אינה מסומנת לפני שהיא מתחילה"
+    # והחלון חייב לכסות גם את ההמתנה וגם את פתיחת החיבורים
+    assert "TG_CONNECT_TIMEOUT + 5" in revival, "החלון קצר מדי"
+    # ואחרי שהחיבורים קמו השעון מתחיל מחדש
+    after = revival[revival.index("senders.extend(healthy)"):]
+    assert "last_progress = time.monotonic()" in after, \
+        "השעון ממשיך מהבייט שלפני הנפילה"
+
+    # והשומר עצמו עדיין מכבד את החלון
+    assert 'if now < state["until"]' in src, "השומר אינו מכבד המתנה"
+    assert config.TG_STALL_TIMEOUT > 0 and config.TG_CONNECT_TIMEOUT > 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
