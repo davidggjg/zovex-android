@@ -1867,6 +1867,27 @@ def _revival_shrinks():
     assert rounds == [8, 4, 2, 2, 2], rounds
 
 
+@check("תקרת ה-bitrate חסומה, וסרטון קצר לא מפיל את הצריבה")
+def _bitrate_cap_clamped():
+    # 26 שניות הפילו צריבה בשרת: bufsize של 2,292,270k, מעל התקרה של
+    # מספר שלם 32 ביט, ו-ffmpeg דחה את האפשרות
+    for seconds in (1.0, 5.0, 26.0, 60.0, 3600.0):
+        cap = media._bitrate_cap(seconds)
+        assert cap >= 300, (seconds, cap)
+        assert cap <= config.BITRATE_CAP_MAX, (seconds, cap)
+        # זה האילוץ האמיתי: bufsize הוא פי שתיים, והוא חייב להיכנס
+        # במספר שלם 32 ביט כשהוא מוכפל ב-1000 על ידי ffmpeg
+        assert cap * 2 * 1000 < 2 ** 31, (seconds, cap)
+
+    # אורך לא ידוע נשאר בלי תקרה בכלל, כמו קודם
+    assert media._bitrate_cap(0) == 0
+    assert media._bitrate_cap(-1) == 0
+
+    # וסרט שלם מקבל תקרה נמוכה מזו של סרטון קצר: החלוקה לפי האורך
+    # עדיין עובדת, והחסימה לא השטיחה את כולם לאותו מספר
+    assert media._bitrate_cap(2.5 * 3600) <= media._bitrate_cap(60.0)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

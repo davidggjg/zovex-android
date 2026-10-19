@@ -1227,11 +1227,23 @@ async def _verify(result: Path, expected: float,
 
 
 def _bitrate_cap(duration: float) -> int:
-    """כמה kbps מותר לווידאו כדי שהקובץ כולו ייכנס במגבלת ההעלאה."""
+    """כמה kbps מותר לווידאו כדי שהקובץ כולו ייכנס במגבלת ההעלאה.
+
+    התקרה חסומה מלמעלה, וזה לא קוסמטי: ffmpeg מקבל את bufsize כמספר
+    שלם 32 ביט, ו-bufsize הוא פי שתיים מהתקרה. סרטון קצר מקבל תקציב
+    עצום לכל שנייה — על 26 שניות יצא cap של 1,146,135kbps, כלומר
+    bufsize של 2,292,270k, ו-ffmpeg דחה אותו:
+    "Value 2292270000.000000 for parameter 'bufsize' out of range".
+    הצריבה נפלה על סרטון תקין לגמרי, רק קצר.
+
+    ומעבר לכך התקרה הזאת ממילא חסרת משמעות: שום מקור אינו מתקרב
+    למאה מגהביט לשנייה, ותקרה שגבוהה מהמקור אינה מגבילה כלום
+    """
     if duration <= 0:
         return 0
     budget_bits = config.UPLOAD_LIMIT_MB * 1024 ** 2 * 8 * 0.90  # שוליים לאודיו ולמכולה
-    return max(300, int(budget_bits / duration / 1000))
+    want = int(budget_bits / duration / 1000)
+    return max(300, min(want, config.BITRATE_CAP_MAX))
 
 
 async def scene_cuts(video: Path, threshold: float = 0.35) -> list[float]:
