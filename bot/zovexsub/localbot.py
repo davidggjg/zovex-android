@@ -282,6 +282,25 @@ def media_of(message: dict) -> tuple[str, int, str]:
     return "", 0, ""
 
 
+def photo_of(message: dict) -> tuple[str, int]:
+    """(file_id, גודל) של הגודל הגדול ביותר בתמונה, או ריק.
+
+    טלגרם שולחת תמונה כמערך של גדלים, מהקטן לגדול. media_of מתעלם
+    ממנה לגמרי כי היא אינה וידאו ואינה מסמך
+    """
+    sizes = message.get("photo") or []
+    if not sizes:
+        # תמונה שנשלחה כקובץ שומרת על האיכות המלאה, ולכן זו דווקא
+        # הדרך העדיפה לשלוח אותה — ויש לקלוט גם אותה
+        item = message.get("document") or {}
+        kind = (item.get("mime_type") or "").lower()
+        if kind.startswith("image/"):
+            return item.get("file_id", ""), int(item.get("file_size", 0) or 0)
+        return "", 0
+    largest = max(sizes, key=lambda s: int(s.get("file_size", 0) or 0))
+    return largest.get("file_id", ""), int(largest.get("file_size", 0) or 0)
+
+
 def looks_like_subtitle(message: dict) -> bool:
     """האם ההודעה נושאת קובץ כתוביות.
 

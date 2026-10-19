@@ -535,6 +535,13 @@ DRIFT_MAX_RATE = float(os.getenv("DRIFT_MAX_RATE") or 0.01)
 # שהאנרגיה הצטברה, כלומר באיחור קל וקבוע — וכיוון שאנחנו גם מצמידים
 # אליו וגם מודדים את ההיסט מולו, ההטיה הזאת בלתי נראית למדידה שלנו
 # ומופיעה למשתמש כדיליי. בעריכת כתוביות מקצועית מקדימים מעט ממילא
+# תצוגה מקדימה מותאמת. טלגרם חוסמת אותה ב-320 פיקסל וב-200KB בפורמט
+# JPEG — מגבלה שלה, שאי אפשר לעקוף. מה שכן בידינו הוא לא לבזבז את
+# התקרה הזאת: הקטנה עם לנצוש ואיכות גבוהה נראית הרבה יותר טוב
+# מגרב־פריים של הווידאו, גם באותם 320 פיקסל
+THUMB_MAX = _int("THUMB_MAX", 320)
+THUMB_BYTES = _int("THUMB_BYTES", 190_000)
+THUMB_QUALITY = _int("THUMB_QUALITY", 2)
 SRT_LEAD = float(os.getenv("SRT_LEAD") or 0.18)
 SRT_SNAP_CUTS = _int("SRT_SNAP_CUTS", 1)
 SCENE_THRESHOLD = float(os.getenv("SCENE_THRESHOLD") or 0.35)

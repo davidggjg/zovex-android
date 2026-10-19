@@ -1509,6 +1509,51 @@ def _stall_beats_retry_budget():
         "השוליים צרים מדי — ניסיון תקין ייחתך"
 
 
+@check("תמונת תצוגה מקדימה נקלטת, מוכנה ומחליפה את הפריים")
+def _custom_cover():
+    """טלגרם חוסמת תצוגה מקדימה ב-320 פיקסל וב-200KB.
+
+    תמונת 4K תוקטן תמיד — זו מגבלה שלה. מה שכן בידינו הוא לא לבזבז
+    את התקרה: הקטנה בלנצוש באיכות גבוהה נראית טוב בהרבה מגרב־פריים
+    של הווידאו באותם 320 פיקסל
+    """
+    import inspect
+
+    from zovexsub import botjob, botmenu, config, localbot, media
+
+    # השאלה קיימת בתפריט, לפני בחירת הצריבה
+    fields = [step[2] for step in botmenu.STEPS]
+    assert "cover" in fields, fields
+    assert fields.index("cover") < fields.index("speed"), fields
+    assert "cover" in botmenu.Choice.__annotations__
+
+    # תמונה מגיעה כ-photo, ש-media_of מתעלם ממנו — צריך קורא משלה
+    assert localbot.media_of({"photo": [{"file_id": "x"}]}) == ("", 0, "")
+    got, _ = localbot.photo_of(
+        {"photo": [{"file_id": "small", "file_size": 10},
+                   {"file_id": "big", "file_size": 900}]})
+    assert got == "big", got
+    # ותמונה שנשלחה כקובץ שומרת על האיכות — גם אותה קולטים
+    assert localbot.photo_of(
+        {"document": {"file_id": "d", "mime_type": "image/png"}})[0] == "d"
+    assert localbot.photo_of({"document": {"mime_type": "text/plain"}})[0] == ""
+
+    assert hasattr(media, "thumb_from_image")
+    assert config.THUMB_MAX <= 320, "מעל התקרה של טלגרם"
+    assert config.THUMB_BYTES < 200_000, "מעל התקרה של טלגרם"
+
+    # התמונה שהתקבלה גוברת על הפריים מהסרטון, ואינה זולגת לעבודה הבאה
+    burn = inspect.getsource(botjob._burn)
+    assert "_cover.pop(" in burn, "אינו משתמש בתמונה שהתקבלה"
+    assert burn.index("_cover.pop(") < burn.index("media.poster("), \
+        "הפריים גובר על התמונה"
+    assert "_cover_wait.discard" in burn, "ההמתנה אינה מתנקה"
+
+    # ובהעלאה: כמה מתוך כמה, לא רק אחוז
+    relay = inspect.getsource(botjob._relay_video)
+    assert "/{total / 1048576:.0f}MB" in relay, "אין כמה מתוך כמה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

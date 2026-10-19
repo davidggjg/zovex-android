@@ -1089,6 +1089,39 @@ async def poster(video: Path, work: Path) -> Path | None:
     return thumb if thumb.exists() and thumb.stat().st_size else None
 
 
+async def thumb_from_image(image: Path, work: Path) -> Path | None:
+    """מכין תמונה שהמשתמש שלח לשמש כתצוגה מקדימה.
+
+    טלגרם חוסמת תצוגה מקדימה ב-320 פיקסל וב-200KB בפורמט JPEG. זו
+    מגבלה שלה ואי אפשר לעקוף אותה — תמונת 4K תוקטן תמיד, בכל בוט.
+
+    מה שכן בידינו הוא לא לבזבז את התקרה: הקטנה בלנצוש ואיכות JPEG
+    גבוהה נראית הרבה יותר טוב מאותם 320 פיקסל שנחתכו מפריים וידאו.
+    אם התוצאה עדיין כבדה מדי, האיכות יורדת בהדרגה עד שהיא נכנסת
+    """
+    out = work / "cover.jpg"
+    for quality in range(config.THUMB_QUALITY, 12):
+        try:
+            await _run([
+                "ffmpeg", "-nostdin", "-y", "-i", str(image),
+                "-vf", f"scale='min({config.THUMB_MAX},iw)':-2:flags=lanczos",
+                "-frames:v", "1", "-q:v", str(quality), str(out),
+            ], timeout=120)
+        except (FFmpegError, OSError) as exc:
+            log.warning("הכנת התצוגה המקדימה נכשלה: %s", exc)
+            return None
+        if not out.exists() or not out.stat().st_size:
+            return None
+        if out.stat().st_size <= config.THUMB_BYTES:
+            log.info("תצוגה מקדימה מותאמת: %dKB באיכות %d",
+                     out.stat().st_size // 1024, quality)
+            return out
+        log.info("התצוגה המקדימה %dKB — מעל התקרה, מנסה איכות %d",
+                 out.stat().st_size // 1024, quality + 1)
+    log.warning("לא הצלחנו להכניס את התצוגה המקדימה לתקרה של טלגרם")
+    return None
+
+
 async def _check_codec(result: Path, expected: str = "") -> None:
     """מוודא שהפלט באמת HEVC כשזה מה שביקשנו.
 

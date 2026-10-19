@@ -38,6 +38,7 @@ class Choice:
     size_bytes: int = 0
     name: str = ""
     source: str = ""             # make / own
+    cover: str = ""              # תמונת תצוגה מקדימה: כן / לא
     speed: str = ""              # מהיר (H.264) / איכותי (H.265)
     url: str = ""                # קישור, כשהעבודה התחילה מקישור
     quality: str = ""            # רזולוציית ההורדה מקישור
@@ -60,6 +61,12 @@ STEPS = (
       [("⬜ לבן בלבד", "look:לבן")],
       [("✒️ לבן עם קו מתאר", "look:קו")]],
      "look", False),
+    ("🖼️ <b>תמונת תצוגה מקדימה?</b>\n\n"
+     "התמונה שתשלח תהיה מה שרואים לפני שפותחים את הסרטון.\n"
+     "<i>טלגרם מקטינה כל תצוגה מקדימה ל-320 פיקסל — זו מגבלה שלה.</i>",
+     [[("🖼️ כן, אשלח תמונה", "cover:כן")],
+      [("🎞️ לא, פריים מהסרטון", "cover:לא")]],
+     "cover", False),
     ("⚙️ <b>איכות הצריבה</b>\n\n"
      "<b>איכותית</b> — H.265, קובץ קטן יותר באותה איכות.\n"
      "<b>מהירה</b> — H.264, מסיימת מהר יותר, קובץ גדול יותר.",
@@ -109,6 +116,10 @@ SOURCE_KEYS = [[("🤖 תייצר לי כתוביות", "src:make")],
 on_choice = None
 on_subtitle = None
 on_waiting = None
+# on_cover כשהמשתמש שלח תמונה לתצוגה מקדימה, on_wanting_cover כדי
+# לדעת אם מחכים לאחת
+on_cover = None
+on_wanting_cover = None
 
 
 def _applies(index: int, choice: "Choice") -> bool:
@@ -283,6 +294,16 @@ async def _incoming(message: dict) -> None:
     chat = (message.get("chat") or {}).get("id")
     if not chat:
         return
+    # תמונה לתצוגה מקדימה קודמת לכל זיהוי אחר: היא מגיעה כ-photo,
+    # ש-media_of מתעלם ממנו לגמרי, ואז ההודעה הייתה נופלת לענף
+    # "שלח סרטון או קישור" כאילו לא הבנו אותה
+    if on_wanting_cover and on_wanting_cover(chat):
+        shot, _ = localbot.photo_of(message)
+        if shot:
+            if on_cover:
+                _detach(on_cover(chat, shot), "תמונת תצוגה מקדימה")
+            return
+
     file_id, size, name = localbot.media_of(message)
     if not file_id:
         text = (message.get("text") or "").strip()

@@ -357,6 +357,12 @@ async def run(choice) -> None:
     # כמעט תמיד תוך כדי, וקודם הוא נפל בין הכיסאות
     if choice.source == "own":
         _waiting[int(chat_id)] = None
+    # אותו טעם: התמונה מגיעה כמעט תמיד תוך כדי ההורדה, ובלי להירשם
+    # מראש ההודעה שלה הייתה נופלת לענף "שלח סרטון או קישור"
+    if choice.cover == "כן":
+        _cover_wait.add(int(chat_id))
+        await localbot.say(chat_id, "🖼️ שלח עכשיו את התמונה לתצוגה "
+                                    "המקדימה. אפשר גם תוך כדי ההורדה.")
 
     try:
         if choice.url:
@@ -403,6 +409,43 @@ async def run(choice) -> None:
         log.exception("עבודת הבוט נכשלה")
         await screen.show(f"❌ {exc}", force=True)
         pipeline.cleanup(work)
+
+
+# צ'אטים שממתינים לתמונת תצוגה מקדימה, והתמונה המוכנה כשהגיעה.
+# אותו דפוס כמו _waiting/_given לכתוביות: התמונה מגיעה כמעט תמיד
+# תוך כדי ההורדה, ובלי מקום להחזיק אותה היא הייתה נזרקת בשקט
+_cover_wait: set[int] = set()
+_cover: dict[int, Path] = {}
+
+
+def wanting_cover(chat_id) -> bool:
+    return int(chat_id) in _cover_wait
+
+
+async def take_cover(chat_id, file_id: str) -> None:
+    """תמונה שהמשתמש שלח לשמש תצוגה מקדימה."""
+    chat = int(chat_id)
+    found, why = await localbot.locate(file_id)
+    if found is None:
+        await localbot.say(chat_id,
+                           f"לא הצלחתי לקרוא את התמונה.\n<code>{why}</code>")
+        return
+
+    holding = config.WORK_DIR / f"cover-{chat}-{uuid.uuid4().hex[:6]}"
+    holding.mkdir(parents=True, exist_ok=True)
+    ready = await media.thumb_from_image(found, holding)
+    if ready is None:
+        await localbot.say(chat_id, "התמונה לא התאימה לתצוגה מקדימה. "
+                                    "נמשיך עם פריים מהסרטון.")
+        _cover_wait.discard(chat)
+        return
+
+    _cover[chat] = ready
+    _cover_wait.discard(chat)
+    log.info("תצוגה מקדימה התקבלה לצ'אט %s (%dKB)",
+             chat, ready.stat().st_size // 1024)
+    await localbot.say(chat_id, "✅ קיבלתי את התמונה. היא תהיה התצוגה "
+                                "המקדימה של הסרטון.")
 
 
 async def take_subtitle(chat_id, file_id: str, name: str) -> None:
@@ -493,13 +536,21 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
             while True:
                 await asyncio.sleep(config.BOT_EDIT_EVERY)
                 waited = int(time.monotonic() - began)
+                # אין כאן התקדמות אמיתית: השרת המקומי קורא את הקובץ
+                # מהדיסק בקריאה אחת. לפחות שהגודל והשעון יהיו תמיד שם
                 await screen.show(
                     f"📤 שולח {megabytes:.0f}MB · "
-                    f"{waited // 60}:{waited % 60:02d}", force=True)
+                    f"{waited // 60}:{waited % 60:02d} · דרך השרת המקומי",
+                    force=True)
 
         pulse = asyncio.create_task(beat())
         try:
-            poster = await media.poster(dst, work)
+            # תמונה שהמשתמש שלח גוברת על פריים מהסרטון
+            poster = _cover.pop(int(chat_id), None)
+            if poster is not None and poster.exists():
+                log.info("תצוגה מקדימה: תמונה שהמשתמש שלח")
+            else:
+                poster = await media.poster(dst, work)
             # מעל תקרת הבוט עוברים דרך האחסון במקום לסרב. קודם הפלט
             # פשוט הוכרז "נדרש חשבון Premium" אחרי שהצריבה כבר הסתיימה
             if dst.stat().st_size > localbot.MAX_BYTES:
@@ -525,6 +576,11 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         log.exception("הצריבה בבוט נכשלה")
         await screen.show(f"❌ {exc}", force=True)
     finally:
+        # ניקוי, אחרת תמונה שנשארה תזלוג לעבודה הבאה באותו צ'אט
+        _cover_wait.discard(int(chat_id))
+        stale = _cover.pop(int(chat_id), None)
+        if stale is not None:
+            shutil.rmtree(stale.parent, ignore_errors=True)
         pipeline.cleanup(work)
 
 
@@ -561,11 +617,19 @@ async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
     # טלתון. הערה אופציונלית מספקת את שניהם
     async def on_upload(done, total, note: str = "") -> None:
         elapsed = max(0.1, time.monotonic() - began)
-        await screen.show(
-            f"📤 מעלה (חשבון {which}) · "
-            f"{done * 100 // max(1, total)}% · "
-            f"{done / elapsed / 1048576:.1f}MB/s"
-            f"{' · ' + note if note else ''}")
+        # כמה מתוך כמה, תמיד. אחוז לבדו אינו אומר אם נשארו 40 מגה
+        # או 2 ג'יגה, ועל קובץ גדול זה כל ההבדל
+        rate = done / elapsed / 1048576
+        left = (total - done) / 1048576 / rate if rate > 0.01 else 0
+        parts = [f"{done / 1048576:.0f}/{total / 1048576:.0f}MB",
+                 f"{done * 100 // max(1, total)}%",
+                 f"{rate:.1f}MB/s",
+                 f"{int(elapsed) // 60}:{int(elapsed) % 60:02d}"]
+        if left > 1:
+            parts.append(f"נותרו ~{int(left) // 60}:{int(left) % 60:02d}")
+        if note:
+            parts.append(note)
+        await screen.show(f"📤 מעלה (חשבון {which}) · " + " · ".join(parts))
 
     seconds = float(info.get("format", {}).get("duration", 0) or 0)
     attributes = fastio.video_attributes(
@@ -602,3 +666,5 @@ def install() -> None:
     botmenu.on_choice = run
     botmenu.on_subtitle = take_subtitle
     botmenu.on_waiting = waiting_for
+    botmenu.on_cover = take_cover
+    botmenu.on_wanting_cover = wanting_cover
