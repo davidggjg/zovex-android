@@ -1945,6 +1945,70 @@ def _repair_bounded():
     assert out == lines, out
 
 
+@check("כתובית שלא נכנסת בשתי שורות מפוצלת לשתיים, ולא מקבלת שורה שלישית")
+def _split_overlong():
+    fps = 24.0
+    frame = 1.0 / fps
+    long_text = " ".join(["מילה"] * 40)
+
+    cue = srt.Cue(index=1, start=10.0, end=18.0, text=long_text)
+    assert srt.wrap(cue.text).count("\n") >= 2, "הטקסט אמור לחרוג"
+
+    cues = [cue]
+    assert srt.split_overlong(cues, fps) == 1
+    # כמה שצריך, לא בהכרח שתיים: טקסט ארוך מאוד אינו נכנס בשתי
+    # כתוביות של שתי שורות
+    assert len(cues) >= 2
+
+    # אף כתובית לא נשארת עם שלוש שורות
+    for one in cues:
+        assert srt.wrap(one.text).count("\n") < config.SRT_MAX_LINES, one.text
+
+    # הטקסט נשמר במלואו, ושום מילה לא נבלעה
+    assert " ".join(c.text.replace("\n", " ") for c in cues).split() == \
+        long_text.split()
+
+    # הזמנים לא חורגים מהמקור, ויש מרווח תקין ביניהן
+    assert cues[0].start == 10.0 and cues[-1].end == 18.0
+    for before, after in zip(cues, cues[1:]):
+        assert abs((after.start - before.end) - 2 * frame) < 1e-6
+    for one in cues:
+        assert one.end - one.start >= config.SRT_MIN_DURATION, one
+
+    # והמספור רץ מחדש, אחרת הקובץ שבור
+    assert [c.index for c in cues] == list(range(1, len(cues) + 1))
+
+    # כתובית קצרה מדי לפיצול נשארת כמו שהיא — עדיף שלוש שורות
+    # מאשר שתי כתוביות שמהבהבות
+    tight = [srt.Cue(index=1, start=0.0, end=1.2, text=long_text)]
+    assert srt.split_overlong(tight, fps) == 0
+    assert len(tight) == 1
+
+    # וכתובית תקינה אינה נגעת כלל
+    fine = [srt.Cue(index=1, start=0.0, end=3.0, text="שלום לך")]
+    assert srt.split_overlong(fine, fps) == 0
+
+
+@check("שורה שלא תורגמה ונשארה בשפה זרה נתפסת, גם בלי עברית לידה")
+def _foreign_detector():
+    from zovexsub import cleanup
+
+    # המקרה שמתרגם מקצועי מצא בפלט: קטעים שלמים בסינית. קודם הגלאי
+    # דרש שתהיה גם עברית באותה שורה, ולכן שורה שכולה סינית עברה בשקט
+    for text in ("他说你好", "こんにちは", "안녕하세요",
+                 "Привет", "Γειά σου", "مرحبا"):
+        assert cleanup.has_foreign(text), text
+        assert cleanup.has_foreign(f"שלום {text} לך"), text
+
+    # עברית נקייה עוברת, וגם לטינית: שמות ומותגים לגיטימיים בכתובית
+    for text in ("שלום לך", "שלום OK גמור", "נתניה 2026", "דוד ג'ונס"):
+        assert not cleanup.has_foreign(text), text
+
+    # והאיתור ברמת הרשימה מחזיר את המיקומים הנכונים
+    lines = ["שלום", "他说", "בסדר", "Привет"]
+    assert cleanup.foreign_lines(lines) == [1, 3]
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

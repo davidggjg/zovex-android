@@ -183,11 +183,18 @@ async def run(source: Path, work: Path, *, progress: Progress,
         raise RuntimeError("התרגום חזר ריק.")
     # חיתוכי צילום: אריתמטיקה בלבד, בלי שום קריאת מודל. כתובית שחוצה
     # חיתוך נקראת פעמיים על ידי הצופה, וזה החוק שמבדיל קובץ מקצועי
+    # שתי שורות הן תקרה בכל תקן מקצועי. כתובית שאינה נכנסת בהן מפוצלת
+    # לשתי כתוביות — ולא מקבלת שורה שלישית, שמכריחה את העין לשלוש
+    # תנועות סריקה בזמן שהפריים ממשיך לזוז
+    fps = await media.video_fps(source) or 24.0
+    split = srt.split_overlong(cues, fps)
+    if split:
+        log.info("פוצלו %d כתוביות שלא נכנסו בשתי שורות", split)
+
     if config.SRT_SNAP_CUTS:
         await progress("🎬 מרחיק כתוביות מחיתוכי צילום…")
         cuts = await media.scene_cuts(source, config.SCENE_THRESHOLD)
         if cuts:
-            fps = await media.video_fps(source) or 24.0
             moved = srt.snap_to_cuts(cues, cuts, fps)
             log.info("הוזזו %d כתוביות מחיתוכי צילום (מתוך %d, %.0f fps)",
                      moved, len(cues), fps)

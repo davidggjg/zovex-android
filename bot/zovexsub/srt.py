@@ -652,6 +652,86 @@ def slice_file(source: Path, start: float, end: float, dst: Path) -> Path:
     return dst
 
 
+def _fits(text: str) -> bool:
+    """האם הטקסט נכנס בשתי שורות ברוחב המותר."""
+    return wrap(text).count("\n") < config.SRT_MAX_LINES
+
+
+def _pieces(words: list[str]) -> list[str]:
+    """חותך לקטעים, כשכל אחד הוא הארוך ביותר שנכנס בשתי שורות.
+
+    חמדני ובכוונה: קטע ראשון מלא ככל האפשר משאיר פחות קטעים, וכל קטע
+    נוסף הוא עוד הבהוב על המסך. השבירה מועדפת על פיסוק — שם הדובר
+    עוצר ממילא, ולכן החיתוך אינו מורגש
+    """
+    out: list[str] = []
+    rest = list(words)
+    while rest:
+        cut = len(rest)
+        while cut > 1 and not _fits(" ".join(rest[:cut])):
+            cut -= 1
+        # אם יש פיסוק מעט לפני הסוף, עדיף לשבור שם
+        for back in range(cut, max(1, cut - 4), -1):
+            if rest[back - 1].rstrip().endswith((",", ".", "!", "?", ":", ";")):
+                cut = back
+                break
+        out.append(" ".join(rest[:cut]))
+        rest = rest[cut:]
+    return out
+
+
+def split_overlong(cues: list["Cue"], fps: float = 24.0) -> int:
+    """מפצל כתובית שאינה נכנסת בשתי שורות לכתוביות עוקבות.
+
+    מחזיר כמה כתוביות פוצלו.
+
+    שתי שורות הן תקרה בכל תקן מקצועי — נטפליקס ו-EBU כאחד — והנימוק
+    הוא תפיסתי: שורה שלישית מכריחה את העין לשלוש תנועות סריקה בזמן
+    שהפריים ממשיך לזוז, והצופה מפספס את התמונה או את הטקסט.
+
+    עד כה הקוד העדיף שלוש שורות על פני שורה שחורגת מהמסך, וזו הייתה
+    בחירה בין שתי רעות. הפתרון הנכון הוא השלישי: אותו טקסט, בכמה
+    כתוביות עוקבות, כשהזמן מתחלק לפי אורך הטקסט — כי זו בדיוק
+    המשמעות של מהירות קריאה.
+
+    שמרני: פיצול שיקצר חלק כלשהו מתחת למינימום לא נעשה כלל, והכתובית
+    נשארת כמו שהיתה. עדיף שלוש שורות מאשר כתוביות שמהבהבות
+    """
+    frame = 1.0 / max(1.0, fps)
+    least = 2 * frame
+    changed = 0
+    out: list[Cue] = []
+
+    for cue in cues:
+        if _fits(cue.text):
+            out.append(cue)
+            continue
+
+        words = " ".join(cue.text.split()).split(" ")
+        parts = _pieces(words)
+        span = cue.end - cue.start
+        usable = span - least * (len(parts) - 1)
+        if len(parts) < 2 or usable < config.SRT_MIN_DURATION * len(parts):
+            # אין מספיק זמן לפצל בלי להבהב. נשאר כמו שהוא, וזה מודע
+            out.append(cue)
+            continue
+
+        letters = sum(len(part) for part in parts) or 1
+        at = cue.start
+        for number, part in enumerate(parts):
+            share = max(config.SRT_MIN_DURATION, usable * len(part) / letters)
+            end = cue.end if number == len(parts) - 1 else at + share
+            out.append(Cue(index=cue.index, start=at, end=end, text=part))
+            at = end + least
+        changed += 1
+
+    if changed:
+        cues[:] = out
+        for position, cue in enumerate(cues, start=1):
+            cue.index = position
+    return changed
+
+
 def close_gaps(cues: list["Cue"], fps: float = 24.0) -> int:
     """סוגר מרווחים קטנים בין כתוביות. מחזיר כמה שונו.
 
