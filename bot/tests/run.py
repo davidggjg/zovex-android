@@ -1677,6 +1677,24 @@ def _onset_anchored_offset():
     assert "onset_offset(" in flow, "המדידה אינה בשימוש"
 
 
+@check("TG_PART_MAX הוא תקרה אמיתית, וניתן לרדת ל-128KB מה-.env")
+def _part_cap():
+    from zovexsub import fastio
+    big = 2 * 1024 * 1024 * 1024
+    saved = config.TG_PART_MAX
+    try:
+        config.TG_PART_MAX = 1024 * 1024
+        assert fastio._parts(big) == 1024 * 1024
+        # הלקוח הרשמי מבקש 128KB לכל חלק, ואי אפשר להכריע בלי מדידה.
+        # לכן חייב להיות אפשר לרדת לשם בלי לגעת בקוד
+        config.TG_PART_MAX = 128 * 1024
+        chosen = fastio._parts(big)
+        assert chosen == 128 * 1024, chosen
+        assert chosen % 4096 == 0 and (1024 * 1024) % chosen == 0
+    finally:
+        config.TG_PART_MAX = saved
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

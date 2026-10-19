@@ -186,9 +186,14 @@ def _parts(size: int) -> int:
     טעם לבקש מקטע גדול מהקובץ עצמו.
     """
     default = utils.get_appropriated_part_size(size) * 1024
+    cap = min(config.TG_PART_MAX, 1024 * 1024)
     if size < config.TG_BIG_PART_FROM:
-        return default
-    return max(default, min(config.TG_PART_MAX, 1024 * 1024))
+        return min(default, cap)
+    # הקוד המאומת של הלקוח הרשמי מבקש 128KB לכל חלק
+    # (kDownloadPartSize ב-storage/download_manager_mtproto.h), והקוד כאן
+    # מבקש 1MB. אין דרך להכריע בין השניים בלי מדידה, ולכן TG_PART_MAX
+    # הוא תקרה אמיתית ולא רק רצפה: אפשר לרדת ממנו מה-.env בלי לגעת בקוד
+    return max(cap, 4096) if cap < default else max(default, cap)
 
 
 def _connections(size: int, ceiling: int) -> int:
