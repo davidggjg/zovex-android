@@ -1640,6 +1640,43 @@ def _premium_flood_backoff():
     assert '"PREMIUM" in str(exc).upper()' in lane, "אינו מזהה את התקרה"
 
 
+@check("דיליי קבוע נתפס גם כשיש הרבה כתוביות ומעט תחילות דיבור")
+def _onset_anchored_offset():
+    """דווח דיליי של כשלוש שניות, והלוג אמר "אין היסט שיטתי".
+
+    global_evaluate סורק כל כתובית ושואל אם היא קרובה לתחילת דיבור.
+    ה-VAD מוצא כ-200 קטעי דיבור ארוכים ובתוכם 2000 כתוביות, ולכן
+    לרוב המוחלט אין בכלל תחילת־דיבור מתאימה — הן באמצע מונולוג,
+    נספרות כרעש, וההיסט האמיתי נבלע
+    """
+    from zovexsub import srt
+
+    def cue(start):
+        return srt.Cue(index=1, start=start, end=start + 1.5, text="שלום")
+
+    # עשרים קטעי דיבור ארוכים, ובתוך כל אחד שש כתוביות
+    speech, cues = [], []
+    lag = 3.0
+    for block_no in range(20):
+        begin = block_no * 30.0
+        speech.append((begin, begin + 15.0))
+        for inner in range(6):
+            cues.append(cue(begin + lag + inner * 2.2))
+
+    # המדידה מתחילות הדיבור מוצאת את הדיליי האמיתי
+    found = srt.onset_offset(cues, speech)
+    assert abs(found - lag) < 0.4, (found, lag)
+
+    # ובלי דיבור או בלי כתוביות היא לא ממציאה דבר
+    assert srt.onset_offset([], speech) == 0.0
+    assert srt.onset_offset(cues, []) == 0.0
+
+    # והיא נדרשת בפועל, לא רק קיימת
+    import inspect
+    flow = inspect.getsource(srt.build_cues)
+    assert "onset_offset(" in flow, "המדידה אינה בשימוש"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

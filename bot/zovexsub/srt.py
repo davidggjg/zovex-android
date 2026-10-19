@@ -71,6 +71,14 @@ def build_cues(segments: list[Segment], lines: list[str],
             cues = apply_drift(cues, base, rate, pivot)
         else:
             drift = global_offset(cues, speech)
+            # שתי מדידות, ומעדיפים את זו שאינה נבלעת ברעש. כשהן
+            # חלוקות משמעותית, המדידה מתחילות הדיבור היא האמינה:
+            # כל ערך בה הוא זוג אמיתי של אמירה וכתובית
+            anchored = onset_offset(cues, speech)
+            if abs(anchored - drift) >= config.OFFSET_MIN:
+                log.warning("המדידות חלוקות: סריקה %.2fש מול תחילות "
+                            "דיבור %.2fש — בוחרים בשנייה", drift, anchored)
+                drift = anchored
             if abs(drift) >= config.OFFSET_MIN:
                 log.warning("הכתוביות %s ב-%.2f שניות באופן שיטתי — מתוקן",
                             "מאחרות" if drift > 0 else "מקדימות", abs(drift))
@@ -184,6 +192,43 @@ def missed_speech(cues: list[Cue], speech: list[tuple[float, float]]
         if not covered:
             gaps.append((begin, end))
     return gaps
+
+
+def onset_offset(cues: list[Cue], speech: list[tuple[float, float]]
+                 ) -> float:
+    """ההיסט כפי שהוא נמדד מתחילות הדיבור, ולא מהכתוביות.
+
+    ‏global_offset סורק כל כתובית ושואל אם היא קרובה לתחילת דיבור
+    כלשהי. זה נשבר כשיש הרבה יותר כתוביות מתחילות דיבור: ה-VAD
+    מוצא כ-200 קטעי דיבור ארוכים, ובתוכם 2000 כתוביות. לרוב
+    המוחלט של הכתוביות אין בכלל תחילת־דיבור מתאימה — הן באמצע
+    מונולוג — והן נספרות כרעש שמציף את המדד.
+
+    כאן הכיוון הפוך: לכל תחילת דיבור מחפשים את הכתובית הקרובה
+    ולוקחים את החציון. כל מדידה היא זוג אמיתי, ואין רעש להציף
+    """
+    if not cues or not speech:
+        return 0.0
+    starts = sorted(c.start for c in cues)
+    deltas = []
+    for begin, _ in speech:
+        position = bisect.bisect_left(starts, begin)
+        near = [s for s in starts[max(0, position - 1):position + 1]]
+        if not near:
+            continue
+        closest = min(near, key=lambda s: abs(s - begin))
+        gap = closest - begin
+        # רק התאמות סבירות. כתובית במרחק חמש שניות מתחילת דיבור
+        # אינה "הכתובית של אותה אמירה" אלא שכנה מקרית
+        if abs(gap) <= config.OFFSET_SEARCH:
+            deltas.append(gap)
+    if len(deltas) < config.OFFSET_MIN_SAMPLES:
+        return 0.0
+    deltas.sort()
+    middle = deltas[len(deltas) // 2]
+    log.info("היסט מתחילות דיבור: חציון %.2fש מתוך %d התאמות",
+             middle, len(deltas))
+    return middle
 
 
 def drift_fit(cues: list[Cue], speech: list[tuple[float, float]],
