@@ -601,7 +601,18 @@ async def _parallel_download(client, message, dst: Path, size: int,
                         state["until"],
                         time.monotonic() + rest + config.TG_CONNECT_TIMEOUT + 5)
                     await asyncio.sleep(rest)
-                    fresh = min(workers, -(-pending.qsize() // 1) or 1)
+                    # פחות חיבורים בכל סבב, ולא שוב אותם שש-עשרה.
+                    # כשכולם מתו יחד זה לא מקרה — זה טלגרם שסגר את
+                    # כל הסט, ולפתוח מיד אותו מספר זה לחזור בדיוק
+                    # לתנאים שהרגו אותו. הלקוח הרשמי עושה את ההפוך:
+                    # kRemoveSessionAfterTimeouts=4 מוריד סשנים אחרי
+                    # כשלונות, ו-kRetryAddSessionSuccesses=3 מחזיר
+                    # אותם רק אחרי הצלחות. חצי בכל סבב, ולא פחות
+                    # משניים — כי חיבור אחד הוא כבר המסלול האיטי
+                    room = max(2, workers >> revivals)
+                    fresh = min(room, pending.qsize() or 1)
+                    log.warning("פותחים %d חיבורים בלבד (מתוך %d) — "
+                                "סט שלם שמת חוזר ומת", fresh, workers)
                     healthy = await asyncio.wait_for(
                         _open_senders(client, dc_id, fresh),
                         timeout=config.TG_CONNECT_TIMEOUT)

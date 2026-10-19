@@ -1833,6 +1833,22 @@ def _close_gaps():
     assert cues[1].start == 2.2
 
 
+@check("סט חיבורים שמת כולו חוזר קטן יותר, ולא באותו גודל")
+def _revival_shrinks():
+    import inspect
+    from zovexsub import fastio
+
+    body = inspect.getsource(fastio._parallel_download)
+    assert "room = max(2, workers >> revivals)" in body, \
+        "ההחייאה פותחת שוב את אותו מספר חיבורים"
+
+    # חצי בכל סבב, ולעולם לא מתחת לשניים: חיבור אחד הוא כבר
+    # המסלול האיטי, ואין טעם ליפול לשם דרך המסלול המהיר
+    workers = 16
+    rounds = [max(2, workers >> n) for n in (1, 2, 3, 4, 5)]
+    assert rounds == [8, 4, 2, 2, 2], rounds
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
