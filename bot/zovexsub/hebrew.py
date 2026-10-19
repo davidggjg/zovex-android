@@ -279,8 +279,16 @@ REPAIR_SYSTEM = """אתה מתקן שגיאות כתיב בכתוביות בעב
 
 
 async def repair_foreign(segments: list[Segment], lines: list[str],
-                         indices: list[int]) -> list[str]:
-    """מתקן שורות שבהן השתרבבו אותיות משפה אחרת."""
+                         indices: list[int], on_step=None) -> list[str]:
+    """מתקן שורות שבהן השתרבבו אותיות משפה אחרת.
+
+    עם תקרת זמן, ובכוונה. פסק הזמן הפנימי של ג'ימיני הוא 300 שניות
+    לניסיון והוא מנסה על פני כמה מפתחות, כך שהשלב הזה יכול לרוץ רבע
+    שעה בלי אף שורת לוג ובלי שהמסך יזוז — נמדד בשרת כעשר דקות על
+    "מתקן אותיות זרות". וזה לא שווה את זה: הכתוביות כבר מוכנות, ומה
+    שעומד על הפרק הוא כמה שורות בודדות עם אותיות לטיניות. עדיף סרט
+    עם שלוש שורות פגומות מאשר עוד רבע שעה המתנה
+    """
     if not indices:
         return lines
 
@@ -303,16 +311,34 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
         "required": ["lines"],
     }
 
+    began = time.monotonic()
+
+    async def tick() -> None:
+        """שהמסך יזוז. בלי זה השלב נראה מת בדיוק כשהוא עובד."""
+        while on_step:
+            await asyncio.sleep(5)
+            waited = int(time.monotonic() - began)
+            await on_step(f"מתקן {len(indices)} שורות · {waited}ש "
+                          f"מתוך {config.REPAIR_TIMEOUT:.0f}", QUALITY_TO)
+
+    pulse = asyncio.create_task(tick())
     try:
-        result = await gemini.ask_json(
+        result = await asyncio.wait_for(gemini.ask_json(
             REPAIR_SYSTEM,
             f"{listing}\n\nהחזר JSON: {{\"lines\": [{{\"i\": <אינדקס>, "
             f"\"he\": \"<השורה בעברית תקנית>\"}}]}}",
             schema=schema, temperature=0.0,
-        )
+        ), timeout=config.REPAIR_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.warning("תיקון האותיות הזרות עבר %.0f שניות — ממשיכים בלעדיו "
+                    "(%d שורות נשארות כמו שהן)",
+                    config.REPAIR_TIMEOUT, len(indices))
+        return lines
     except gemini.GeminiError as exc:
         log.warning("תיקון האותיות הזרות נכשל: %s", exc)
         return lines
+    finally:
+        pulse.cancel()
 
     fixed = 0
     for item in (_collect(result) or {}).items():
@@ -534,7 +560,7 @@ async def build_hebrew(segments: list[Segment], language: str,
     if foreign:
         if on_step:
             await on_step("מתקן אותיות זרות", QUALITY_TO)
-        lines = await repair_foreign(segments, lines, foreign)
+        lines = await repair_foreign(segments, lines, foreign, on_step)
         lines, _ = cleanup.clean(lines)
 
     return lines, notes

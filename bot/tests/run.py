@@ -1907,6 +1907,44 @@ def _upload_via_account():
     assert "not relayed and big" in body, "מעל התקרה חייב להיכשל בקול"
 
 
+@check("תיקון האותיות הזרות חסום בזמן, ומזיז את המסך בינתיים")
+def _repair_bounded():
+    import asyncio
+    import inspect
+    from zovexsub import hebrew
+
+    body = inspect.getsource(hebrew.repair_foreign)
+    # פסק הזמן הפנימי של ג'ימיני הוא 300 שניות לניסיון, על פני כמה
+    # מפתחות. בלי תקרה משלנו זה רבע שעה חוקית בלי שהמסך יזוז
+    assert "config.REPAIR_TIMEOUT" in body, "אין תקרת זמן לשלב"
+    assert "asyncio.wait_for" in body
+    assert "pulse.cancel()" in body, "הדופק אינו נעצר"
+    assert config.REPAIR_TIMEOUT <= 300, config.REPAIR_TIMEOUT
+
+    # ובפועל: קריאה שתקועה מחזירה את השורות כמו שהן, ולא מפילה
+    # את הסרט ולא תולה אותו
+    saved = (hebrew.gemini.ask_json, config.REPAIR_TIMEOUT)
+    seen = []
+
+    async def never(*a, **k):
+        await asyncio.sleep(30)
+
+    async def step(text, _frac):
+        seen.append(text)
+
+    lines = ["שלום", "hello שלום"]
+    try:
+        hebrew.gemini.ask_json = never
+        config.REPAIR_TIMEOUT = 0.2
+        out = asyncio.run(hebrew.repair_foreign(
+            [hebrew.Segment(index=0, start=0.0, end=1.0, text="x")] * 2,
+            list(lines), [1], step))
+    finally:
+        hebrew.gemini.ask_json, config.REPAIR_TIMEOUT = saved
+
+    assert out == lines, out
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
