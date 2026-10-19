@@ -1800,6 +1800,39 @@ def _media_dc():
         config.TG_MEDIA_DC = saved
 
 
+@check("מרווח הבהוב בין כתוביות נסגר לשני פריימים, כחוק התזמון")
+def _close_gaps():
+    fps = 24.0
+    frame = 1.0 / fps
+
+    def cue(start, end, text="שלום"):
+        return srt.Cue(index=1, start=start, end=end, text=text)
+
+    # מרווח של 8 פריימים — בתוך הטווח האסור, נסגר לשניים
+    cues = [cue(1.0, 2.0), cue(2.0 + 8 * frame, 4.0)]
+    assert srt.close_gaps(cues, fps) == 1
+    assert abs((cues[1].start - cues[0].end) - 2 * frame) < 1e-6
+
+    # מרווח של שני פריימים בדיוק — כבר תקין, לא נוגעים
+    cues = [cue(1.0, 2.0), cue(2.0 + 2 * frame, 4.0)]
+    assert srt.close_gaps(cues, fps) == 0
+
+    # מרווח של שנייה שלמה — זמן אמיתי לחזור לתמונה, נשאר
+    cues = [cue(1.0, 2.0), cue(3.0, 4.0)]
+    assert srt.close_gaps(cues, fps) == 0
+    assert cues[0].end == 2.0
+
+    # והארכה שתעבור את האורך המרבי אינה נעשית
+    long_end = config.SRT_MAX_DURATION + 0.9
+    cues = [cue(0.0, long_end), cue(long_end + 8 * frame, long_end + 2)]
+    assert srt.close_gaps(cues, fps) == 0, "הכתובית הוארכה מעל המרבי"
+
+    # ההתחלה של הכתובית הבאה לא זזה אף פעם — היא על פריים האודיו
+    cues = [cue(1.0, 2.0), cue(2.2, 4.0)]
+    srt.close_gaps(cues, fps)
+    assert cues[1].start == 2.2
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

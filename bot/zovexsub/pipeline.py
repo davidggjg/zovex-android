@@ -191,6 +191,9 @@ async def run(source: Path, work: Path, *, progress: Progress,
             moved = srt.snap_to_cuts(cues, cuts, fps)
             log.info("הוזזו %d כתוביות מחיתוכי צילום (מתוך %d, %.0f fps)",
                      moved, len(cues), fps)
+            # אחרון בשרשרת, כי ההצמדה לחיתוכים פותחת מרווחים חדשים
+            closed = srt.close_gaps(cues, fps)
+            log.info("נסגרו %d מרווחי הבהוב", closed)
 
     srt_path = work / f"{source.stem}.he.srt"
     srt_path.write_text(srt.render(cues), encoding="utf-8")
