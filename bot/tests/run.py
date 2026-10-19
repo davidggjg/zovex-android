@@ -1695,6 +1695,47 @@ def _part_cap():
         config.TG_PART_MAX = saved
 
 
+@check("צריבה שנכשלה בהרכבה מנסה שוב על הקטעים, ולא צורבת הכל מחדש")
+def _burn_retry():
+    import asyncio
+    import inspect
+
+    # הקטעים שכבר נצרבו נבדקים לפני שצורבים אותם שוב
+    body = inspect.getsource(media._burn_parallel)
+    assert "piece.exists()" in body, "אין דילוג על קטע קיים"
+    assert "shutil.rmtree" in body
+
+    calls = {"parallel": 0, "single": 0}
+
+    async def parallel(*a, **k):
+        calls["parallel"] += 1
+        raise media.FFmpegError("ההרכבה נכשלה")
+
+    async def single(*a, **k):
+        calls["single"] += 1
+        return Path("out.mp4")
+
+    async def duration(_path):
+        return 60 * 60.0
+
+    saved = (media._burn_parallel, media._burn_single, media.duration_seconds)
+    try:
+        media._burn_parallel = parallel
+        media._burn_single = single
+        media.duration_seconds = duration
+        out = asyncio.run(media.burn(Path("in.mp4"), Path("in.srt"),
+                                     Path("out.mp4")))
+    finally:
+        (media._burn_parallel, media._burn_single,
+         media.duration_seconds) = saved
+
+    assert out == Path("out.mp4")
+    # שני ניסיונות מקביליים: הראשון צורב, השני רק מרכיב מחדש
+    assert calls["parallel"] == 2, calls
+    # ורק אחרי שגם השני נכשל יורדים לתהליך יחיד
+    assert calls["single"] == 1, calls
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -871,10 +871,26 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
         _memory_cap(config.burn_slots(os.cpu_count() or 2)))
 
     if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
-        try:
-            return await _burn_parallel(video, srt, dst, duration, segments,
-                                        on_progress, style, profile)
-        except Exception as exc:  # noqa: BLE001 — עדיף צריבה איטית מכשלון
+        # שני ניסיונות ולא אחד. הכשלון הנפוץ אינו בצריבת הקטעים אלא
+        # בהרכבה שאחריה, והקטעים הצרובים נשארים שלמים על הדיסק —
+        # הניסיון השני מדלג עליהם וחוזר ישר להרכבה. זה ההבדל בין
+        # שניות לבין צריבה שנייה של כל הסרט, שזה מה שנראה למשתמש
+        # כמו 100 אחוז שחוזר לאפס
+        exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                return await _burn_parallel(video, srt, dst, duration,
+                                            segments, on_progress, style,
+                                            profile)
+            except Exception as failure:  # noqa: BLE001
+                exc = failure
+                if attempt == 1:
+                    log.warning("המסלול המקבילי נכשל (%s: %s) — ניסיון שני "
+                                "על הקטעים שכבר נצרבו",
+                                type(failure).__name__, failure)
+                    if on_progress:
+                        await on_progress(ASSEMBLE_FROM, "מרכיב שוב")
+        if exc is not None:
             # B10: קודם נרשמה כאן שורה אחת בלי עקבות, והמסלול המקבילי
             # נזנח בשקט. צריבה שלמה רצה אז פי שלושה לאט בלי שאיש ידע
             # למה — exception מלא הוא ההבדל בין "קרה משהו" לבין סיבה
@@ -994,6 +1010,22 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון
         filters = _video_filters(piece_srt, credit if index == 0 else None, style)
         piece = work / f"seg{index:02d}.mp4"
+        # קטע שנצרב בניסיון קודם נשאר על הדיסק, ולצרוב אותו שוב זה
+        # לחזור על עבודה של שעה. נבדק לפי אורך בפועל, כי קובץ שנקטע
+        # באמצע קיים אבל אינו שלם
+        if piece.exists() and piece.stat().st_size:
+            try:
+                have = await duration_seconds(piece)
+            except Exception:  # noqa: BLE001 — קובץ פגום נצרב מחדש
+                have = 0.0
+            if abs(have - length) <= 1.0:
+                log.info("קטע %d/%d כבר קיים (%.1f שניות) — מדלגים",
+                         index + 1, segments, have)
+                async with lock:
+                    done[index] = length
+                return piece
+            log.warning("קטע %d/%d קיים אבל אורכו %.1f במקום %.1f — נצרב מחדש",
+                        index + 1, segments, have, length)
 
         cmd = [
             "ffmpeg", "-nostdin", "-y",
@@ -1037,6 +1069,8 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
     async with pool.job() as token:
         pieces = await asyncio.gather(*(one(i) for i in range(segments)))
+    # מכאן והלאה כשלון משאיר את הקטעים על הדיסק בכוונה: הם תקינים,
+    # והניסיון הבא מדלג עליהם במקום לצרוב את כל הסרט מחדש
 
     listing = work / "concat.txt"
     listing.write_text(
