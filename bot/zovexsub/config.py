@@ -54,6 +54,9 @@ STORAGE_CHAT = os.getenv("STORAGE_CHAT", "").strip()
 TRIGGER = os.getenv("TRIGGER", ".srt")
 
 # רשימת המורשים נשמרת כאן ומנוהלת מתוך טלגרם (.allow / .deny / .users)
+# הגדרות הצריבה שנשמרות לכל צ'אט, כדי לא לשאול את אותן שאלות בכל פרק
+PREFS_FILE = os.getenv(
+    "PREFS_FILE", str(Path(__file__).resolve().parent.parent / "prefs.json"))
 ALLOWLIST_FILE = os.getenv(
     "ALLOWLIST_FILE", str(Path(__file__).resolve().parent.parent / "allowlist.json")
 )

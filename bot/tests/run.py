@@ -1554,6 +1554,47 @@ def _custom_cover():
     assert "/{total / 1048576:.0f}MB" in relay, "אין כמה מתוך כמה"
 
 
+@check("ההגדרות נזכרות, והפרק הבא מתחיל בלחיצה אחת")
+def _settings_are_remembered():
+    """חמש שאלות בכל פרק, באותן תשובות בדיוק.
+
+    המשתמש מעלה פרקים של אותה סדרה שוב ושוב. זיכרון הופך את זה
+    ללחיצה אחת, ומשאיר את השינוי זמין למי שבאמת רוצה אותו
+    """
+    import importlib
+    import tempfile
+
+    from zovexsub import config as live
+
+    live.PREFS_FILE = tempfile.mktemp(suffix=".json")
+    from zovexsub import prefs
+    importlib.reload(prefs)
+
+    # ברירות מחדל שלמות גם כשאין קובץ בכלל
+    first = prefs.get(7)
+    assert set(first) == set(prefs.FIELDS), first
+    assert all(first.values()), first
+
+    prefs.remember(7, {"size": "גדול", "speed": "מהיר", "zzz": "להתעלם"})
+    again = prefs.get(7)
+    assert again["size"] == "גדול" and again["speed"] == "מהיר"
+    assert "zzz" not in again, "שדה לא מוכר נשמר"
+    # ומה שלא נשמר חוזר לברירת המחדל ולא נעלם
+    assert again["look"] == prefs.DEFAULTS["look"]
+
+    # הסיכום קריא ומכסה את כל השדות
+    line = prefs.summary(again)
+    assert "גדול" in line and line.count("·") == len(prefs.FIELDS) - 1, line
+
+    # ומסך הפתיחה מציג אותו, עם דרך לשנות
+    from zovexsub import botmenu
+    text, keys = botmenu.source_screen(7)
+    assert "ההגדרות שלך" in text and "גדול" in text
+    flat = [data for row in keys for _, data in row]
+    assert "settings" in flat, flat
+    assert "src:make" in flat and "src:own" in flat
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

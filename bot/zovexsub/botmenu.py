@@ -13,7 +13,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from . import config, fetch, localbot
+from . import config, fetch, localbot, prefs
 
 log = logging.getLogger(__name__)
 
@@ -106,10 +106,23 @@ ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
 ASK_KEYS = [[("✅ כן", "burn:yes"), ("❌ לא", "burn:no")]]
 
 # השאלה הראשונה, מיד אחרי שהסרטון מתקבל ולפני שמתחיל עיבוד כלשהו
-SOURCE = "🎬 <b>הסרטון התקבל</b>\n\nמה לעשות עם הכתוביות?"
-SOURCE_KEYS = [[("🤖 תייצר לי כתוביות", "src:make")],
-               [("📄 יש לי קובץ כתוביות", "src:own")],
-               [("❌ ביטול", "cancel")]]
+def source_screen(chat_id) -> tuple[str, list]:
+    """מסך הפתיחה: מה נבחר, ושתי דרכים להתחיל.
+
+    קודם נשאלו חמש שאלות בכל פרק, באותן תשובות בדיוק. ההגדרות
+    נשמרות עכשיו לכל צ'אט, ולכן ברירת המחדל היא להתחיל מיד —
+    והשינוי נשאר זמין למי שבאמת רוצה לשנות משהו
+    """
+    saved = prefs.get(chat_id)
+    text = ("🎬 <b>הסרטון התקבל</b>\n\n"
+            "<b>ההגדרות שלך:</b>\n"
+            f"{prefs.summary(saved)}\n\n"
+            "מה לעשות עם הכתוביות?")
+    keys = [[("🤖 תייצר לי כתוביות", "src:make")],
+            [("📄 יש לי קובץ כתוביות", "src:own")],
+            [("⚙️ שנה הגדרות", "settings")],
+            [("❌ ביטול", "cancel")]]
+    return text, keys
 
 # נקראים מבחוץ. on_choice כשהמשתמש בחר מה לעשות עם סרטון,
 # on_subtitle כששלח קובץ כתוביות משלו
@@ -141,10 +154,30 @@ def _advance(choice: "Choice") -> int:
 
 
 def _menu(index: int, choice: "Choice") -> tuple[str, str]:
-    title, rows, _, _ = STEPS[index]
+    """מסך של שלב אחד, עם סימון מה נבחר וסיכום של כל השאר.
+
+    בלי הסימון אי אפשר היה לדעת מה הערך הנוכחי, ובלי הסיכום כל
+    מסך נראה כמו שאלה מנותקת במקום כמו שלב בתוך משהו
+    """
+    title, rows, field_name, _ = STEPS[index]
     shown = _steps_for(choice)
-    text = f"{title}  <i>({shown.index(index) + 1}/{len(shown)})</i>"
-    return text, localbot.keyboard(rows + [[("❌ ביטול", "cancel")]])
+    current = getattr(choice, field_name, "") or prefs.get(
+        choice.chat_id).get(field_name, "")
+
+    marked = []
+    for row in rows:
+        line = []
+        for label_text, data in row:
+            picked = data.split(":", 1)[-1] == current
+            line.append((("✅ " + label_text) if picked else label_text, data))
+        marked.append(line)
+
+    so_far = prefs.summary({name: getattr(choice, name, "")
+                            or prefs.get(choice.chat_id).get(name, "")
+                            for name in prefs.FIELDS})
+    text = (f"{title}  <i>({shown.index(index) + 1}/{len(shown)})</i>\n\n"
+            f"<i>{so_far}</i>")
+    return text, localbot.keyboard(marked + [[("❌ ביטול", "cancel")]])
 
 
 async def offer(chat_id, on_done) -> None:
@@ -162,8 +195,9 @@ async def offer(chat_id, on_done) -> None:
 async def greet(chat_id, file_id: str, size: int, name: str,
                 source_message: int = 0) -> None:
     """שואל מה לעשות עם סרטון שהתקבל, לפני שמתחיל עיבוד."""
-    sent = await localbot.say(chat_id, SOURCE,
-                              buttons=localbot.keyboard(SOURCE_KEYS))
+    text, keys = source_screen(chat_id)
+    sent = await localbot.say(chat_id, text,
+                              buttons=localbot.keyboard(keys))
     message_id = sent.get("message_id")
     if not message_id:
         return
@@ -219,15 +253,33 @@ async def _press(query: dict) -> None:
 
     if data.startswith("q:"):
         choice.quality = data.split(":", 1)[1]
-        await localbot.edit(choice.chat_id, message_id, SOURCE,
-                            buttons=localbot.keyboard(SOURCE_KEYS))
+        text, keys = source_screen(choice.chat_id)
+        await localbot.edit(choice.chat_id, message_id, text,
+                            buttons=localbot.keyboard(keys))
+        return
+
+    if data == "settings":
+        choice.step = next(iter(_steps_for(choice)), len(STEPS))
+        text, keys = _menu(choice.step, choice)
+        await localbot.edit(choice.chat_id, message_id, text, buttons=keys)
         return
 
     if data.startswith("src:"):
         choice.source = data.split(":", 1)[1]
+        # ההגדרות השמורות נטענות כאן ולא בתחילת השיחה: מי שנכנס
+        # ל"שנה הגדרות" כבר עדכן אותן בעצמו, ואין לדרוס אותו
+        saved = prefs.get(choice.chat_id)
+        for name, value in saved.items():
+            if not getattr(choice, name, ""):
+                setattr(choice, name, value)
         label = ("מייצר כתוביות…" if choice.source == "make"
                  else "שלח עכשיו את קובץ הכתוביות (SRT).")
-        await localbot.edit(choice.chat_id, message_id, f"✅ {label}")
+        # הסיכום נשאר על המסך: אחרת אי אפשר לדעת באילו הגדרות זה רץ
+        await localbot.edit(
+            choice.chat_id, message_id,
+            f"✅ <b>{label}</b>\n<i>"
+            + prefs.summary({name: getattr(choice, name, "")
+                             for name in prefs.FIELDS}) + "</i>")
         _open.pop(message_id, None)
         if on_choice:
             _detach(on_choice(choice), "עבודה מהבוט")
@@ -253,12 +305,24 @@ async def _press(query: dict) -> None:
         await localbot.edit(choice.chat_id, message_id, text, buttons=keys)
         return
 
+    # ההגדרות נשמרות כדי שהפרק הבא לא ישאל שוב את אותן שאלות
+    prefs.remember(choice.chat_id,
+                   {name: getattr(choice, name, "") for name in prefs.FIELDS})
+
+    if choice.done is None:
+        # הגענו לכאן מ"שנה הגדרות" לפני שנבחר מסלול — חוזרים למסך
+        # הפתיחה, שמציג עכשיו את מה שנבחר זה עתה
+        text, keys = source_screen(choice.chat_id)
+        await localbot.edit(choice.chat_id, message_id, text,
+                            buttons=localbot.keyboard(keys))
+        return
+
     _open.pop(message_id, None)
-    picked = " · ".join(x for x in (choice.quality, choice.size, choice.look,
-                                    choice.speed) if x)
-    await localbot.edit(choice.chat_id, message_id, f"✅ נבחר: {picked}")
-    if choice.done:
-        _detach(choice.done(choice), "עבודה מהבוט")
+    await localbot.edit(choice.chat_id, message_id,
+                        "✅ <b>מתחיל</b>\n"
+                        + prefs.summary({name: getattr(choice, name, "")
+                                         for name in prefs.FIELDS}))
+    _detach(choice.done(choice), "עבודה מהבוט")
 
 
 # משימות רקע חיות. בלי החזקת הפניה אוסף הזבל של asyncio עלול לאסוף
