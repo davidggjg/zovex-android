@@ -428,6 +428,9 @@ TG_SYNC_EVERY = _int("TG_SYNC_EVERY", 64 * 1024 * 1024)
 # שטלתון בוחר. ראו fastio._parts
 TG_BIG_PART_FROM = _int("TG_BIG_PART_FROM", 64 * 1024 * 1024)
 TG_PART_MAX = _int("TG_PART_MAX", 1024 * 1024)
+# שליחת בקשות הקבצים לכתובת ה-DC שטלגרם ייעד לקבצים (media_only),
+# כפי שהתיעוד הרשמי מחייב וטלתון אינו עושה. ראו fastio._media_option
+TG_MEDIA_DC = _int("TG_MEDIA_DC", 1)
 TG_GROW_EVERY = _int("TG_GROW_EVERY", 8)
 # תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
 # במקום ליפול חזרה למסלול הרגיל של טלתון

@@ -806,9 +806,10 @@ def _senders_parallel():
     assert config.TG_OPEN_PARALLEL == 0, \
         "הפתיחה המקבילית חזרה לברירת המחדל אף שנמדדה איטית פי שמונה"
     assert "config.TG_OPEN_PARALLEL" in body, "אין מתג בין שתי הדרכים"
-    assert "senders.append(await one(key))" in body, "חסר המסלול הסדרתי"
+    assert "senders.append(await one(key, where=media))" in body, \
+        "חסר המסלול הסדרתי"
     # הראשון תמיד לבדו — הוא מייצא את ההרשאה
-    assert body.index("first = await one(key)") < body.index("count > 1")
+    assert body.index("first = await one(key,") < body.index("count > 1")
     assert "ExportAuthorizationRequest" in body
 
     # פסק הזמן לבייט הראשון חייב להכיל הקמה סדרתית מלאה
@@ -1755,6 +1756,48 @@ def _premium_upload_lane():
     # אם היא תחסום גם את ההעלאה, קובץ של 3 ג'יגה פשוט לא יימסר
     assert "_account_rested" in inspect.getsource(botjob._via_storage)
     assert "_account_rested" not in inspect.getsource(botjob._relay_video)
+
+
+@check("בקשות קבצים הולכות לכתובת ה-DC שטלגרם ייעד לקבצים")
+def _media_dc():
+    from types import SimpleNamespace
+    from zovexsub import fastio
+
+    def opt(**kw):
+        base = dict(id=2, ip_address="general", port=443, media_only=False,
+                    cdn=False, ipv6=False)
+        base.update(kw)
+        return SimpleNamespace(**base)
+
+    class Client:
+        _config = SimpleNamespace(dc_options=[
+            opt(),
+            opt(ip_address="media", media_only=True),
+            opt(ip_address="cdn", media_only=True, cdn=True),
+            opt(id=4, ip_address="other-dc", media_only=True),
+        ])
+        _use_ipv6 = False
+
+    client = Client()
+    saved = config.TG_MEDIA_DC
+    try:
+        config.TG_MEDIA_DC = 1
+        # הכתובת הכללית היא הראשונה ברשימה, וזו שטלתון היה בוחר.
+        # התיעוד הרשמי מחייב לשלוח קבצים לכתובת עם media_only
+        chosen = fastio._media_option(client, 2)
+        assert chosen is not None and chosen.ip_address == "media", chosen
+        # CDN אינו מסלול שיש לנו תמיכה בו, ו-DC אחר אינו רלוונטי
+        assert fastio._media_option(client, 3) is None
+        # ובלי כתובת כזו נשארים על ההתנהגות של טלתון
+        Client._config = SimpleNamespace(dc_options=[opt()])
+        assert fastio._media_option(client, 2) is None
+        # דגל כיבוי, אם הכתובת הזאת מתנהגת רע בפועל
+        Client._config = SimpleNamespace(dc_options=[
+            opt(ip_address="media", media_only=True)])
+        config.TG_MEDIA_DC = 0
+        assert fastio._media_option(client, 2) is None
+    finally:
+        config.TG_MEDIA_DC = saved
 
 
 def main() -> int:

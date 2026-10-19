@@ -210,6 +210,28 @@ def _connections(size: int, ceiling: int) -> int:
     return max(1, min(ceiling, scaled))
 
 
+def _media_option(client, dc_id: int):
+    """כתובת ה-DC המיועדת לקבצים, אם טלגרם פרסם כזו.
+
+    התיעוד הרשמי (core.telegram.org/api/files, General Considerations)
+    אומר במפורש: אם יש dcOption עם הדגל media_only ל-DC המבוקש, חייבים
+    לשלוח את השאילתות לשם. טלתון אינו מיישם את זה — ‏_get_dc מסנן לפי
+    id, ipv6 ו-cdn בלבד ולוקח את הראשון שמתאים, כלומר אולי את הכתובת
+    הכללית. אותו DC ואותו מפתח הרשאה, רק נקודת קצה אחרת
+
+    מחזיר None כשאין כתובת כזו, וכך הקוד נשאר על ההתנהגות של טלתון
+    """
+    if not config.TG_MEDIA_DC:
+        return None
+    options = getattr(type(client), "_config", None)
+    for dc in getattr(options, "dc_options", None) or ():
+        if (dc.id == dc_id and getattr(dc, "media_only", False)
+                and not getattr(dc, "cdn", False)
+                and bool(getattr(dc, "ipv6", False)) == client._use_ipv6):
+            return dc
+    return None
+
+
 async def _open_senders(client, dc_id: int, count: int) -> list:
     """פותח count חיבורים נפרדים ל-DC של טלגרם.
 
@@ -224,18 +246,24 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
     ההרשאה ויוצר את המפתח שכל השאר חולקים.
     """
     dc = await client._get_dc(dc_id)
+    # נקרא רק אחרי _get_dc, שהוא זה שממלא את help.getConfig
+    media = _media_option(client, dc_id)
+    if media is not None:
+        log.info("כתובת קבצים נפרדת ל-DC %d: %s", dc_id, media.ip_address)
+
     home = client.session.dc_id == dc_id
     key = client.session.auth_key if home else None
 
-    async def one(auth_key, delay: float = 0.0):
+    async def one(auth_key, delay: float = 0.0, where=None):
         # פיזור קל: עשרים לחיצות יד באותו אלפית שנייה נראות לטלגרם
         # כהצפה, וחלק מהחיבורים נדחים. חמישים אלפיות ביניהם עולות
         # שנייה אחת בסך הכל ומשאירות את ההקמה מהירה
         if delay:
             await asyncio.sleep(delay)
+        at = where or dc
         sender = MTProtoSender(auth_key, loggers=client._log)
         await sender.connect(client._connection(
-            dc.ip_address, dc.port, dc.id,
+            at.ip_address, at.port, at.id,
             loggers=client._log, proxy=client._proxy,
         ))
         return sender
@@ -243,7 +271,10 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
     began = time.monotonic()
     senders = []
     try:
-        first = await one(key)
+        # החיבור הראשון הוא זה שמייצא את ההרשאה, ולכן הוא נשאר על
+        # הכתובת הכללית. כל השאר, שמבקשים רק חלקי קבצים, הולכים
+        # לכתובת הקבצים כשיש כזו
+        first = await one(key, where=None if key is None else media)
         senders.append(first)
         if key is None:
             # DC אחר מחייב ייצוא הרשאה — אבל רק פעם אחת. המפתח שנוצר
@@ -257,7 +288,7 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
 
         if count > 1 and config.TG_OPEN_PARALLEL:
             rest = await asyncio.gather(
-                *(one(key, i * config.TG_CONNECT_STAGGER)
+                *(one(key, i * config.TG_CONNECT_STAGGER, media)
                   for i in range(count - 1)),
                 return_exceptions=True)
             for item in rest:
@@ -273,7 +304,7 @@ async def _open_senders(client, dc_id: int, count: int) -> list:
             # נפתחו בזה אחר זה, וב-0.9 כשנפתחו יחד. ההשערה שהצפה של
             # לחיצות יד גורמת לטלגרם להגביל, והפיזור לא הספיק
             for _ in range(count - 1):
-                senders.append(await one(key))
+                senders.append(await one(key, where=media))
     except Exception:
         await _close_senders(senders)
         raise
