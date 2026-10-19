@@ -454,6 +454,12 @@ TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
 # אחרי FLOOD_PREMIUM_WAIT אין טעם לנסות שוב באותו חשבון: טלגרם
 # הצמידה לו תקרת מהירות, והניסיון הבא ייכשל באותו אופן אחרי עוד
 # רבע שעה. במקום זה נופלים מיד למסלול הבוט לפרק הזמן הזה
+# מי מוריד ראשון. התיעוד הרשמי של טלגרם אומר ש-FLOOD_PREMIUM_WAIT
+# מתקבל "רק כאשר המשתמש העלה עשרות ג'יגה־בייט או יותר" — כלומר
+# ההעלאות של המשתמש מהטלפון הן שממלאות את תקציב החשבון, והשרת
+# שמוריד באותו חשבון חוטף את העונש. טוקן הבוט הוא ישות נפרדת ואינו
+# כפוף לו. "account" מחזיר את הסדר הקודם
+DOWNLOAD_FIRST = (os.getenv("DOWNLOAD_FIRST") or "bot").strip().lower()
 PREMIUM_FLOOD_REST = float(os.getenv("PREMIUM_FLOOD_REST") or 3600)
 TG_STALL_TIMEOUT = float(os.getenv("TG_STALL_TIMEOUT") or 180)
 

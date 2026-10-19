@@ -334,10 +334,24 @@ async def _fetch(chat_id, file_id: str, name: str, work: Path,
     הבוט במקבול, ולבסוף getFile של השרת המקומי בחיבור אחד
     """
     target = work / f"source{Path(name).suffix or '.mp4'}"
-    if await _via_storage(chat_id, source_message, size, target, screen):
-        return target
-    if await _fast(file_id, size, name, target, screen):
-        return target
+
+    # סדר הניסיונות. החשבון היה ראשון כשחשבנו שהוא מהיר יותר, אבל
+    # התיעוד של טלגרם אומר ש-FLOOD_PREMIUM_WAIT מתקבל "רק כאשר
+    # המשתמש העלה עשרות ג'יגה־בייט או יותר": ההעלאות מהטלפון ממלאות
+    # את תקציב החשבון, והשרת שמוריד באותו חשבון משלם את המחיר. טוקן
+    # הבוט הוא ישות נפרדת ואינו כפוף לעונש הזה
+    async def by_account() -> bool:
+        return await _via_storage(chat_id, source_message, size, target,
+                                  screen)
+
+    async def by_bot() -> bool:
+        return await _fast(file_id, size, name, target, screen)
+
+    order = ((by_bot, by_account) if config.DOWNLOAD_FIRST == "bot"
+             else (by_account, by_bot))
+    for attempt in order:
+        if await attempt():
+            return target
     # getFile במצב --local מוריד את הקובץ מטלגרם לפני שהוא מחזיר נתיב.
     # זו הורדה אמיתית שלוקחת זמן, ובלי דופק המסך נראה תקוע — בדיוק
     # אותה תקלה שתוקנה כבר בשאר הצינור

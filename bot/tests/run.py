@@ -939,9 +939,17 @@ def _storage_download_lane():
     assert hasattr(botjob, "_via_storage"), "אין מסלול דרך האחסון"
 
     order = inspect.getsource(botjob._fetch)
-    first = order.index("_via_storage")
-    assert first < order.index("_fast("), "מסלול החשבון אינו ראשון"
-    assert first < order.index("localbot.locate"), "getFile אינו אחרון"
+    # הסדר נקבע בזמן ריצה לפי DOWNLOAD_FIRST, ולכן בדיקת סדר בטקסט
+    # המקור הייתה עוברת מסיבה לא נכונה
+    assert "config.DOWNLOAD_FIRST" in order, "הסדר אינו ניתן לשינוי"
+    assert order.index("for attempt in order") < order.index(
+        "localbot.locate"), "getFile אינו אחרון"
+
+    # ברירת המחדל היא הבוט: התיעוד של טלגרם אומר ש-FLOOD_PREMIUM_WAIT
+    # מתקבל רק אחרי שהמשתמש העלה עשרות ג'יגה־בייט, כלומר ההעלאות
+    # מהטלפון ממלאות את תקציב החשבון שהשרת מוריד דרכו. טוקן הבוט
+    # הוא ישות נפרדת ואינו כפוף לעונש הזה
+    assert config.DOWNLOAD_FIRST == "bot", config.DOWNLOAD_FIRST
 
     lane = inspect.getsource(botjob._via_storage)
     assert "botapi.premium()" in lane, "אינו משתמש בחשבון משתמש"
