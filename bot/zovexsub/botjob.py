@@ -599,18 +599,27 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                 log.info("תצוגה מקדימה: תמונה שהמשתמש שלח")
             else:
                 poster = await media.poster(dst, work)
-            # מעל תקרת הבוט עוברים דרך האחסון במקום לסרב. קודם הפלט
-            # פשוט הוכרז "נדרש חשבון Premium" אחרי שהצריבה כבר הסתיימה
-            if dst.stat().st_size > localbot.MAX_BYTES:
-                log.info("הפלט %.2fGB מעל תקרת הבוט — דרך ערוץ האחסון",
-                         dst.stat().st_size / 1024 ** 3)
-                if not await _relay_video(chat_id, dst, info, stream,
-                                          poster, screen):
+            # המסירה עוברת בחשבונות ולא בבוט. קודם זה היה תלוי בגודל:
+            # מעל תקרת הבוט דרך האחסון, ומתחתיה דרך הבוט — שני מסלולים
+            # שונים לאותה פעולה, כלומר שני מקומות שבהם משהו יכול
+            # להישבר. החשבון עובד בשני המקרים, ולכן הוא ראשון תמיד,
+            # והבוט נשאר גיבוי. UPLOAD_VIA_ACCOUNT=0 מחזיר את ההתנהגות
+            # הקודמת
+            size_gb = dst.stat().st_size / 1024 ** 3
+            big = dst.stat().st_size > localbot.MAX_BYTES
+            relayed = False
+            if config.UPLOAD_VIA_ACCOUNT or big:
+                log.info("מוסר %.2fGB דרך ערוץ האחסון (חשבון)", size_gb)
+                relayed = await _relay_video(chat_id, dst, info, stream,
+                                             poster, screen)
+                if not relayed and big:
                     raise RuntimeError(
-                        f"{dst.stat().st_size / 1024 ** 3:.2f}GB מעל תקרת "
-                        "הבוט, והמסירה דרך ערוץ האחסון לא זמינה. ודא "
-                        "ש-STORAGE_CHAT מוגדר ושחשבון המשתמש חבר בערוץ.")
-            else:
+                        f"{size_gb:.2f}GB מעל תקרת הבוט, והמסירה דרך ערוץ "
+                        "האחסון לא זמינה. ודא ש-STORAGE_CHAT מוגדר "
+                        "ושחשבון המשתמש חבר בערוץ.")
+                if not relayed:
+                    log.warning("מסלול החשבון לא זמין — נופלים לבוט")
+            if not relayed:
                 await localbot.send_video(
                     chat_id, dst, caption="🔥 וידאו עם כתוביות צרובות",
                     duration=int(float(info.get("format", {}).get("duration", 0) or 0)),

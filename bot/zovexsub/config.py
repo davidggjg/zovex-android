@@ -438,6 +438,10 @@ TG_MEDIA_DC = _int("TG_MEDIA_DC", 0)
 # תקרה עליונה ל-maxrate, ב-kbps. bufsize הוא פי שתיים ממנה, ו-ffmpeg
 # מקבל אותו כמספר שלם 32 ביט — ראו media._bitrate_cap
 BITRATE_CAP_MAX = _int("BITRATE_CAP_MAX", 100_000)
+
+# מסירת הפלט עוברת בחשבון דרך ערוץ האחסון, ולא בבוט — גם מתחת לתקרת
+# הבוט. מסלול אחד לכל הגדלים במקום שניים. 0 מחזיר את הפיצול לפי גודל
+UPLOAD_VIA_ACCOUNT = _int("UPLOAD_VIA_ACCOUNT", 1)
 TG_GROW_EVERY = _int("TG_GROW_EVERY", 8)
 # תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
 # במקום ליפול חזרה למסלול הרגיל של טלתון

@@ -1890,6 +1890,23 @@ def _bitrate_cap_clamped():
     assert media._bitrate_cap(2.5 * 3600) <= media._bitrate_cap(60.0)
 
 
+@check("המסירה עוברת בחשבון לכל גודל, והבוט נשאר גיבוי")
+def _upload_via_account():
+    import inspect
+    from zovexsub import botjob
+
+    body = inspect.getsource(botjob._burn)
+    # מסלול אחד לכל הגדלים: שני מסלולים לאותה פעולה הם שני מקומות
+    # שבהם משהו יכול להישבר, וזה בדיוק מה שקרה
+    assert "config.UPLOAD_VIA_ACCOUNT or big" in body, \
+        "המסירה עדיין מתפצלת לפי גודל בלבד"
+    assert config.UPLOAD_VIA_ACCOUNT == 1, config.UPLOAD_VIA_ACCOUNT
+    # והבוט נשאר כגיבוי אמיתי, ולא נחסם
+    assert "נופלים לבוט" in body, "אין נפילה חזרה לבוט"
+    # אבל מעל תקרת הבוט אין גיבוי, ולכן שם זו שגיאה ולא נפילה
+    assert "not relayed and big" in body, "מעל התקרה חייב להיכשל בקול"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
