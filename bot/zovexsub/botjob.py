@@ -91,6 +91,26 @@ def chat_id_of(screen: "Screen"):
     return screen.chat_id
 
 
+# עד מתי להימנע ממסלול החשבון. FLOOD_PREMIUM_WAIT הוא תקרת מהירות
+# שטלגרם מצמידה לחשבון ללא Premium אחרי עשרות ג'יגה־בייט מצטברים,
+# והיא אינה חולפת תוך שניות. בלי הזיכרון הזה כל קובץ הבא שורף עוד
+# רבע שעה על אותו מסלול ונכשל באותו אופן בדיוק
+_premium_flood_until = 0.0
+
+
+def _account_rested() -> float:
+    """כמה שניות נותרו להימנעות ממסלול החשבון, או 0."""
+    return max(0.0, _premium_flood_until - time.monotonic())
+
+
+def _note_premium_flood() -> None:
+    global _premium_flood_until
+    _premium_flood_until = time.monotonic() + config.PREMIUM_FLOOD_REST
+    log.warning("טלגרם הצמידה תקרת מהירות לחשבון (FLOOD_PREMIUM_WAIT) — "
+                "מדלגים על מסלול החשבון ל-%.0f דקות",
+                config.PREMIUM_FLOOD_REST / 60)
+
+
 async def _via_storage(chat_id, source_message: int, size: int,
                        target: Path, screen: "Screen") -> bool:
     """מוריד בחשבון משתמש, דרך ערוץ האחסון. מחזיר False כדי ליפול הלאה.
@@ -111,6 +131,12 @@ async def _via_storage(chat_id, source_message: int, size: int,
     # Premium הייתה מבטלת את כל המסלול בשקט ונופלת חזרה לבוט. להורדה
     # אין ממילא מגבלת גודל כמו להעלאה — כל חשבון שרואה את ההודעה
     # יכול להוריד אותה
+    rest = _account_rested()
+    if rest:
+        log.info("מסלול החשבון בהמתנה עוד %.0f דקות (תקרת מהירות) — "
+                 "ישר למסלול הבוט", rest / 60)
+        return False
+
     user = botapi.downloader(size, botapi.premium())[0] \
         if size else None
     user = user or botapi.lite() or botapi.premium()
@@ -161,6 +187,8 @@ async def _via_storage(chat_id, source_message: int, size: int,
         await fastio._parallel_download(user, message, target, size,
                                         workers, on_progress)
     except Exception as exc:  # noqa: BLE001 — נופלים למסלול הבוט
+        if "PREMIUM" in str(exc).upper():
+            _note_premium_flood()
         log.warning("ההורדה בחשבון נכשלה (%s: %s) — מסלול הבוט",
                     type(exc).__name__, exc)
         await localbot.say(chat_id_of(screen),

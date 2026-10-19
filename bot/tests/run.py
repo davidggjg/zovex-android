@@ -1595,6 +1595,43 @@ def _settings_are_remembered():
     assert "src:make" in flat and "src:own" in flat
 
 
+@check("אחרי תקרת מהירות על החשבון מדלגים עליו, ולא שורפים עוד רבע שעה")
+def _premium_flood_backoff():
+    """FLOOD_PREMIUM_WAIT הוא תקרה שטלגרם מצמידה לחשבון ללא Premium
+    אחרי עשרות ג'יגה־בייט מצטברים, והיא אינה חולפת תוך שניות.
+
+    נמדד בשטח: ההורדה בחשבון רצה 25 דקות, הגיעה ל-78% ונפלה עם
+    FLOOD_PREMIUM_WAIT_8. בלי זיכרון כל קובץ הבא שורף עוד רבע שעה
+    על אותו מסלול ונכשל באותו אופן בדיוק
+    """
+    import inspect
+    import time as clock
+
+    from zovexsub import botjob, config
+
+    assert config.PREMIUM_FLOOD_REST > 0
+
+    # בלי אירוע — המסלול פתוח
+    botjob._premium_flood_until = 0.0
+    assert botjob._account_rested() == 0.0
+
+    botjob._note_premium_flood()
+    left = botjob._account_rested()
+    assert left > 0, "ההימנעות לא נרשמה"
+    assert left <= config.PREMIUM_FLOOD_REST + 1, left
+
+    # והיא חולפת מעצמה
+    botjob._premium_flood_until = clock.monotonic() - 1
+    assert botjob._account_rested() == 0.0
+    botjob._premium_flood_until = 0.0
+
+    lane = inspect.getsource(botjob._via_storage)
+    # הבדיקה לפני שנפתח חשבון, אחרת כבר שילמנו על הניסיון
+    assert lane.index("_account_rested()") < lane.index("botapi.downloader"), \
+        "ההימנעות נבדקת מאוחר מדי"
+    assert '"PREMIUM" in str(exc).upper()' in lane, "אינו מזהה את התקרה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -451,6 +451,10 @@ FAST_START_TIMEOUT = float(os.getenv("FAST_START_TIMEOUT") or 240)
 TG_READ_TIMEOUT = float(os.getenv("TG_READ_TIMEOUT") or 60)
 TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
 # אם לא ירד אף בייט בפרק הזמן הזה, ההעברה מוכרזת תקועה ונופלת חזרה
+# אחרי FLOOD_PREMIUM_WAIT אין טעם לנסות שוב באותו חשבון: טלגרם
+# הצמידה לו תקרת מהירות, והניסיון הבא ייכשל באותו אופן אחרי עוד
+# רבע שעה. במקום זה נופלים מיד למסלול הבוט לפרק הזמן הזה
+PREMIUM_FLOOD_REST = float(os.getenv("PREMIUM_FLOOD_REST") or 3600)
 TG_STALL_TIMEOUT = float(os.getenv("TG_STALL_TIMEOUT") or 180)
 
 
