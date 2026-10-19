@@ -946,11 +946,13 @@ def _storage_download_lane():
     assert order.index("for attempt in order") < order.index(
         "localbot.locate"), "getFile אינו אחרון"
 
-    # ברירת המחדל היא הבוט: התיעוד של טלגרם אומר ש-FLOOD_PREMIUM_WAIT
-    # מתקבל רק אחרי שהמשתמש העלה עשרות ג'יגה־בייט, כלומר ההעלאות
-    # מהטלפון ממלאות את תקציב החשבון שהשרת מוריד דרכו. טוקן הבוט
-    # הוא ישות נפרדת ואינו כפוף לעונש הזה
-    assert config.DOWNLOAD_FIRST == "bot", config.DOWNLOAD_FIRST
+    # ברירת המחדל היא החשבון. קודם היה כאן הבוט, מהנימוק ש-
+    # FLOOD_PREMIUM_WAIT מתקבל רק אחרי שהמשתמש העלה עשרות ג'יגה ולכן
+    # ההעלאות מהטלפון ממלאות את תקציב החשבון. הנימוק הזה אינו תקף
+    # יותר: ההורדות עברו ל-Premium בלבד, וחשבון Premium אינו יכול
+    # לקבל את השגיאה הזאת כלל. ובפועל נתיב הבוט נמדד כנתקע לפני
+    # הבייט הראשון, 0% אחרי שתי דקות
+    assert config.DOWNLOAD_FIRST == "account", config.DOWNLOAD_FIRST
 
     lane = inspect.getsource(botjob._via_storage)
     assert "botapi.premium()" in lane, "אינו משתמש בחשבון משתמש"

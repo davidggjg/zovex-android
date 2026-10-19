@@ -469,7 +469,13 @@ TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
 # ההעלאות של המשתמש מהטלפון הן שממלאות את תקציב החשבון, והשרת
 # שמוריד באותו חשבון חוטף את העונש. טוקן הבוט הוא ישות נפרדת ואינו
 # כפוף לו. "account" מחזיר את הסדר הקודם
-DOWNLOAD_FIRST = (os.getenv("DOWNLOAD_FIRST") or "bot").strip().lower()
+# עודכן: ההורדות עברו ל-Premium בלבד (ראו botapi.downloader), וחשבון
+# Premium אינו יכול לקבל FLOOD_PREMIUM_WAIT כלל — כך שהנימוק להעדפת
+# הבוט אינו תקף יותר. ובפועל נתיב הבוט נמדד כנתקע לפני הבייט הראשון:
+# "פותח 16 חיבורים (בוט) · 0 מתוך 1910MB · 0% · 2:05", כלומר מעבר
+# לפסק הזמן לפתיחת החיבורים — הם קמו והבקשות לא החזירו כלום.
+# "bot" מחזיר את הסדר הקודם
+DOWNLOAD_FIRST = (os.getenv("DOWNLOAD_FIRST") or "account").strip().lower()
 PREMIUM_FLOOD_REST = float(os.getenv("PREMIUM_FLOOD_REST") or 3600)
 TG_STALL_TIMEOUT = float(os.getenv("TG_STALL_TIMEOUT") or 180)
 
