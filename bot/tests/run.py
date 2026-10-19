@@ -1752,6 +1752,19 @@ def _premium_upload_lane():
     assert small[1] == "רגיל", small
     assert big == ("PREM", "Premium"), big
 
+    # ובהורדה אין פיצול בכלל: Premium תמיד. חשבון ללא מנוי סופג
+    # FLOOD_PREMIUM_WAIT אחרי עשרות ג'יגה, וזה הקצב שמתמוטט באמצע
+    botapi._premium, botapi._lite = "PREM", object()
+    try:
+        for bytes_ in (1, config.LITE_UPLOAD_MAX, config.LITE_UPLOAD_MAX + 1):
+            assert botapi.downloader(bytes_, "ARG") == ("PREM", "Premium"), \
+                f"ההורדה של {bytes_} בייט לא עברה ב-Premium"
+        # ובלי Premium מחובר, חשבון רגיל עדיף על כלום
+        botapi._premium = None
+        assert botapi.downloader(1, None)[1] == "רגיל"
+    finally:
+        botapi._premium, botapi._lite = None, None
+
     # תקרת המהירות שנתפסת בהורדה משביתה את מסלול החשבון להורדה בלבד.
     # אם היא תחסום גם את ההעלאה, קובץ של 3 ג'יגה פשוט לא יימסר
     assert "_account_rested" in inspect.getsource(botjob._via_storage)
