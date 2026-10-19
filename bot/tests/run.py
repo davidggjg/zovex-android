@@ -1779,6 +1779,11 @@ def _media_dc():
         _use_ipv6 = False
 
     client = Client()
+    # כבוי כברירת מחדל: זו הייתה הנחה שלא מופיעה בתיעוד, ובשרת היא
+    # נמדדה כ"לא התחיל להוריד תוך 240 שניות" — אף בייט מ-16 חיבורים
+    assert config.TG_MEDIA_DC == 0, \
+        "כתובת הקבצים הודלקה בברירת המחדל אף שלא אומתה בפועל"
+
     saved = config.TG_MEDIA_DC
     try:
         config.TG_MEDIA_DC = 1

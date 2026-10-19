@@ -257,8 +257,14 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
                 # אף בייט לא הגיע. עדיף ליפול לגיבוי מאשר להישאר תקוע
                 raise TimeoutError(
                     f"לא התחיל להוריד תוך {config.FAST_START_TIMEOUT:.0f} שניות")
-            await screen.show(f"🔌 פותח {workers} חיבורים ({which}) · "
-                              f"{waited // 60}:{waited % 60:02d}")
+            # כמה מתוך כמה, גם כאן. שעון לבדו אינו אומר אם משהו
+            # קורה או שהמסלול מת — וארבע דקות של מספר שמתקדם בלי
+            # שום נתון אחר הן בדיוק מה שנראה תקוע
+            await screen.show(
+                f"🔌 פותח {workers} חיבורים ({which}) · "
+                f"0 מתוך {size / 1048576:.0f}MB · 0% · "
+                f"{waited // 60}:{waited % 60:02d} "
+                f"מתוך {config.FAST_START_TIMEOUT / 60:.0f} דק'")
 
     # קוראים ל-_parallel_download ישירות ולא ל-download: האחרון בולע כשל
     # מקבילי ועובר בשקט למסלול סדרתי, וזה בדיוק מה שהסתיר קצב של
