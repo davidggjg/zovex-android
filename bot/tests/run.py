@@ -1736,6 +1736,27 @@ def _burn_retry():
     assert calls["single"] == 1, calls
 
 
+@check("קובץ מעל 2 ג'יגה עולה דרך Premium, וההמתנה של ההורדה לא חוסמת אותו")
+def _premium_upload_lane():
+    import inspect
+    from zovexsub import botapi, botjob
+
+    # ניתוב לפי גודל: רגיל עד 2GB, Premium מעליו
+    botapi._lite = object()
+    try:
+        small = botapi.uploader(config.LITE_UPLOAD_MAX, "PREM")
+        big = botapi.uploader(config.LITE_UPLOAD_MAX + 1, "PREM")
+    finally:
+        botapi._lite = None
+    assert small[1] == "רגיל", small
+    assert big == ("PREM", "Premium"), big
+
+    # תקרת המהירות שנתפסת בהורדה משביתה את מסלול החשבון להורדה בלבד.
+    # אם היא תחסום גם את ההעלאה, קובץ של 3 ג'יגה פשוט לא יימסר
+    assert "_account_rested" in inspect.getsource(botjob._via_storage)
+    assert "_account_rested" not in inspect.getsource(botjob._relay_video)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
