@@ -607,7 +607,12 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                     f"{waited // 60}:{waited % 60:02d} · דרך השרת המקומי",
                     force=True)
 
-        pulse = asyncio.create_task(beat())
+        # הדופק מופעל רק במסלול הבוט, ובכוונה. מסלול החשבון מדווח
+        # בייטים אמיתיים — כמה מתוך כמה, אחוז, קצב וזמן נותר — והדופק
+        # דרס אותו כל כמה שניות בהודעה כללית שגם אינה נכונה יותר
+        # ("דרך השרת המקומי" כשהמסירה בכלל עוברת בחשבון). המשתמש ראה
+        # את ההתקדמות האמיתית מהבהבת ונעלמת
+        pulse = None
         try:
             # תמונה שהמשתמש שלח גוברת על פריים מהסרטון
             poster = _cover.pop(int(chat_id), None)
@@ -637,6 +642,7 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                 if not relayed:
                     log.warning("מסלול החשבון לא זמין — נופלים לבוט")
             if not relayed:
+                pulse = asyncio.create_task(beat())
                 await localbot.send_video(
                     chat_id, dst, caption="🔥 וידאו עם כתוביות צרובות",
                     duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
@@ -644,7 +650,8 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                     height=int(stream.get("height", 0) or 0),
                     thumb=poster, cover=full_cover)
         finally:
-            pulse.cancel()
+            if pulse is not None:
+                pulse.cancel()
         await screen.show("✅ הסתיים", force=True)
     except Exception as exc:  # noqa: BLE001
         log.exception("הצריבה בבוט נכשלה")

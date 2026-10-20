@@ -2066,6 +2066,27 @@ def _full_resolution_cover():
     assert config.THUMB_MAX <= 320, config.THUMB_MAX
 
 
+@check("התקדמות ההעלאה האמיתית אינה נדרסת בידי הדופק הכללי")
+def _upload_progress_not_clobbered():
+    import inspect
+    from zovexsub import botjob
+
+    body = inspect.getsource(botjob._burn)
+    # הדופק נוצר רק במסלול הבוט. במסלול החשבון יש בייטים אמיתיים,
+    # והדופק דרס אותם כל כמה שניות בהודעה כללית — שגם אינה נכונה,
+    # כי "דרך השרת המקומי" נאמר בזמן שהמסירה עוברת בחשבון
+    assert "pulse = None" in body, "הדופק עדיין מופעל תמיד"
+    spot = body.index("if not relayed:\n                pulse = asyncio")
+    assert spot > body.index("_relay_video("), \
+        "הדופק נוצר לפני שידוע אם מסלול החשבון הצליח"
+    assert "if pulse is not None:" in body, "ביטול הדופק יקרוס כשאין דופק"
+
+    # ומסלול החשבון באמת מדווח כמה מתוך כמה, ולא רק אחוז
+    relay = inspect.getsource(botjob._relay_video)
+    assert "/{total / 1048576" in relay or "מתוך" in relay, \
+        "אין דיווח של כמה מתוך כמה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
