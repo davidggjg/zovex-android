@@ -1244,17 +1244,30 @@ async def _verify(result: Path, expected: float,
     # קצב פריימים — כל קטע יוצא קצר בכמה פריימים בעוד האודיו נשאר
     # שלם, והשגיאה מצטברת בכל חיבור. נמדד ולא מתוקן בשלב הזה, כי
     # התיקון תלוי בכיוון ובגודל ואין טעם לנחש אותו
-    def _span(kind: str) -> float:
+    def _field(kind: str, name: str) -> float:
         for item in info.get("streams", []):
             if item.get("codec_type") == kind:
-                return float(item.get("duration") or 0)
+                return float(item.get(name) or 0)
         return 0.0
+
+    def _span(kind: str) -> float:
+        return _field(kind, "duration")
 
     video_span, audio_span = _span("video"), _span("audio")
     if video_span > 0 and audio_span > 0:
         drift = audio_span - video_span
+        # נקודת ההתחלה, ולא רק האורך. שני זרמים יכולים להיות באותו
+        # אורך בדיוק ועדיין להתחיל בזמנים שונים — וזה הסימן של היסט
+        # קבוע לאורך כל הסרט, להבדיל מהיסט שמצטבר. בלי המספר הזה
+        # אי אפשר להבחין בין השניים, ושניהם נראים למשתמש אותו דבר
+        video_from, audio_from = _field("video", "start_time"), \
+            _field("audio", "start_time")
+        offset = audio_from - video_from
         line = (f"אורך וידאו {video_span:.3f} · אודיו {audio_span:.3f} · "
-                f"הפרש {drift:+.3f} שניות")
+                f"הפרש {drift:+.3f} · התחלה {video_from:.3f}/"
+                f"{audio_from:.3f} · פער התחלה {offset:+.3f} שניות")
+        if abs(offset) > 0.05:
+            log.warning("הזרמים מתחילים בזמנים שונים — %s", line)
         if abs(drift) > 0.2:
             log.warning("היסט בין הקול לתמונה — %s", line)
         else:
