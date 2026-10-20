@@ -156,6 +156,21 @@ def _chain(model: str) -> list[str]:
     return chain
 
 
+def _transient(message: str) -> bool:
+    """האם השגיאה שווה סבב נוסף על כל השרשרת.
+
+    ‏503 הוא "השרת עמוס, נסה שוב" — השגיאה הזמנית ביותר שיש. ובכל
+    זאת הוא היה היחיד שלא קיבל סבב נוסף: התנאי בדק אם ההודעה מכילה
+    "מכסה לדקה" או "עמוס", וההודעה שנבנית על 5xx היא "HTTP 503"
+    בלבד. התוצאה הייתה עבודה שמתה באמצע תרגום של 1602 שורות, אחרי
+    שהמשתמש כבר המתין לה חצי שעה
+    """
+    if "מכסה לדקה" in message or "עמוס" in message:
+        return True
+    # כל 5xx: עומס, תחזוקה, או כשל זמני בצד של גוגל
+    return any(f"HTTP {code}" in message for code in range(500, 600))
+
+
 async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
     """שולח את הבקשה, ויורד למודל הבא כשהנוכחי חסום או עמוס.
 
@@ -167,8 +182,7 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
         try:
             return await _chain_once(model, body, timeout=timeout)
         except GeminiError as exc:
-            transient = "מכסה לדקה" in str(exc) or "עמוס" in str(exc)
-            if not transient or attempt == config.GEMINI_ROUNDS:
+            if not _transient(str(exc)) or attempt == config.GEMINI_ROUNDS:
                 raise
             _exhausted.clear()
             _overloaded.clear()

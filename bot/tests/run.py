@@ -2177,6 +2177,32 @@ def _no_stray_dot():
         inspect.getsource(media.credit_file)
 
 
+@check("‏503 מג'ימיני מקבל סבב נוסף, ולא מפיל תרגום באמצע")
+def _gemini_retries_5xx():
+    from zovexsub import gemini
+
+    # זו ההודעה המדויקת שהפילה עבודה אחרי 35% מתוך 1602 שורות
+    crash = "כל המודלים נכשלו — gemini-flash-lite-latest: HTTP 503"
+    assert gemini._transient(crash), "‏503 עדיין נחשב סופי"
+
+    # כל ה-5xx, לא רק 503
+    for code in (500, 502, 503, 504, 529):
+        assert gemini._transient(f"model: HTTP {code}"), code
+
+    # מה שהיה מזוהה קודם ממשיך להיות מזוהה
+    assert gemini._transient("כל המודלים במכסה לדקה")
+    assert gemini._transient("המודל עמוס")
+
+    # ושגיאה אמיתית נשארת סופית: אין טעם לנסות שוב מפתח פסול
+    for final in ("Gemini HTTP 400: bad request",
+                  "מפתח לא תקין", "HTTP 404: model not found"):
+        assert not gemini._transient(final), final
+
+    # והתנאי באמת בשימוש בשרשרת, ולא רק קיים
+    import inspect
+    assert "_transient(str(exc))" in inspect.getsource(gemini._call)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
