@@ -2151,6 +2151,32 @@ def _what_now_banner():
         botjob._waiting.update(saved[1])
 
 
+@check("נקודה בודדת אינה כתובית ואינה קרדיט")
+def _no_stray_dot():
+    import inspect
+
+    # כתובית שכל תוכנה סימן פיסוק יורדת, והמספור רץ מחדש
+    cues = [srt.Cue(index=1, start=0.0, end=2.0, text="."),
+            srt.Cue(index=2, start=3.0, end=5.0, text="שלום"),
+            srt.Cue(index=3, start=6.0, end=8.0, text=" - "),
+            srt.Cue(index=4, start=9.0, end=11.0, text="מה נשמע")]
+    assert srt.drop_blank(cues) == 2
+    assert [c.text for c in cues] == ["שלום", "מה נשמע"]
+    assert [c.index for c in cues] == [1, 2]
+
+    # טקסט אמיתי עם פיסוק נשאר, וגם מספרים לבדם
+    keep = [srt.Cue(index=1, start=0.0, end=2.0, text="...טוב"),
+            srt.Cue(index=2, start=3.0, end=5.0, text="1948")]
+    assert srt.drop_blank(keep) == 0
+
+    # והניקוי באמת רץ בשרשרת, ולא רק קיים כפונקציה
+    assert "drop_blank(cues)" in inspect.getsource(srt.build_cues)
+
+    # אותו כלל בקרדיט: חלק בלי אות או ספרה אינו קרדיט
+    assert "any(ch.isalnum() for ch in part)" in \
+        inspect.getsource(media.credit_file)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

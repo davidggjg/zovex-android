@@ -87,6 +87,10 @@ def build_cues(segments: list[Segment], lines: list[str],
                 log.info("אין היסט שיטתי בתזמונים (%.2fש)", drift)
         cues = _snap_to_speech(cues, speech, accurate)
     cues = trim_tail(cues)
+    # נקודה בודדת או מקף אינם כתובית, והם צצו על המסך
+    blank = drop_blank(cues)
+    if blank:
+        log.info("הוסרו %d כתוביות ריקות מתוכן", blank)
     cues = merge_short(cues)
     cues = _fix_timing(cues)
     # ההקדמה אחרונה, ובכוונה. היא מקטינה כל מרווח בין כתוביות, וקודם
@@ -678,6 +682,23 @@ def _pieces(words: list[str]) -> list[str]:
         out.append(" ".join(rest[:cut]))
         rest = rest[cut:]
     return out
+
+
+def drop_blank(cues: list["Cue"]) -> int:
+    """מסיר כתוביות שאין בהן אות או ספרה. מחזיר כמה הוסרו.
+
+    כתובית שכל תוכנה נקודה, מקף או סימן בודד אינה טקסט — היא שארית
+    של תמלול שלא זיהה דיבור, או של סימן פיסוק שנותר לבדו אחרי ניקוי.
+    על המסך היא נראית כמו נקודה שצצה משום מקום, ודווח בדיוק כך
+    """
+    keep = [cue for cue in cues
+            if any(ch.isalnum() for ch in (cue.text or ""))]
+    removed = len(cues) - len(keep)
+    if removed:
+        cues[:] = keep
+        for position, cue in enumerate(cues, start=1):
+            cue.index = position
+    return removed
 
 
 def split_overlong(cues: list["Cue"], fps: float = 24.0) -> int:

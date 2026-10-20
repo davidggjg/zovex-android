@@ -454,7 +454,10 @@ def credit_file(work: Path) -> Path | None:
     """
     if not config.CREDIT_TEXT.strip():
         return None
-    lines = [part.strip() for part in config.CREDIT_TEXT.split("|") if part.strip()]
+    # חלק שאין בו אות או ספרה אינו קרדיט אלא תו שנשאר מעריכה — נקודה
+    # בודדת, מקף, קו מפריד. הוא הופיע על המסך בפתיחה בלי שאיש התכוון
+    lines = [part.strip() for part in config.CREDIT_TEXT.split("|")
+             if any(ch.isalnum() for ch in part)]
     if not lines:
         return None
 
