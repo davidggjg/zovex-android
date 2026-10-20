@@ -1222,6 +1222,27 @@ async def _verify(result: Path, expected: float,
             f"קצב הפריימים בפלט {got_fps:.3f} במקום {source_fps:.3f} — "
             "ההרכבה איבדה פריימים"
         )
+
+    # הפרש בין אורך הווידאו לאורך האודיו בפלט. זה הסימן המבחין של
+    # היסט קול: היסט קבוע הוא בעיית מיקס, והיסט שגדל לאורך הסרט הוא
+    # קצב פריימים — כל קטע יוצא קצר בכמה פריימים בעוד האודיו נשאר
+    # שלם, והשגיאה מצטברת בכל חיבור. נמדד ולא מתוקן בשלב הזה, כי
+    # התיקון תלוי בכיוון ובגודל ואין טעם לנחש אותו
+    def _span(kind: str) -> float:
+        for item in info.get("streams", []):
+            if item.get("codec_type") == kind:
+                return float(item.get("duration") or 0)
+        return 0.0
+
+    video_span, audio_span = _span("video"), _span("audio")
+    if video_span > 0 and audio_span > 0:
+        drift = audio_span - video_span
+        line = (f"אורך וידאו {video_span:.3f} · אודיו {audio_span:.3f} · "
+                f"הפרש {drift:+.3f} שניות")
+        if abs(drift) > 0.2:
+            log.warning("היסט בין הקול לתמונה — %s", line)
+        else:
+            log.info("סנכרון קול-תמונה תקין — %s", line)
     log.info("אימות ההרכבה עבר: %.1f שניות, %.3f פריימים לשנייה, זרמים %s",
              actual, got_fps, ", ".join(sorted(kinds)))
 
