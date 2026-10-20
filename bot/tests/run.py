@@ -2203,6 +2203,28 @@ def _gemini_retries_5xx():
     assert "_transient(str(exc))" in inspect.getsource(gemini._call)
 
 
+@check("חלון תרגום שנכשל אינו מפיל את הסרט, והמקור נשמר במקומו")
+def _window_failure_survives():
+    import inspect
+    from zovexsub import hebrew
+
+    body = inspect.getsource(hebrew._translate_all)
+    # נמדד בשרת: "לא התקבל JSON תקין מ-Gemini" על חלון בודד הרג את
+    # כל התרגום, אחרי ש-1056 מתוך 1606 שורות כבר תורגמו
+    assert "return_exceptions=True" in body, "חלון שנכשל עדיין מפיל הכל"
+
+    # מה שנשאר ריק מקבל את שורת המקור, ולא נמחק
+    assert "out[index] = segments[index].text" in body, "אין גיבוי למקור"
+
+    # אבל כשכל החלונות נכשלו אין סרט, וכישלון שקט גרוע מהודעה ברורה
+    assert "if len(broken) == len(starts):" in body, \
+        "כישלון מלא עובר בשקט"
+    assert "raise broken[0]" in body
+
+    # והכישלונות נרשמים, אחרת סרט חלקי נראה כמו סרט תקין
+    assert "חלונות תרגום נכשלו" in body
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

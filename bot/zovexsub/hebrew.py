@@ -710,9 +710,36 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
 
     pulse = asyncio.create_task(ticker())
     try:
-        await asyncio.gather(*(translate_window(start) for start in starts))
+        # חלון אחד שנכשל אינו מפיל את הסרט. קודם כל חריגה עלתה דרך
+        # gather והרגה את כל התרגום — נמדד בשרת: "לא התקבל JSON תקין
+        # מ-Gemini" על חלון בודד, בזמן שכבר תורגמו 1056 מתוך 1606
+        # שורות. כל העבודה הזאת נזרקה בגלל חלון אחד.
+        #
+        # עכשיו החריגות נאספות, מה שהצליח נשמר, ומה שנשאר ריק יקבל
+        # את המקור בתור גיבוי מספר שורות למטה — עדיף סרט עם חלון
+        # אחד בשפת המקור מאשר שום סרט
+        done = await asyncio.gather(
+            *(translate_window(start) for start in starts),
+            return_exceptions=True)
     finally:
         pulse.cancel()
+
+    broken = [item for item in done if isinstance(item, BaseException)]
+    if broken:
+        log.error("%d מתוך %d חלונות תרגום נכשלו (%s) — ממשיכים עם מה שיש",
+                  len(broken), len(starts),
+                  "; ".join(f"{type(e).__name__}: {e}" for e in broken[:3]))
+        if len(broken) == len(starts):
+            # אף חלון לא עבר. כאן באמת אין סרט, וכישלון שקט יהיה גרוע
+            # יותר מהודעה ברורה
+            raise broken[0]
+
+    empty = [index for index, text in enumerate(out) if not (text or "").strip()]
+    if empty:
+        log.warning("%d שורות נשארו בלי תרגום — נשמר המקור שלהן",
+                    len(empty))
+        for index in empty:
+            out[index] = segments[index].text
     return out
 
 
