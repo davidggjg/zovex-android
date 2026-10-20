@@ -2225,6 +2225,28 @@ def _window_failure_survives():
     assert "חלונות תרגום נכשלו" in body
 
 
+@check("קטעים נשמרים רק כשתוכנית החיתוך זהה, אחרת מתחילים נקי")
+def _segment_plan_guard():
+    import inspect
+
+    body = inspect.getsource(media._burn_parallel)
+    # הדילוג על קטע קיים הניח שהקטעים שייכים לאותה תוכנית ולא בדק.
+    # בשרת נמדדו קטעים של 239.9 מול תוכנית שמחפשת 119.9 — 48 מתוך
+    # 49 נצרבו מחדש, והמשתמש ראה צריבה שלמה מתחילה מאפס
+    assert 'card = work / "plan.json"' in body, "אין תוכנית שמורה"
+    assert '"segments": segments' in body and '"span": round(span, 3)' in body
+    assert "shutil.rmtree(work, ignore_errors=True)" in body, \
+        "תוכנית שונה אינה מנקה את הקטעים הישנים"
+
+    # והבדיקה קודמת לשימוש בקטעים, אחרת היא חסרת ערך
+    assert body.index('card = work / "plan.json"') < body.index("piece.exists()")
+
+    # הקבצים שנמחקו יחד עם התיקייה נוצרים מחדש
+    after = body[body.index("shutil.rmtree(work, ignore_errors=True)"):]
+    assert "marked = rtl_copy(srt)" in after[:400], "הכתוביות לא נוצרו מחדש"
+    assert "credit = credit_file(work)" in after[:400], "הקרדיט לא נוצר מחדש"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

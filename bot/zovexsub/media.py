@@ -1011,6 +1011,30 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
              "עד %d קטעים בו-זמנית",
              segments, span / 60, threads, config.burn_slots(os.cpu_count() or 2))
 
+    # תוכנית החיתוך נשמרת לצד הקטעים, ונבדקת לפני שמשתמשים בהם.
+    # הדילוג על קטע קיים הניח שהקטעים על הדיסק שייכים לאותה תוכנית,
+    # ומעולם לא בדק זאת. בשרת נמדדו קטעים של 239.9 שניות מול תוכנית
+    # שמחפשת 119.9: אף אחד לא התאים, 48 מתוך 49 נצרבו מחדש, והמשתמש
+    # ראה צריבה שלמה מתחילה מאפס אחרי שהגיעה למאה אחוז.
+    #
+    # כשהתוכנית שונה אין מה להציל: מוחקים פעם אחת ומתחילים נקי
+    plan = {"duration": round(duration, 3), "fps": round(fps, 3),
+            "segments": segments, "span": round(span, 3)}
+    card = work / "plan.json"
+    if card.exists():
+        try:
+            old_plan = json.loads(card.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            old_plan = None
+        if old_plan != plan:
+            log.warning("תוכנית החיתוך השתנתה (%s ⇐ %s) — מתחילים נקי",
+                        plan, old_plan)
+            shutil.rmtree(work, ignore_errors=True)
+            work.mkdir(parents=True, exist_ok=True)
+            marked = rtl_copy(srt)
+            credit = credit_file(work)
+    card.write_text(json.dumps(plan), encoding="utf-8")
+
     done = [0.0] * segments
     lock = asyncio.Lock()
     started = time.monotonic()
