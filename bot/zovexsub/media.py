@@ -991,7 +991,17 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         log.info("קצב פריימים אחיד לכל הקטעים: %.3f", fps)
 
     threads = config.BURN_SEGMENT_THREADS
-    span = duration / segments
+    # חיתוך על גבולות פריימים מלאים, ולא על זמן עגול. ב-23.976 פריימים
+    # לשנייה אורך כמו 7.500 אינו מספר שלם של פריימים, ו-ffmpeg מעגל
+    # כלפי מעלה: נמדד 7.5075 במקום 7.500, כלומר 180 פריימים במקום
+    # 179.82. כל קטע גדל, השגיאה מצטברת על פני כל הקטעים, והאודיו
+    # נלקח מהמקור שלם — ולכן הווידאו נגרר אחרי הקול, וזה מחמיר ככל
+    # שמתקדמים בסרט. זה בדיוק מה שדווח: שומעים, ורק אחר כך השפתיים
+    # זזות. כשכל קטע הוא מספר שלם של פריימים אין מה לעגל
+    step = 1.0 / fps if fps > 0 else 0.0
+    frames = round(duration * fps) if fps > 0 else 0
+    per_segment = frames // segments if frames else 0
+    span = (per_segment * step) if per_segment else (duration / segments)
     limit = config.burn_timeout(span)
     pool = core_pool()
     log.info("צריבה מקבילית: %d קטעים של %.1f דקות, %d חוטים לקטע, "
@@ -1004,7 +1014,10 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
     async def one(index: int) -> Path:
         begin = index * span
-        length = min(span, duration - begin)
+        # הקטע האחרון לוקח את השארית, כדי שסכום הקטעים יהיה בדיוק
+        # אורך המקור ולא ייפול ממנו בכמה פריימים
+        length = (duration - begin if index == segments - 1
+                  else min(span, duration - begin))
         piece_srt = srt_tools.slice_file(marked, begin, begin + length,
                                          work / f"seg{index:02d}.srt")
         # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון

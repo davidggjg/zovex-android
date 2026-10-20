@@ -2009,6 +2009,34 @@ def _foreign_detector():
     assert cleanup.foreign_lines(lines) == [1, 3]
 
 
+@check("הקטעים נחתכים על גבולות פריימים, ולא סוחפים את הקול")
+def _frame_aligned_segments():
+    import inspect
+
+    body = inspect.getsource(media._burn_parallel)
+    assert "frames // segments" in body, "החיתוך אינו על גבולות פריימים"
+    assert "index == segments - 1" in body, "הקטע האחרון אינו לוקח את השארית"
+
+    # החשבון עצמו, על קצבים ואורכים אמיתיים. נמדד ב-ffmpeg לפני
+    # התיקון: ביקשנו 7.500 וקיבלנו 7.5075 — 180 פריימים במקום 179.82,
+    # וכל קטע גדל. האודיו נלקח מהמקור שלם, ולכן הווידאו נגרר אחריו
+    for fps in (24000 / 1001, 25.0, 30000 / 1001, 24.0):
+        for duration in (1891.0, 7200.5, 3600.25):
+            for segments in (4, 8, 12, 18):
+                step = 1.0 / fps
+                frames = round(duration * fps)
+                per = frames // segments
+                span = per * step
+                # כל קטע הוא מספר שלם של פריימים — אין מה לעגל
+                assert abs(span * fps - round(span * fps)) < 1e-6, (fps, span)
+
+                # והקטעים מכסים את הסרט במדויק, בלי חור ובלי חפיפה
+                spans = [span] * (segments - 1)
+                spans.append(duration - span * (segments - 1))
+                assert abs(sum(spans) - duration) < 1e-6, (fps, duration)
+                assert spans[-1] > 0, (fps, duration, segments)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
