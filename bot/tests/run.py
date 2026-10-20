@@ -2037,6 +2037,35 @@ def _frame_aligned_segments():
                 assert spans[-1] > 0, (fps, duration, segments)
 
 
+@check("עטיפת הווידאו נשלחת במלוא הרזולוציה בשני מסלולי ההעלאה")
+def _full_resolution_cover():
+    import inspect
+    from zovexsub import botjob, localbot
+
+    # שורש הטשטוש: נשמרה רק הגרסה המוקטנת ל-320 פיקסלים, והמקור נזרק.
+    # בזמן ההעלאה כבר לא היה מה לשלוח באיכות גבוהה
+    intake = inspect.getsource(botjob.take_cover)
+    assert "shutil.copy2" in intake, "התמונה המקורית אינה נשמרת"
+    assert "_cover_full" in intake
+
+    # מסלול החשבון: video_cover מקבל InputPhoto ואינו כפוף לתקרת
+    # 320 הפיקסלים שחלה על thumbnail
+    relay = inspect.getsource(botjob._relay_video)
+    assert "video_cover" in relay, "מסלול החשבון אינו שולח עטיפה מלאה"
+    assert "InputMediaUploadedPhoto" in relay, "העטיפה אינה מועלית כתמונה"
+    # וכשל בשדה הזה אינו שווה סרט שלא נמסר אחרי ארבעים דקות צריבה
+    assert "ממשיכים עם תצוגה מקדימה רגילה" in relay, "אין נפילה רכה"
+
+    # מסלול הבוט: cover נוסף ב-Bot API 8.3, ושרת ישן ידחה אותו
+    assert "cover" in inspect.signature(localbot.send_video).parameters
+    sender = inspect.getsource(localbot.send_video)
+    assert 'fields.pop("cover")' in sender, "אין שליחה חוזרת בלי cover"
+
+    # והמוקטנת נשארת בכל מקרה: היא התצוגה המקדימה ברשימת הצ'אטים
+    assert "thumbnail" in sender
+    assert config.THUMB_MAX <= 320, config.THUMB_MAX
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

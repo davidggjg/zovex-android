@@ -464,6 +464,8 @@ async def run(choice) -> None:
 # תוך כדי ההורדה, ובלי מקום להחזיק אותה היא הייתה נזרקת בשקט
 _cover_wait: set[int] = set()
 _cover: dict[int, Path] = {}
+# התמונה המקורית, במלוא הרזולוציה, לשימוש כ-video_cover
+_cover_full: dict[int, Path] = {}
 
 
 def wanting_cover(chat_id) -> bool:
@@ -481,6 +483,16 @@ async def take_cover(chat_id, file_id: str) -> None:
 
     holding = config.WORK_DIR / f"cover-{chat}-{uuid.uuid4().hex[:6]}"
     holding.mkdir(parents=True, exist_ok=True)
+    # המקור נשמר לצד המוקטנת, ולא נזרק. ‏video_cover ב-MTProto מקבל
+    # תמונה מלאה ואינו כפוף לתקרת 320 הפיקסלים של thumbnail — אבל עד
+    # כה שמרנו רק את המוקטנת, ולכן בזמן ההעלאה כבר לא היה מה לשלוח
+    # באיכות גבוהה. זה מקור הטשטוש, והוא היה אצלנו ולא בטלגרם
+    full = holding / f"full{found.suffix or '.jpg'}"
+    try:
+        shutil.copy2(found, full)
+    except OSError as exc:  # noqa: BLE001 — נמשיך עם המוקטנת בלבד
+        log.warning("שמירת התמונה המקורית נכשלה: %s", exc)
+        full = None
     ready = await media.thumb_from_image(found, holding)
     if ready is None:
         await localbot.say(chat_id, "התמונה לא התאימה לתצוגה מקדימה. "
@@ -489,9 +501,13 @@ async def take_cover(chat_id, file_id: str) -> None:
         return
 
     _cover[chat] = ready
+    if full is not None and full.exists():
+        _cover_full[chat] = full
     _cover_wait.discard(chat)
-    log.info("תצוגה מקדימה התקבלה לצ'אט %s (%dKB)",
-             chat, ready.stat().st_size // 1024)
+    log.info("תצוגה מקדימה התקבלה לצ'אט %s (%dKB מוקטנת%s)",
+             chat, ready.stat().st_size // 1024,
+             f", מקור {full.stat().st_size // 1024}KB"
+             if full is not None and full.exists() else "")
     await localbot.say(chat_id, "✅ קיבלתי את התמונה. היא תהיה התצוגה "
                                 "המקדימה של הסרטון.")
 
@@ -595,6 +611,7 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         try:
             # תמונה שהמשתמש שלח גוברת על פריים מהסרטון
             poster = _cover.pop(int(chat_id), None)
+            full_cover = _cover_full.pop(int(chat_id), None)
             if poster is not None and poster.exists():
                 log.info("תצוגה מקדימה: תמונה שהמשתמש שלח")
             else:
@@ -611,7 +628,7 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
             if config.UPLOAD_VIA_ACCOUNT or big:
                 log.info("מוסר %.2fGB דרך ערוץ האחסון (חשבון)", size_gb)
                 relayed = await _relay_video(chat_id, dst, info, stream,
-                                             poster, screen)
+                                             poster, screen, full_cover)
                 if not relayed and big:
                     raise RuntimeError(
                         f"{size_gb:.2f}GB מעל תקרת הבוט, והמסירה דרך ערוץ "
@@ -625,7 +642,7 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                     duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
                     width=int(stream.get("width", 0) or 0),
                     height=int(stream.get("height", 0) or 0),
-                    thumb=poster)
+                    thumb=poster, cover=full_cover)
         finally:
             pulse.cancel()
         await screen.show("✅ הסתיים", force=True)
@@ -642,7 +659,7 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
 
 
 async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
-                       thumb, screen: "Screen") -> bool:
+                       thumb, screen: "Screen", full_cover=None) -> bool:
     """מעלה מחשבון משתמש לערוץ האחסון, והבוט מעביר משם. מחזיר הצלחה.
 
     לבוט יש תקרת העלאה קשיחה, ומעליה הוא פשוט מסרב — "נדרש חשבון
@@ -695,9 +712,49 @@ async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
     common = dict(caption="🔥 וידאו עם כתוביות צרובות",
                   supports_streaming=True, attributes=attributes,
                   thumb=str(thumb) if thumb else None)
+    async def with_cover(handle):
+        """שולח עם תמונת עטיפה במלוא הרזולוציה, או None אם אי אפשר.
+
+        ‏video_cover ב-MTProto מקבל InputPhoto — תמונה שהועלתה כתמונה
+        מלאה — ולכן הוא אינו כפוף לתקרת 320 הפיקסלים ו-200KB שחלה על
+        thumbnail. זו הדרך היחידה להציג פוסטר חד, וזה בדיוק ההבדל
+        שנראה בין הבוט שלנו לערוצים אחרים.
+
+        עטוף בכשל רך בכוונה: שדה שאינו נתמך בשרת או בגרסה אינו שווה
+        סרט שלא נמסר אחרי ארבעים דקות צריבה
+        """
+        if not full_cover or not Path(full_cover).exists():
+            return None
+        try:
+            from telethon.tl import functions as tl, types as tt
+            picture = await user.upload_file(str(full_cover))
+            answer = await user(tl.messages.UploadMediaRequest(
+                peer=where, media=tt.InputMediaUploadedPhoto(file=picture)))
+            photo = answer.photo
+            parcel = tt.InputMediaUploadedDocument(
+                file=handle, mime_type="video/mp4", attributes=attributes,
+                thumb=await user.upload_file(str(thumb)) if thumb else None,
+                video_cover=tt.InputPhoto(
+                    id=photo.id, access_hash=photo.access_hash,
+                    file_reference=photo.file_reference),
+            )
+            out = await user.send_file(
+                where, parcel, caption=common["caption"])
+            log.info("עטיפה במלוא הרזולוציה נשלחה (%dKB)",
+                     Path(full_cover).stat().st_size // 1024)
+            return out
+        except Exception as exc:  # noqa: BLE001 — נופלים למסלול הרגיל
+            log.warning("שליחת עטיפה מלאה נכשלה (%s: %s) — "
+                        "ממשיכים עם תצוגה מקדימה רגילה",
+                        type(exc).__name__, exc)
+            return None
+
     try:
         handle = await fastio.upload(user, dst, on_progress=on_upload)
-        if handle is not None:
+        sent = await with_cover(handle) if handle is not None else None
+        if sent is not None:
+            pass
+        elif handle is not None:
             sent = await user.send_file(where, handle, **common)
         else:
             sent = await user.send_file(where, str(dst),

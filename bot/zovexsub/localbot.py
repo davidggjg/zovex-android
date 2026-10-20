@@ -79,7 +79,8 @@ async def probe() -> str:
 
 async def send_video(chat_id, path: Path, *, caption: str = "",
                      duration: int = 0, width: int = 0, height: int = 0,
-                     thumb: Path | None = None) -> dict:
+                     thumb: Path | None = None,
+                     cover: Path | None = None) -> dict:
     """שולח וידאו מנתיב מקומי.
 
     במצב --local השרת קורא את הקובץ מהדיסק ישירות, ולכן אין כאן העלאה
@@ -101,13 +102,29 @@ async def send_video(chat_id, path: Path, *, caption: str = "",
             fields[name] = str(value)
     if thumb and thumb.exists():
         fields["thumbnail"] = _to_container(thumb)
-    log.info("שולח %.0fMB דרך השרת המקומי", size / 1048576)
+    # cover נוסף ב-Bot API 8.3 ואינו כפוף לתקרת 320 הפיקסלים של
+    # thumbnail — זו הדרך היחידה לפוסטר חד. שרת ישן יותר ידחה את
+    # השדה, ולכן נשלח שוב בלעדיו במקום להיכשל אחרי צריבה שלמה
+    if cover and cover.exists():
+        fields["cover"] = _to_container(cover)
+    log.info("שולח %.0fMB דרך השרת המקומי%s", size / 1048576,
+             " עם עטיפה מלאה" if fields.get("cover") else "")
     try:
-        return await call("sendVideo", **fields)
+        try:
+            return await call("sendVideo", **fields)
+        except Exception as exc:  # noqa: BLE001
+            if "cover" not in fields:
+                raise
+            log.warning("השרת לא קיבל את העטיפה המלאה (%s) — "
+                        "שולח בלי cover", exc)
+            fields.pop("cover")
+            return await call("sendVideo", **fields)
     finally:
         clear_outbox(path.name)
         if thumb:
             clear_outbox(thumb.name)
+        if cover:
+            clear_outbox(cover.name)
 
 
 async def find_chat() -> list[dict]:
