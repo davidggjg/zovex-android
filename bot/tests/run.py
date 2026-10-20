@@ -2110,6 +2110,47 @@ def _sequential_requests():
     assert "היא תהיה " in intake
 
 
+@check("בכל הודעה כתוב מה נדרש מהמשתמש עכשיו")
+def _what_now_banner():
+    from zovexsub import botjob
+
+    chat = 987654
+    saved = (set(botjob._cover_wait), dict(botjob._waiting))
+    try:
+        botjob._cover_wait.clear()
+        botjob._waiting.clear()
+
+        # כשלא מחכים לכלום אין באנר: שורה כזאת בכל עדכון היא רעש
+        assert botjob._banner(chat) == ""
+
+        # ממתינים לתמונה, ואחריה גם קובץ כתוביות — שניהם נאמרים,
+        # בסדר, וברור מה עכשיו ומה אחר כך
+        botjob._cover_wait.add(chat)
+        botjob._waiting[chat] = None
+        now = botjob._banner(chat)
+        assert "עכשיו: שלח לי את התמונה" in now, now
+        assert "אחר כך" in now and "כתוביות" in now, now
+
+        # התמונה הגיעה, ההורדה עדיין רצה: אומרים שנבקש בהמשך
+        botjob._cover_wait.discard(chat)
+        waiting = botjob._banner(chat)
+        assert "ברגע שההורדה תסתיים" in waiting, waiting
+
+        # ההורדה הסתיימה: עכשיו באמת צריך את הקובץ
+        botjob._waiting[chat] = Path("video.mp4")
+        ready = botjob._banner(chat)
+        assert "עכשיו: שלח לי את קובץ הכתוביות" in ready, ready
+
+        # והבאנר באמת נדבק לכל הודעה, ולא רק קיים כפונקציה
+        import inspect
+        assert "_banner(self.chat_id)" in inspect.getsource(botjob.Screen.show)
+    finally:
+        botjob._cover_wait.clear()
+        botjob._cover_wait.update(saved[0])
+        botjob._waiting.clear()
+        botjob._waiting.update(saved[1])
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

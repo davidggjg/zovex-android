@@ -42,6 +42,7 @@ class Screen:
         self.shown = ""
 
     async def show(self, text: str, *, force: bool = False) -> None:
+        text = _banner(self.chat_id) + text
         now = time.monotonic()
         if not force and (now - self.last < config.BOT_EDIT_EVERY
                           or text == self.shown):
@@ -51,6 +52,30 @@ class Screen:
             await localbot.edit(self.chat_id, self.message_id, text)
         except Exception as exc:  # noqa: BLE001 — דיווח לא מפיל עבודה
             log.debug("עדכון מסך נכשל: %s", exc)
+
+
+def _banner(chat_id) -> str:
+    """שורה אחת בראש כל הודעה: מה נדרש ממך עכשיו.
+
+    זו הייתה התלונה המדויקת — "לא ברור מה לשלוח ומתי". הבוט ידע בכל
+    רגע מה הוא מחכה לו, אבל זה היה מפוזר בין הודעות שונות שנדחפו זו
+    את זו. כאן זה חוזר בראש כל עדכון מסך, כך שהתשובה תמיד מול העיניים
+    ואין צורך לגלול אחורה כדי למצוא אותה.
+
+    כשלא נדרש כלום אין באנר בכלל: שורה שאומרת "לא צריך כלום" בכל
+    עדכון היא רעש
+    """
+    chat = int(chat_id)
+    if chat in _cover_wait:
+        line = "👉 <b>עכשיו: שלח לי את התמונה לתצוגה המקדימה</b>"
+        if chat in _waiting:
+            line += "\n📄 אחר כך אבקש את קובץ הכתוביות"
+        return line + "\n\n"
+    if chat in _waiting:
+        if _waiting[chat] is not None:
+            return "👉 <b>עכשיו: שלח לי את קובץ הכתוביות</b>\n\n"
+        return "⏳ אבקש את קובץ הכתוביות ברגע שההורדה תסתיים\n\n"
+    return ""
 
 
 def _folder_size(folder: str) -> int:
