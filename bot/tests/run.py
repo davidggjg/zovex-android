@@ -2087,6 +2087,29 @@ def _upload_progress_not_clobbered():
         "אין דיווח של כמה מתוך כמה"
 
 
+@check("תמונה וכתוביות נדרשות בתור, ולא שתיהן פתוחות בבת אחת")
+def _sequential_requests():
+    import inspect
+    from zovexsub import botjob
+
+    start = inspect.getsource(botjob.run)
+    # כשגם תמונה וגם קובץ כתוביות נדרשים, הפתיחה אומרת שזה שלב 1
+    assert "שלב 1 מתוך 2" in start, "אין סימון תור בפתיחה"
+    assert 'both = choice.cover == "כן" and choice.source == "own"' in start
+
+    # ולא מבקשים כתוביות בזמן שהתמונה עדיין חסרה
+    assert "if int(chat_id) in _cover_wait:" in start, \
+        "הבקשה לכתוביות יוצאת גם כשהתמונה עוד לא הגיעה"
+
+    # ומיד כשהתמונה מגיעה, מגיעה הבקשה הבאה בתור
+    intake = inspect.getsource(botjob.take_cover)
+    assert "שלב 2 מתוך 2" in intake, "אין שרשור לבקשה הבאה"
+    assert "if chat in _waiting" in intake
+
+    # וכשאין כתוביות בכלל, ההודעה נשארת פשוטה ובלי מספור שלבים
+    assert "היא תהיה " in intake
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -407,10 +407,19 @@ async def run(choice) -> None:
         _waiting[int(chat_id)] = None
     # אותו טעם: התמונה מגיעה כמעט תמיד תוך כדי ההורדה, ובלי להירשם
     # מראש ההודעה שלה הייתה נופלת לענף "שלח סרטון או קישור"
+    # בקשה אחת בכל פעם, ובסדר קבוע: קודם התמונה ואז הכתוביות. קודם
+    # שתי הבקשות נפתחו במקביל ואף אחת לא ידעה על השנייה — המשתמש ראה
+    # שני דברים פתוחים ולא ידע מה לשלוח ראשון
+    both = choice.cover == "כן" and choice.source == "own"
     if choice.cover == "כן":
         _cover_wait.add(int(chat_id))
-        await localbot.say(chat_id, "🖼️ שלח עכשיו את התמונה לתצוגה "
-                                    "המקדימה. אפשר גם תוך כדי ההורדה.")
+        await localbot.say(
+            chat_id,
+            "🖼️ <b>שלב 1 מתוך 2</b> — שלח עכשיו את התמונה לתצוגה "
+            "המקדימה.\nאחריה אבקש את קובץ הכתוביות."
+            if both else
+            "🖼️ שלח עכשיו את התמונה לתצוגה המקדימה. "
+            "אפשר גם תוך כדי ההורדה.")
 
     try:
         if choice.url:
@@ -436,7 +445,17 @@ async def run(choice) -> None:
                 await screen.show("✅ ממשיך עם הכתוביות ששלחת.", force=True)
                 await _offer_burn(chat_id, source, srt_path, work)
                 return
-            await screen.show("📄 שלח עכשיו את קובץ הכתוביות.", force=True)
+            if int(chat_id) in _cover_wait:
+                # התמונה עדיין לא הגיעה. הבקשה לכתוביות תישלח מיד
+                # כשהיא תגיע, ב-take_cover — שתי בקשות פתוחות בבת
+                # אחת הן בדיוק מה שבלבל
+                await screen.show("🖼️ ממתין לתמונה שביקשתי. "
+                                  "אחריה אבקש את קובץ הכתוביות.",
+                                  force=True)
+                return
+            await screen.show("📄 <b>שלב 2 מתוך 2</b> — שלח עכשיו את קובץ "
+                              "הכתוביות." if choice.cover == "כן" else
+                              "📄 שלח עכשיו את קובץ הכתוביות.", force=True)
             return
 
         async def progress(text: str) -> None:
@@ -508,8 +527,21 @@ async def take_cover(chat_id, file_id: str) -> None:
              chat, ready.stat().st_size // 1024,
              f", מקור {full.stat().st_size // 1024}KB"
              if full is not None and full.exists() else "")
-    await localbot.say(chat_id, "✅ קיבלתי את התמונה. היא תהיה התצוגה "
-                                "המקדימה של הסרטון.")
+    # ומיד הבקשה הבאה בתור, אם יש כזאת. זה מה שהופך שתי בקשות
+    # פתוחות בבת אחת לשיחה: קיבלתי, עכשיו תשלח את הדבר הבא
+    if chat in _waiting and _waiting[chat] is not None:
+        await localbot.say(chat_id,
+                           "✅ קיבלתי את התמונה.\n\n"
+                           "📄 <b>שלב 2 מתוך 2</b> — שלח עכשיו את קובץ "
+                           "הכתוביות.")
+    elif chat in _waiting:
+        await localbot.say(chat_id,
+                           "✅ קיבלתי את התמונה.\n\n"
+                           "📄 אבקש את קובץ הכתוביות ברגע שההורדה "
+                           "תסתיים.")
+    else:
+        await localbot.say(chat_id, "✅ קיבלתי את התמונה. היא תהיה "
+                                    "התצוגה המקדימה של הסרטון.")
 
 
 async def take_subtitle(chat_id, file_id: str, name: str) -> None:
