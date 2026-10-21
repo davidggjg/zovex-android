@@ -1018,8 +1018,22 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     # ראה צריבה שלמה מתחילה מאפס אחרי שהגיעה למאה אחוז.
     #
     # כשהתוכנית שונה אין מה להציל: מוחקים פעם אחת ומתחילים נקי
+    # הטביעה כוללת את הכתוביות ואת הסגנון, ולא רק את גיאומטריית
+    # החיתוך. הקטעים הם וידאו עם כתוביות **כבר צרובות בתוכו**: קטע
+    # משיוט קודם נושא את התזמונים והסגנון של אותו שיוט. המסלול
+    # המיידי משתמש באותה תיקיית עבודה של יצירת הכתוביות (bot.py,
+    # work=offer.work), בעוד צריבה נפרדת מקבלת תיקייה חדשה —
+    # ולכן רק במסלול המיידי אפשר לפגוש קטעים ישנים. זה בדיוק ההבדל
+    # שבגללו "מיידי יוצא עקום ונפרד יוצא תקין"
+    try:
+        stamp = srt.stat()
+        subtitles = f"{stamp.st_size}:{int(stamp.st_mtime)}"
+    except OSError:
+        subtitles = "?"
     plan = {"duration": round(duration, 3), "fps": round(fps, 3),
-            "segments": segments, "span": round(span, 3)}
+            "segments": segments, "span": round(span, 3),
+            "srt": subtitles,
+            "style": repr(style), "profile": profile or ""}
     card = work / "plan.json"
     if card.exists():
         try:

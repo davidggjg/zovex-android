@@ -2235,6 +2235,14 @@ def _segment_plan_guard():
     # 49 נצרבו מחדש, והמשתמש ראה צריבה שלמה מתחילה מאפס
     assert 'card = work / "plan.json"' in body, "אין תוכנית שמורה"
     assert '"segments": segments' in body and '"span": round(span, 3)' in body
+
+    # הקטעים הם וידאו עם כתוביות כבר צרובות בתוכו, ולכן הטביעה
+    # חייבת לכלול גם את קובץ הכתוביות ואת הסגנון. המסלול המיידי
+    # משתמש באותה תיקיית עבודה של יצירת הכתוביות, ורק בו אפשר
+    # לפגוש קטעים משיוט קודם — זה ההבדל מול צריבה נפרדת
+    assert '"srt": subtitles' in body, "הכתוביות אינן בטביעת התוכנית"
+    assert '"style": repr(style)' in body, "הסגנון אינו בטביעת התוכנית"
+    assert '"profile": profile or ""' in body, "הפרופיל אינו בטביעה"
     assert "shutil.rmtree(work, ignore_errors=True)" in body, \
         "תוכנית שונה אינה מנקה את הקטעים הישנים"
 
