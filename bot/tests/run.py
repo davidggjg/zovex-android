@@ -2249,6 +2249,17 @@ def _segment_plan_guard():
     # והבדיקה קודמת לשימוש בקטעים, אחרת היא חסרת ערך
     assert body.index('card = work / "plan.json"') < body.index("piece.exists()")
 
+    # שיתוף קטעים מותר רק בתוך אותה צריבה, ולעולם לא בין עבודות:
+    # המסלול המיידי רץ בתיקיית העבודה של יצירת הכתוביות, וקטע
+    # משיוט קודם נושא בתוכו תזמונים וסגנון ישנים
+    assert "reuse: bool = False" in inspect.signature(
+        media._burn_parallel).__str__().replace("'", "") or \
+        "reuse" in inspect.signature(media._burn_parallel).parameters
+    assert "if not reuse:" in body, "ניסיון ראשון אינו מתחיל נקי"
+    caller = inspect.getsource(media.burn)
+    assert "reuse=attempt > 1" in caller, \
+        "הניסיון הראשון מקבל רשות להשתמש בקטעים ישנים"
+
     # הקבצים שנמחקו יחד עם התיקייה נוצרים מחדש
     after = body[body.index("shutil.rmtree(work, ignore_errors=True)"):]
     assert "marked = rtl_copy(srt)" in after[:400], "הכתוביות לא נוצרו מחדש"

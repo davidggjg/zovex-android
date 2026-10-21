@@ -884,7 +884,7 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
             try:
                 return await _burn_parallel(video, srt, dst, duration,
                                             segments, on_progress, style,
-                                            profile)
+                                            profile, reuse=attempt > 1)
             except Exception as failure:  # noqa: BLE001
                 exc = failure
                 if attempt == 1:
@@ -959,7 +959,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                          segments: int, on_progress=None,
                          style: Style | None = None,
-                         profile: str = "") -> Path:
+                         profile: str = "", reuse: bool = False) -> Path:
     """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
 
     מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
@@ -1035,7 +1035,19 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
             "srt": subtitles,
             "style": repr(style), "profile": profile or ""}
     card = work / "plan.json"
-    if card.exists():
+    if not reuse:
+        # ניסיון ראשון בעבודה הזאת: מתחילים נקי תמיד, בלי קשר לתוכנית.
+        # הקטעים הם וידאו שהכתוביות כבר צרובות בתוכו, והמסלול המיידי
+        # רץ בתיקיית העבודה של יצירת הכתוביות — כלומר קטע משיוט קודם
+        # יכול לשבת שם עם תזמונים ישנים. שיתוף קטעים נועד לחסוך ניסיון
+        # שני באותה צריבה, ולא להעביר חומר בין עבודות
+        if any(work.glob("seg*.mp4")):
+            log.info("מנקה קטעים משיוט קודם לפני צריבה חדשה")
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True, exist_ok=True)
+        marked = rtl_copy(srt)
+        credit = credit_file(work)
+    elif card.exists():
         try:
             old_plan = json.loads(card.read_text(encoding="utf-8"))
         except (ValueError, OSError):
