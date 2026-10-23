@@ -627,7 +627,21 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
     screen = Screen(chat_id, note.get("message_id", 0))
     dst = work / f"{source.stem}.he.mp4"
     try:
+        said_fallback = False
+
         async def on_burn(fraction: float, speed: str) -> None:
+            # סיבת הנפילה למסלול האיטי מגיעה דרך אותו ערוץ של ההתקדמות,
+            # ועד כה היא נכתבה למסך שמתעדכן מיד אחריה ונבלעה. היא
+            # ההסבר היחיד לשאלה "למה זה צורב פעמיים ולוקח שעה", ולכן
+            # היא נשלחת כהודעה נפרדת שנשארת בצ'אט
+            nonlocal said_fallback
+            if speed.startswith("נפל למסלול יחיד") and not said_fallback:
+                said_fallback = True
+                await localbot.say(
+                    chat_id,
+                    "⚠️ הצריבה המקבילית נפלה, ממשיך בתהליך יחיד "
+                    "(איטי יותר).\n<code>" + speed.split(":", 1)[-1].strip()
+                    + "</code>")
             await screen.show(f"🔥 צורב · {fraction * 100:.0f}% · {speed}")
 
         style = media.Style(size=choice.size, font=choice.font,

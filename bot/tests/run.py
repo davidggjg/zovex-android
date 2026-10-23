@@ -2266,6 +2266,30 @@ def _segment_plan_guard():
     assert "credit = credit_file(work)" in after[:400], "הקרדיט לא נוצר מחדש"
 
 
+@check("הרכבה שנכשלה מנסה דרך חיבור שנייה, ולא צורבת הכל מחדש")
+def _assembly_second_route():
+    import inspect
+
+    body = inspect.getsource(media._burn_parallel)
+    # הקטעים נצרבו ותקינים. ליפול מכאן לתהליך יחיד זה לצרוב ארבעים
+    # דקות מחדש בגלל שלב חיבור שנמשך דקות
+    assert "async def through_ts()" in body, "אין דרך חיבור שנייה"
+    assert "concat:" in body, "אין שרשור דרך פרוטוקול concat"
+    assert "mpegts" in body
+
+    # מסנן הביטסטרים נבחר לפי הקודק בפועל, אחרת ה-TS יוצא פגום
+    assert "hevc_mp4toannexb" in body and "h264_mp4toannexb" in body
+
+    # והדרך השנייה נכנסת רק אחרי שהראשונה נכשלה
+    first = body.index("await demuxer()")
+    second = body.index("await through_ts()")
+    assert first < second, "הדרך השנייה רצה לפני המהירה"
+    assert "except (FFmpegError, OSError)" in body[first:second]
+
+    # והמשתמש רואה שמשהו השתנה, ולא מסך שנתקע על "מרכיב"
+    assert "מרכיב בדרך אחרת" in body
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

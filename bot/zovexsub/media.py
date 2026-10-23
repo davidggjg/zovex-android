@@ -1154,13 +1154,60 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
     if on_progress:
         await on_progress(ASSEMBLE_FROM, "מרכיב")
-    await _run_progress([
-        "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
-        "-i", str(listing), "-i", str(video),
-        "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy",
-    ] + await _audio_args(video) + [
-        "-movflags", "+faststart", "-shortest", str(dst),
-    ], duration, assembling, timeout=limit)
+
+    audio = await _audio_args(video)
+
+    async def demuxer() -> None:
+        """החיבור המהיר: concat demuxer והעתקה בלי קידוד מחדש."""
+        await _run_progress([
+            "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(listing), "-i", str(video),
+            "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy",
+        ] + audio + [
+            "-movflags", "+faststart", "-shortest", str(dst),
+        ], duration, assembling, timeout=limit)
+
+    async def through_ts() -> None:
+        """החיבור העמיד: דרך MPEG-TS, שסובל הבדלי פרמטרים בין קטעים.
+
+        ‏concat demuxer דורש שכל הקטעים יהיו זהים בפרמטרים עד הרמה
+        הנמוכה ביותר, ונכשל כשמשהו זז — גם כשהקטעים עצמם תקינים
+        לגמרי. ‏MPEG-TS הוא פורמט שידור: הוא נושא פרמטרים בכל חבילה,
+        ולכן חיבור שלו הוא שרשור בייטים פשוט שעובד גם כשהדמוקסר
+        מוותר.
+
+        זה עדיין בלי קידוד מחדש — דקות, לא שעה. וזה ההבדל בין
+        "ההרכבה נפלה, צורבים הכל מחדש" לבין "ההרכבה נפלה, מרכיבים
+        אחרת"
+        """
+        codec = (settings.get("codec") or "").lower()
+        bridge = ("hevc_mp4toannexb" if "265" in codec or "hevc" in codec
+                  else "h264_mp4toannexb")
+        parts = []
+        for piece in pieces:
+            lane = piece.with_suffix(".ts")
+            await _run(["ffmpeg", "-nostdin", "-y", "-i", str(piece),
+                        "-c", "copy", "-bsf:v", bridge,
+                        "-f", "mpegts", str(lane)], timeout=limit)
+            parts.append(str(lane))
+        joined = "concat:" + "|".join(parts)
+        await _run_progress([
+            "ffmpeg", "-nostdin", "-y", "-i", joined, "-i", str(video),
+            "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy",
+        ] + audio + [
+            "-movflags", "+faststart", "-shortest", str(dst),
+        ], duration, assembling, timeout=limit)
+
+    try:
+        await demuxer()
+    except (FFmpegError, OSError) as exc:
+        # הקטעים נצרבו ותקינים. ליפול מכאן לתהליך יחיד פירושו לצרוב
+        # את כל הסרט מחדש — ארבעים דקות — בגלל שלב חיבור שנמשך דקות.
+        # לכן מנסים דרך חיבור שנייה לפני שמוותרים
+        log.warning("החיבור המהיר נכשל (%s) — מנסה דרך MPEG-TS", exc)
+        if on_progress:
+            await on_progress(ASSEMBLE_FROM, "מרכיב בדרך אחרת")
+        await through_ts()
 
     if on_progress:
         await on_progress(1.0, "בודק")
