@@ -610,6 +610,19 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
             accessible={false}
             onPress={closeSeasonPicker}>
             <View style={mdStyles.seasonPickerBox} onStartShouldSetResponder={() => true}>
+              {/* [fix_season_scroll] גלילה, ולא רק רשימה.
+                  דווח מבודק: בסדרה "המאה" הניווט הגיע עד עונה 4 ולא המשיך.
+                  לתיבה לא היה גובה מרבי ולא הייתה בה גלילה, ולכן סדרה עם
+                  הרבה עונות יצרה תיבה גבוהה מהמסך. היא ממורכזת, אז היא
+                  גולשת מעבר לקצה: ה-focus כן עבר לעונה הבאה, אבל היא
+                  יושבת פיזית מתחת לקצה המסך ואין מה שיגלול אליה.
+                  ScrollView של אנדרואיד גולל לבד אל הילד שמקבל focus. */}
+              <ScrollView
+                style={mdStyles.seasonPickerScroll}
+                showsVerticalScrollIndicator={false}
+                // המיכל עצמו אינו תחנת focus — רק הפריטים שבתוכו.
+                focusable={false}
+                accessible={false}>
               {seasons.map((s, i) => (
                 <TvFocusable
                   key={s}
@@ -630,6 +643,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                   <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>
                 </TvFocusable>
               ))}
+              </ScrollView>
             </View>
           </TouchableOpacity>
         </View>
@@ -762,7 +776,11 @@ const mdStyles = StyleSheet.create({
   // אחד, כלומר 0 כברירת מחדל) מבטיח סדר ציור גם בלי תלות בסדר ה-JSX.
   seasonPickerWrap: {...StyleSheet.absoluteFillObject, zIndex: 50},
   seasonPickerOverlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center'},
-  seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180},
+  // [fix_season_scroll] maxHeight כדי שהתיבה לא תגלוש מעבר לקצה המסך
+  // בסדרה עם הרבה עונות. 70% ולא 100%: צריך להישאר ברור שזו שכבה מעל
+  // חלון הפרטים ולא מסך חדש.
+  seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180, maxHeight: Math.round(Dimensions.get('window').height * 0.7)},
+  seasonPickerScroll: {flexGrow: 0},
   seasonPickerItem: {paddingVertical: 18, paddingHorizontal: 28, alignItems: 'center'},
   seasonPickerItemActive: {backgroundColor: colors.focusTint},
   seasonPickerTxt: {color: colors.textSecondary, fontSize: 16, fontWeight: '600'},
