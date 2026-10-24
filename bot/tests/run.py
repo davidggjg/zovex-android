@@ -2300,6 +2300,26 @@ def _assembly_second_route():
     assert "מרכיב בדרך אחרת" in body
 
 
+@check("חשבון המשתמש אינו מגיב בעצמו, והבוט ממשיך לעבוד")
+def _userbot_silent():
+    import inspect
+    from zovexsub import bot as botmain
+
+    # החשבון הפרטי הפסיק להיות בוט: הוא אינו קורא הודעות ואינו עונה
+    assert config.USERBOT_TRIGGER == 0, config.USERBOT_TRIGGER
+    guard = inspect.getsource(botmain.on_message)
+    assert "if not config.USERBOT_TRIGGER:" in guard, "אין מתג כיבוי"
+    # והיציאה היא הדבר הראשון, לפני כל קריאה או ניתוב
+    assert guard.index("USERBOT_TRIGGER") < guard.index("clean(event.raw_text)")
+
+    # והמסלול של @zooigrmbot נפרד לגמרי — רישום אחר, התקנה אחרת
+    launch = inspect.getsource(botmain.main) if hasattr(botmain, "main") \
+        else inspect.getsource(botmain)
+    assert "botjob.install()" in launch, "מסלול הבוט לא מותקן"
+    assert "add_event_handler(on_message" in launch, \
+        "הרישום של חשבון המשתמש אינו נפרד"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

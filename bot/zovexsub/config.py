@@ -52,6 +52,10 @@ LITE_UPLOAD_MAX = _int("LITE_UPLOAD_MAX", 2000 * 1024 * 1024)
 STORAGE_CHAT = os.getenv("STORAGE_CHAT", "").strip()
 
 TRIGGER = os.getenv("TRIGGER", ".srt")
+# האם חשבון המשתמש מגיב בעצמו למילת ההפעלה. כבוי: כל העבודה עוברת
+# בבוט, והחשבון הפרטי מפסיק להגיב להודעות ולהתנהג כבוט. ראו
+# bot.on_message. ‏USERBOT_TRIGGER=1 מחזיר את ההתנהגות
+USERBOT_TRIGGER = _int("USERBOT_TRIGGER", 0)
 
 # רשימת המורשים נשמרת כאן ומנוהלת מתוך טלגרם (.allow / .deny / .users)
 # הגדרות הצריבה שנשמרות לכל צ'אט, כדי לא לשאול את אותן שאלות בכל פרק

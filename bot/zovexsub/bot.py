@@ -261,6 +261,11 @@ def clean(text: str) -> str:
 
 async def on_message(event: events.NewMessage.Event) -> None:
     """נקודת כניסה יחידה — מנתב לפי התוכן, כדי שלא יהיה סינון סמוי שמפספס."""
+    if not config.USERBOT_TRIGGER:
+        # חשבון המשתמש אינו מגיב בעצמו. כל העבודה עוברת בבוט, והחשבון
+        # הפרטי נשאר חשבון פרטי — הוא עדיין מוריד ומעלה קבצים עבור
+        # הבוט, אבל אינו קורא הודעות ואינו עונה לאיש
+        return
     text = clean(event.raw_text)
     log.debug("הודעה מ-%s בצ'אט %s: %r (תגובה: %s)",
               _who(event.message), event.chat_id, text[:60], event.reply_to_msg_id)
