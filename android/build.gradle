@@ -59,6 +59,27 @@ allprojects {
             force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22"
             force "androidx.core:core:1.13.1"
             force "androidx.core:core-ktx:1.13.1"
+            // [fix_mediarouter] react-native-google-cast מבקש את
+            // mediarouter בגרסה דינמית, ולכן Gradle לקח את 1.9.0-beta01
+            // ברגע שהיא פורסמה — והיא דורשת AGP 9.1. 1.6.0 היא היציבה
+            // שמתאימה ל-play-services-cast-framework 21.3.0 שמוצהר כאן.
+            force "androidx.mediarouter:mediarouter:1.6.0"
+        }
+        // [fix_prerelease] שורש הבעיה, ולא עוד תיקון נקודתי.
+        //
+        // שתי הבניות הקודמות נשברו מאותה סיבה בדיוק: ספרייה שמבוקשת
+        // בגרסה דינמית, וגוגל מפרסמת alpha/beta — אז הבנייה "משדרגת"
+        // את עצמה לגרסה שדורשת AGP חדש יותר ונופלת. זה קרה פעמיים
+        // ביום אחד, ובלי החסימה הזו זה יקרה שוב בפרסום הבא.
+        //
+        // componentSelection נבדק *רק* עבור סלקטורים דינמיים, ולכן
+        // ספרייה שמוצהרת בגרסה מפורשת אינה מושפעת ולא נוצר מצב של
+        // "אין גרסה מתאימה".
+        resolutionStrategy.componentSelection.all { selection ->
+            if (selection.candidate.group.startsWith("androidx.") &&
+                selection.candidate.version ==~ /(?i).*-(alpha|beta|rc|dev).*/) {
+                selection.reject("גרסת קדם-שחרור של androidx")
+            }
         }
     }
 }
