@@ -1198,8 +1198,23 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
             "-movflags", "+faststart", "-shortest", str(dst),
         ], duration, assembling, timeout=limit)
 
+    async def assemble_and_check(route) -> None:
+        """מרכיב ומוודא יחד, כי הכישלון הנפוץ אינו ב-ffmpeg אלא אחריו.
+
+        ‏ffmpeg מסיים בקוד יציאה אפס ומפיק קובץ שאיבד כמעט את כל
+        הפריימים — נמדד בשרת כ"קצב הפריימים בפלט 0.490 במקום 24.000".
+        כלומר ההרכבה נכשלת בלי להיכשל, ורק הבדיקה שאחריה תופסת את זה.
+
+        כשהבדיקה הייתה מחוץ ל-try, דרך החיבור השנייה לא רצה אף פעם
+        בדיוק במקרה שבשבילו היא נבנתה
+        """
+        await route()
+        if on_progress:
+            await on_progress(1.0, "בודק")
+        await _verify(dst, duration, fps)
+
     try:
-        await demuxer()
+        await assemble_and_check(demuxer)
     except (FFmpegError, OSError) as exc:
         # הקטעים נצרבו ותקינים. ליפול מכאן לתהליך יחיד פירושו לצרוב
         # את כל הסרט מחדש — ארבעים דקות — בגלל שלב חיבור שנמשך דקות.
@@ -1207,11 +1222,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         log.warning("החיבור המהיר נכשל (%s) — מנסה דרך MPEG-TS", exc)
         if on_progress:
             await on_progress(ASSEMBLE_FROM, "מרכיב בדרך אחרת")
-        await through_ts()
-
-    if on_progress:
-        await on_progress(1.0, "בודק")
-    await _verify(dst, duration, fps)
+        await assemble_and_check(through_ts)
     await _check_codec(dst, config.BURN_CODEC or settings["codec"])
     shutil.rmtree(work, ignore_errors=True)
     log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)

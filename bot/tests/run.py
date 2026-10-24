@@ -2281,10 +2281,20 @@ def _assembly_second_route():
     assert "hevc_mp4toannexb" in body and "h264_mp4toannexb" in body
 
     # והדרך השנייה נכנסת רק אחרי שהראשונה נכשלה
-    first = body.index("await demuxer()")
-    second = body.index("await through_ts()")
+    first = body.index("await assemble_and_check(demuxer)")
+    second = body.index("await assemble_and_check(through_ts)")
     assert first < second, "הדרך השנייה רצה לפני המהירה"
     assert "except (FFmpegError, OSError)" in body[first:second]
+
+    # והאימות חייב להיות בתוך הניסיון, לא אחריו: ffmpeg מסיים בקוד
+    # אפס ומפיק קובץ שאיבד כמעט את כל הפריימים — נמדד בשרת כ"קצב
+    # הפריימים בפלט 0.490 במקום 24.000". כשהאימות היה מחוץ ל-try,
+    # דרך החיבור השנייה לא רצה אף פעם בדיוק במקרה שבשבילו נבנתה
+    inner = inspect.getsource(media._burn_parallel)
+    start = inner.index("async def assemble_and_check")
+    end = inner.index("try:", start)
+    assert "_verify(dst, duration, fps)" in inner[start:end], \
+        "האימות מחוץ לניסיון — הדרך השנייה לא תרוץ על פלט פגום"
 
     # והמשתמש רואה שמשהו השתנה, ולא מסך שנתקע על "מרכיב"
     assert "מרכיב בדרך אחרת" in body
