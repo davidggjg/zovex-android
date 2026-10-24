@@ -224,6 +224,19 @@ function MovieDetailModal({
   // בלי זה: ברגע הסגירה הפריט הממוקד בבורר נעלם מהעץ, אנדרואיד מחפש
   // יעד חדש גאומטרית, והסמן נוחת במקום שרירותי בחלון — או בכלום.
   const [pickerClosedCount, setPickerClosedCount] = useState(0);
+  // [fix_season_scroll3] גלילה מפורשת אל העונה הממוקדת.
+  //
+  // דווח שלוש פעמים ברצף, וכל תיקון הוסיף בדיוק עונה אחת: 4 → 5 → 6.
+  // זה בדיוק מה שקורה כשמרחיבים את המקום הפנוי במקום לגרום לגלילה
+  // לעבוד — הפריט האחרון תמיד נשאר מחוץ להישג, ובסדרה של 10 עונות
+  // זה היה נתקע על 9.
+  //
+  // הגלילה האוטומטית של אנדרואיד אל הילד שמקבל focus לא עבדה כאן, ואין
+  // לי מכשיר לאבחן למה. לכן לא מסתמכים עליה: ה-JS גולל בעצמו בכל תזוזת
+  // focus. 7 פריטים הם עומס אפסי, ולכן דיווח ה-focus ל-JS מוצדק כאן גם
+  // אם הוא נמנע בכוונה בכרטיסי הקטלוג.
+  const seasonScrollRef = useRef(null);
+  const [seasonItemH, setSeasonItemH] = useState(0);
   const closeSeasonPicker = useCallback(() => {
     setShowSeasonPicker(false);
     setPickerClosedCount(c => c + 1);
@@ -618,6 +631,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                   יושבת פיזית מתחת לקצה המסך ואין מה שיגלול אליה.
                   ScrollView של אנדרואיד גולל לבד אל הילד שמקבל focus. */}
               <ScrollView
+                ref={seasonScrollRef}
                 style={mdStyles.seasonPickerScroll}
                 showsVerticalScrollIndicator={false}
                 // המיכל עצמו אינו תחנת focus — רק הפריטים שבתוכו.
@@ -638,6 +652,22 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
                                       (!seasons.includes(activeSeason) && i === 0))}
                   // חוסם יציאה של החצים אל הפקדים שמוסתרים מאחורי השכבה.
                   trapFocus={IS_TV}
+                  // הגובה נמדד ולא מקודד: ריפוד וגודל טקסט משתנים בין
+                  // מכשירים, וערך קשיח היה מחטיא בדיוק במכשיר שבו זה
+                  // נשבר.
+                  onLayout={i === 0 ? (e => {
+                    const h = e.nativeEvent.layout.height;
+                    if (h && h !== seasonItemH) setSeasonItemH(h);
+                  }) : undefined}
+                  onFocusChange={IS_TV ? (focused => {
+                    if (!focused || !seasonItemH) return;
+                    // פריט אחד מעל הממוקד, כדי שיישאר הקשר ולא ייראה
+                    // כאילו הרשימה מתחילה בו.
+                    seasonScrollRef.current?.scrollTo({
+                      y: Math.max(0, (i - 1) * seasonItemH),
+                      animated: true,
+                    });
+                  }) : undefined}
                   style={[mdStyles.seasonPickerItem, s === activeSeason && mdStyles.seasonPickerItemActive]}
                   onPress={() => handleSeasonSelect(s)}>
                   <Text style={[mdStyles.seasonPickerTxt, s === activeSeason && mdStyles.seasonPickerTxtActive]}>עונה {s}</Text>
