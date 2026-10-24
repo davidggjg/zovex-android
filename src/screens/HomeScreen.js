@@ -779,8 +779,20 @@ const mdStyles = StyleSheet.create({
   // [fix_season_scroll] maxHeight כדי שהתיבה לא תגלוש מעבר לקצה המסך
   // בסדרה עם הרבה עונות. 70% ולא 100%: צריך להישאר ברור שזו שכבה מעל
   // חלון הפרטים ולא מסך חדש.
-  seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180, maxHeight: Math.round(Dimensions.get('window').height * 0.7)},
-  seasonPickerScroll: {flexGrow: 0},
+  seasonPickerBox: {backgroundColor: colors.surfaceElevated, borderRadius: 16, overflow: 'hidden', minWidth: 180},
+  // [fix_season_scroll2] הגובה המרבי חייב לשבת על ה-ScrollView עצמו.
+  //
+  // בגרסה הקודמת הוא ישב על התיבה, ול-ScrollView ניתן flexGrow: 0 בלבד.
+  // ב-React Native גלילה עובדת רק כשלרכיב יש גובה *חסום*: בלי כזה הוא
+  // נמתח לגובה התוכן, טווח הגלילה יוצא אפס, והתיבה פשוט חותכת אותו.
+  // כלומר הוספתי ScrollView שלא גלל.
+  //
+  // ולמה זה נראה רק בטלוויזיה: React Native מדווח יחידות ולא פיקסלים.
+  // טלוויזיה 1080p בצפיפות 2.0 מדווחת גובה 540, וטלפון 844. שבע עונות
+  // תופסות כ-392 — נכנס בטלפון, גולש בטלוויזיה בדיוק בשיעור של כעונה
+  // אחת. זה בדיוק מה שדווח: באנדרואיד ובאתר מגיעים לעונה 7, בטלוויזיה
+  // נעצר ב-5.
+  seasonPickerScroll: {maxHeight: Math.round(Dimensions.get('window').height * 0.7)},
   seasonPickerItem: {paddingVertical: 18, paddingHorizontal: 28, alignItems: 'center'},
   seasonPickerItemActive: {backgroundColor: colors.focusTint},
   seasonPickerTxt: {color: colors.textSecondary, fontSize: 16, fontWeight: '600'},
