@@ -112,14 +112,26 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         val found = super.focusSearch(direction)
         if (!trapFocus) return found
         val box = parent as? ViewGroup ?: return found
-        if (found != null) {
-            var p: android.view.ViewParent? = found.parent
-            while (p != null) {
-                if (p === box) return found
-                p = p.parent
-            }
+        // [fix_trap_null] "אין יעד" אינו "לברוח", ואסור לחסום אותו.
+        //
+        // כאן הוחזר ‎this‎ גם כש-‎found‎ היה null, וזה שבר את בורר העונות:
+        // כשהסמן על הפריט האחרון שנראה, חיפוש הפוקוס מחזיר null כי הפריט
+        // הבא נמצא מחוץ לאזור הנראה של ה-ScrollView. null הוא בדיוק האות
+        // ש-ScrollView מחכה לו — הוא גולל בעצמו ואז מחפש שוב. בהחזרת
+        // ‎this‎ ביטלנו את המנגנון הזה, והרשימה נתקעה פריט אחד לפני הסוף.
+        //
+        // דווח שלוש פעמים: 4 → 5 → 6, וכל "תיקון" שהרחיב את התצוגה רק
+        // הזיז את הקיר בפריט אחד. זו הייתה הסיבה כל הזמן.
+        //
+        // המלכודת נועדה למנוע בריחה לפקדים שמוסתרים מאחורי השכבה, כלומר
+        // למקרה שבו *נמצא* יעד והוא מחוץ לקבוצה. רק הוא נחסם.
+        if (found == null) return null
+        var p: android.view.ViewParent? = found.parent
+        while (p != null) {
+            if (p === box) return found
+            p = p.parent
         }
-        // היעד מחוץ לקבוצה (או שאין יעד) — נשארים במקום במקום להיעלם.
+        // נמצא יעד מחוץ לקבוצה — זו הבריחה. נשארים במקום.
         return this
     }
 
