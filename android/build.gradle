@@ -34,11 +34,31 @@ allprojects {
     }
     // react-native-google-cast מושך kotlin-stdlib 2.1.0 שמתנגש עם המהדר (1.9.22).
     // כופים את גרסת ה-stdlib לגרסת הפרויקט כדי לפתור את חוסר-התאימות במטא-דאטה.
+    //
+    // [fix_androidx_core] androidx.core ננעל ל-1.13.1 מאותה סיבה בדיוק.
+    //
+    // ב-24/10 הבנייה התחילה להיכשל בלי ששום שורת קוד השתנתה. אומת: גם
+    // הקומיט מה-18/10, שנבנה אז בהצלחה, נכשל באותו שלב. השגיאה:
+    //
+    //     Dependency 'androidx.core:core-ktx:1.17.0' requires Android
+    //     Gradle plugin 8.9.1 or higher. This build currently uses 8.3.2.
+    //     Dependency 'androidx.core:core:1.17.0' requires ... compile
+    //     against version 36 or later. :app is compiled against android-34.
+    //
+    // גוגל שחררה את 1.17.0, ומשהו בעץ התלויות מושך את androidx.core בלי
+    // לנעול גרסה — ולכן כל בנייה לקחה את החדשה ביותר ונשברה מעצמה.
+    //
+    // 1.13.1 היא האחרונה שנבנית מול compileSdk 34: 1.15 דורשת 35,
+    // ו-1.16 ואילך דורשות 36. נעילה כאן עדיפה על שדרוג AGP ו-compileSdk
+    // באותה נשימה — שדרוג כזה נוגע בכל הפרויקט ואין סיבה לעשות אותו
+    // בתוך תיקון של באג בבורר עונות.
     configurations.all {
         resolutionStrategy {
             force "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
             force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22"
             force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22"
+            force "androidx.core:core:1.13.1"
+            force "androidx.core:core-ktx:1.13.1"
         }
     }
 }
