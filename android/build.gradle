@@ -61,9 +61,18 @@ allprojects {
             force "androidx.core:core-ktx:1.13.1"
             // [fix_mediarouter] react-native-google-cast מבקש את
             // mediarouter בגרסה דינמית, ולכן Gradle לקח את 1.9.0-beta01
-            // ברגע שהיא פורסמה — והיא דורשת AGP 9.1. 1.6.0 היא היציבה
-            // שמתאימה ל-play-services-cast-framework 21.3.0 שמוצהר כאן.
-            force "androidx.mediarouter:mediarouter:1.6.0"
+            // ברגע שהיא פורסמה — והיא דורשת AGP 9.1.
+            //
+            // [fix_crash_1_0_59] 1.7.0 ולא 1.6.0.
+            //
+            // 1.0.59 קרסה מיידית בפתיחה בטלפון, ועבדה בטלוויזיה. 1.6.0
+            // היא הורדת גרסה אמיתית לעומת הבנייה שעבדה, ששם mediarouter
+            // נפתר ל-1.7.0. play-services-cast-framework מאותחל בטלפון
+            // ולא בטלוויזיה — ולכן חוסר התאמה שם מפיל את הטלפון בלבד,
+            // בדיוק כפי שדווח.
+            //
+            // 1.7.0 היא היציבה האחרונה שנבנית מול compileSdk 34.
+            force "androidx.mediarouter:mediarouter:1.7.0"
         }
         // [fix_prerelease] שורש הבעיה, ולא עוד תיקון נקודתי.
         //
