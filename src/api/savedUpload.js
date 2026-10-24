@@ -47,7 +47,7 @@ export async function verifyPanelCode(code) {
  * ההתקדמות מגיעה באירועים ולא ב-callback, כי ההעלאה שורדת גם מסך שנסגר.
  */
 export function startUpload({code, uri, name, type, size, caption,
-                             duration, width, height}) {
+                             duration, width, height, posterUri}) {
   if (!ZovexUploader) {
     return Promise.reject(new Error('מנגנון ההעלאה אינו זמין בגרסה הזאת'));
   }
@@ -65,6 +65,8 @@ export function startUpload({code, uri, name, type, size, caption,
     duration: n(duration),
     width: n(width),
     height: n(height),
+    // פוסטר שבחרת (content://). ריק = השרת ינסה למצוא לבד לפי הכיתוב.
+    posterUri: posterUri || '',
   });
 }
 

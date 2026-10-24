@@ -10,7 +10,7 @@
 import React, {useState, useRef, useEffect, useCallback} from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  ActivityIndicator, TextInput, Alert, NativeModules,
+  ActivityIndicator, TextInput, Alert, NativeModules, Image,
 } from 'react-native';
 
 // בורר משלנו ולא react-native-image-picker: זה פתח את גוגל תמונות, שמציג
@@ -40,9 +40,20 @@ export default function SavedUploadScreen({route, navigation}) {
   // שנועדה להידחות.
   const maxSize = route?.params?.maxSize || 0;
   const freeDisk = route?.params?.freeDisk || 0;
+  // השרת יודע כבר ברגע הקוד אם יש חשבון טלגרם שאפשר לשלוח אליו, והחזיר
+  // את זה תמיד — אבל אף אחד לא הסתכל. התוצאה: בוחרים קובץ, ממתינים
+  // להעלאה שלמה, ורק אז מקבלים 503. עכשיו זה נאמר למעלה, לפני הבחירה,
+  // עם הסיבה שהשרת נתן ולא "לא מחובר" סתם.
+  const ready = route?.params?.ready !== false;
+  const notReady = route?.params?.reason || '';
 
   const [file, setFile] = useState(null);
   const [caption, setCaption] = useState('');
+  // פוסטר שבחרת בעצמך. בלעדיו השרת מחפש לבד לפי הכיתוב (TMDB); איתו — TMDB
+  // לא נשאל בכלל, והתמונה שלך מוטמעת בקובץ ומשמשת גם כתצוגה בטלגרם.
+  const [poster, setPoster] = useState(null);     // {uri, name}
+  const [posterState, setPosterState] = useState('');   // ''|sending|sent|failed|old_server
+  const [posterError, setPosterError] = useState('');
   const [phase, setPhase] = useState('idle');     // idle|sending|telegram|done|error
   const [sent, setSent] = useState(0);
   // הבורר לא תמיד יודע לומר את גודל הקובץ (fileSize חוזר 0 בחלק ממכשירי
@@ -52,10 +63,37 @@ export default function SavedUploadScreen({route, navigation}) {
   // באיזה מסלול ההעלאה רצה וכמה חיבורים פתוחים. בלי זה נאלצנו לבדוק את
   // השרת מבחוץ כדי לדעת אם המקביליות בכלל הופעלה.
   const [link, setLink] = useState({mode: '', workers: 0});
+  // כמה חלקים ממתינים עכשיו לרשת. כשה-WiFi נופל ההעלאה לא נכשלת אלא
+  // מחכה שהוא יחזור, ובלי השורה הזו זה נראה בדיוק כמו תקיעה.
+  const [waiting, setWaiting] = useState(0);
+  // הצד הנייטיבי מדווח stage='resuming' בזמן שהוא שואל את השרת מה חסר
+  // וממתין לפני הסבב הבא. בלי זה המסך נראה תקוע: המונה לא זז, אין הודעה,
+  // והמשתמש מניח שנפל — וזו בדיוק הנקודה שבה הוא היה מתחיל מחדש בלי צורך.
+  const [resuming, setResuming] = useState(false);
   const [tg, setTg] = useState(null);             // מצב מהשרת
   const [error, setError] = useState('');
   const pollRef = useRef(null);
   const startedRef = useRef(0);
+
+  // ── מהירות נוכחית, לא ממוצע מתחילת ההעלאה ────────────────────────────
+  // קודם חושב sent/elapsed מרגע ההתחלה. אחרי חצי שעה בקליטה גרועה הממוצע
+  // ננעל נמוך, ומעבר למקום עם קליטה טובה כמעט לא הזיז אותו — נראה בדיוק
+  // כאילו המספר "לא מתעדכן". עכשיו מודדים על חלון של 12 השניות האחרונות,
+  // כך שהמסך מראה מה קורה עכשיו וגם הזמן שנותר מתקן את עצמו מיד.
+  const samplesRef = useRef([]);
+  const sample = useCallback(n => {
+    const now = Date.now();
+    const a = samplesRef.current;
+    a.push({t: now, n});
+    while (a.length > 2 && now - a[0].t > 12000) a.shift();
+  }, []);
+  const windowSpeed = () => {
+    const a = samplesRef.current;
+    if (a.length < 2) return 0;
+    const dt = (a[a.length - 1].t - a[0].t) / 1000;
+    const db = a[a.length - 1].n - a[0].n;
+    return dt > 0.5 && db > 0 ? db / dt : 0;
+  };
 
   useEffect(() => () => clearInterval(pollRef.current), []);
 
@@ -70,6 +108,18 @@ export default function SavedUploadScreen({route, navigation}) {
       setPhase('idle'); setSent(0); setTotal(a.size || 0); setTg(null); setError('');
     } catch (e) {
       setError(e.message || 'בחירת הסרטון נכשלה');
+    }
+  }, []);
+
+  const pickPoster = useCallback(async () => {
+    if (!VideoPicker?.pickImage) { setError('בחירת פוסטר דורשת גרסה חדשה של האפליקציה'); return; }
+    try {
+      const a = await VideoPicker.pickImage();
+      if (!a || a.cancelled) return;
+      setPoster({uri: a.uri, name: a.name || 'poster.jpg'});
+      setPosterState(''); setPosterError('');
+    } catch (e) {
+      setError(e.message || 'בחירת התמונה נכשלה');
     }
   }, []);
 
@@ -95,9 +145,13 @@ export default function SavedUploadScreen({route, navigation}) {
   // כשחוזרים לאפליקציה אחרי שיצאנו ממנה — מתחברים אליה במקום להתחיל מאפס.
   useEffect(() => {
     const sub = onUpload(e => {
-      if (typeof e.sent === 'number') setSent(e.sent);
+      if (typeof e.sent === 'number') { setSent(e.sent); sample(e.sent); }
       if (e.total > 0) setTotal(e.total);
       if (e.mode) setLink({mode: e.mode, workers: e.workers || 0});
+      if (typeof e.waiting === 'number') setWaiting(e.waiting);
+      if (typeof e.stage === 'string') setResuming(e.stage === 'resuming');
+      if (typeof e.poster === 'string') setPosterState(e.poster);
+      if (typeof e.posterError === 'string') setPosterError(e.posterError);
       if (e.type === 'done') {
         if (e.job) { setPhase('telegram'); poll(e.job); }
         else { setPhase('error'); setError('השרת לא החזיר מזהה משימה'); }
@@ -115,6 +169,7 @@ export default function SavedUploadScreen({route, navigation}) {
         setSent(st.sent || 0);
         setTotal(st.total || 0);
         if (st.mode) setLink({mode: st.mode, workers: st.workers || 0});
+        if (st.poster) setPosterState(st.poster);
         // המהירות נמדדת מרגע החיבור מחדש, כי אין לנו את זמן ההתחלה המקורי.
         startedRef.current = Date.now();
       } else if (st.stage === 'done' && st.job) {
@@ -129,28 +184,34 @@ export default function SavedUploadScreen({route, navigation}) {
     if (!file || phase === 'sending' || phase === 'telegram') return;
     setPhase('sending'); setSent(0); setTotal(file.size || 0); setTg(null); setError('');
     setLink({mode: '', workers: 0});
+    setResuming(false);
+    setPosterState(poster ? 'sending' : ''); setPosterError('');
     startedRef.current = Date.now();
     try {
       await startUpload({
         code, uri: file.uri, name: file.name, type: file.type,
         size: file.size, caption,
         duration: file.duration, width: file.width, height: file.height,
+        posterUri: poster?.uri || '',
       });
     } catch (e) {
       setPhase('error');
       setError(e.message || 'ההעלאה לשרת נכשלה');
     }
-  }, [file, phase, code, caption]);
+  }, [file, phase, code, caption, poster]);
 
   const busy = phase === 'sending' || phase === 'telegram';
   // הקובץ גדול מהמותר — אין טעם להתחיל. עדיף לומר את זה עכשיו מאשר אחרי
   // שהוא כבר עבר במלואו על רשת סלולרית.
   const tooBig = !!(file && maxSize && file.size > maxSize);
   const noRoom = !!(file && freeDisk && file.size + 536870912 > freeDisk);
-  const blocked = tooBig || noRoom;
+  const blocked = tooBig || noRoom || !ready;
   const upPct = total ? (100 * sent) / total : 0;
+  // חלון של 12 שניות. נופלים לממוצע מתחילת ההעלאה רק בשניות הראשונות,
+  // כשעוד אין מספיק דגימות לחלון.
   const upElapsed = (Date.now() - startedRef.current) / 1000;
-  const upSpeed = phase === 'sending' && upElapsed > 0.5 ? sent / upElapsed : 0;
+  const upSpeed = phase !== 'sending' ? 0
+    : (windowSpeed() || (upElapsed > 0.5 ? sent / upElapsed : 0));
 
   return (
     <View style={styles.container}>
@@ -208,6 +269,36 @@ export default function SavedUploadScreen({route, navigation}) {
           />
         )}
 
+        {!!file && (
+          <View style={styles.posterRow}>
+            {poster ? (
+              <>
+                <Image source={{uri: poster.uri}} style={styles.posterImg} resizeMode="cover" />
+                <View style={styles.posterInfo}>
+                  <Text style={styles.stage}>🖼 הפוסטר שלך</Text>
+                  <Text style={styles.meta} numberOfLines={1}>{poster.name}</Text>
+                  <Text style={styles.meta}>יוטמע בקובץ במקום החיפוש האוטומטי</Text>
+                  {!busy && (
+                    <View style={styles.posterBtns}>
+                      <TouchableOpacity onPress={pickPoster} style={styles.smallBtn}>
+                        <Text style={styles.smallTxt}>החלף</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setPoster(null)} style={styles.smallBtn}>
+                        <Text style={styles.smallTxt}>הסר</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              </>
+            ) : (
+              <TouchableOpacity onPress={pickPoster} disabled={busy} style={styles.posterPick}>
+                <Text style={styles.pickTxt}>🖼 פוסטר משלי (לא חובה)</Text>
+                <Text style={styles.meta}>בלי — השרת ימצא פוסטר לפי השם בכיתוב</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {/* ① טלפון → שרת */}
         {(phase === 'sending' || phase === 'telegram' || phase === 'done') && (
           <View style={styles.card}>
@@ -223,6 +314,29 @@ export default function SavedUploadScreen({route, navigation}) {
                   (upSpeed && total ? ` · ${fmtBytes(upSpeed)}/שנ׳ · נותרו ${fmtEta((total - sent) / upSpeed)}` : '')
                 : '✓ הושלם'}
             </Text>
+            {!!poster && posterState === 'sent' && (
+              <Text style={[styles.meta, {color: '#7ee2a0'}]}>✓ הפוסטר הגיע לשרת</Text>
+            )}
+            {!!poster && posterState === 'failed' && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                הפוסטר לא נשלח ({posterError || 'שגיאה'}) — הסרטון ממשיך לעלות בלעדיו
+              </Text>
+            )}
+            {!!poster && posterState === 'old_server' && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                השרת עוד לא מכיר פוסטר משלך — הסרטון עולה בלעדיו
+              </Text>
+            )}
+            {phase === 'sending' && resuming && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                מתחבר מחדש — בודק מול השרת מה כבר הגיע וממשיך רק את החסר
+              </Text>
+            )}
+            {phase === 'sending' && !resuming && waiting > 0 && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                הרשת נפלה — ממתין שתחזור וממשיך מאותה נקודה, לא מההתחלה
+              </Text>
+            )}
           </View>
         )}
 
@@ -244,11 +358,28 @@ export default function SavedUploadScreen({route, navigation}) {
         {phase === 'done' && (
           <View style={[styles.card, styles.okCard]}>
             <Text style={styles.okTxt}>✅ הסרטון בהודעות השמורות</Text>
+            {tg?.poster === 'embedded' && (
+              <Text style={styles.meta}>🖼 הפוסטר מוטמע בתוך הקובץ</Text>
+            )}
+            {!!poster && posterState === 'sent' && tg?.poster !== 'embedded' && (
+              <Text style={[styles.meta, {color: '#f0b429'}]}>
+                הפוסטר שלך לא הוטמע (סוג הקובץ לא נתמך) — הוא עדיין התצוגה בטלגרם
+              </Text>
+            )}
             <Text style={styles.meta}>הקובץ הזמני נמחק מהשרת.</Text>
           </View>
         )}
 
-        {blocked && !busy && (
+        {!ready && (
+          <View style={[styles.card, styles.errCard]}>
+            <Text style={styles.errTxt}>
+              אין חשבון טלגרם שאפשר לשלוח אליו.
+            </Text>
+            {!!notReady && <Text style={styles.meta}>{notReady}</Text>}
+          </View>
+        )}
+
+        {blocked && ready && !busy && (
           <View style={[styles.card, styles.errCard]}>
             <Text style={styles.errTxt}>
               {tooBig
@@ -298,6 +429,16 @@ const styles = StyleSheet.create({
   input: {backgroundColor: '#141416', borderRadius: 12, borderWidth: 1,
           borderColor: '#232326', color: '#fff', paddingHorizontal: 14,
           paddingVertical: 12, textAlign: 'right', fontSize: 14},
+  posterRow: {flexDirection: 'row-reverse', gap: 12, alignItems: 'center'},
+  posterPick: {flex: 1, backgroundColor: '#141416', borderRadius: 14, paddingVertical: 14,
+               alignItems: 'center', borderWidth: 1, borderColor: '#232326',
+               borderStyle: 'dashed', gap: 4},
+  posterImg: {width: 72, height: 108, borderRadius: 8, backgroundColor: '#1c1c1e'},
+  posterInfo: {flex: 1, gap: 4},
+  posterBtns: {flexDirection: 'row-reverse', gap: 8, marginTop: 4},
+  smallBtn: {backgroundColor: '#1c1c1e', borderRadius: 8, paddingHorizontal: 14,
+             paddingVertical: 6, borderWidth: 1, borderColor: '#2c2c2e'},
+  smallTxt: {color: '#fff', fontSize: 13, fontWeight: '700'},
   barBg: {height: 8, borderRadius: 4, backgroundColor: '#242428', overflow: 'hidden'},
   barFill: {height: '100%', borderRadius: 4},
   okCard: {borderColor: '#2b5d3a', backgroundColor: '#12301d'},

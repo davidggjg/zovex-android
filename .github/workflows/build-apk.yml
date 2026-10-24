@@ -4,6 +4,25 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'לפרסם לקישור ההורדה הציבורי (latest)? בנייה מענף בדיקות לא אמורה'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      publish_tv:
+        description: 'לפרסם ל-release Tv (base.apk)? ערוץ הבדיקות של הטלוויזיה, לא נוגע ב-latest'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
+      publish_test:
+        description: 'לפרסם לערוץ בודקים (test/zovex-test.apk)? קישור ישיר לבודק, לא נוגע ב-latest ולא ב-Tv'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['false', 'true']
 
 permissions:
   contents: write
@@ -28,8 +47,61 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      # שני מספרי גרסה, ואם הם נפרדים בדיקת העדכונים מתה בשקט:
+      # UpdateDialog משווה את APP_VERSION שב-JS מול /app/version של השרת,
+      # בעוד שמה שמותקן בפועל הוא versionName של גרדל. נמצא בפער —
+      # gradle 1.0.43, JS 1.0.42, שרת 1.0.41 — ולכן כל משתמש קיבל
+      # "אתה מעודכן" לנצח. עדיף שהבנייה תיפול מאשר שזה יחזור בשקט.
+      - name: Check version numbers agree
+        run: |
+          G=$(grep -m1 'versionName' android/app/build.gradle | tr -d '"' | awk '{print $2}')
+          J=$(grep -m1 "APP_VERSION = " src/api/movies.js | sed "s/.*'\\(.*\\)'.*/\\1/")
+          echo "gradle=$G  js=$J"
+          if [ "$G" != "$J" ]; then
+            echo "❌ versionName ($G) ו-APP_VERSION ($J) לא זהים."
+            echo "   בלי התאמה דיאלוג העדכון לא יציע לאף אחד לעדכן."
+            exit 1
+          fi
+          echo "✓ תואמים"
+
       - name: Install dependencies
         run: npm install
+
+      # שומר מסך שחור. הוק אחרי ‎return‎ מוקדם משנה את מספר ההוקים בין
+      # רינדור לרינדור, React זורק "Rendered more hooks than during the
+      # previous render", והאפליקציה נתקעת על מסך שחור לפני שהפתיח רץ.
+      # metro מקמפל ולא מריץ, ולכן הבנייה עברה בלי אזהרה אחת וזה התגלה רק
+      # על טלוויזיה של בודק. מכאן זה נופל כאן, לפני שמישהו מתקין.
+      #
+      # ‎@babel/parser‎ מגיע כתלות של react-native, אבל אם ההרמה של npm
+      # תשתנה הוא לא יהיה בשורש — ולכן מוודאים במפורש במקום לגלות בכישלון.
+      - name: Check React hook order (black-screen guard)
+        run: |
+          node -e "require.resolve('@babel/parser')" 2>/dev/null \
+            || npm install --no-save @babel/parser
+          node scripts/check-hooks.js src
+
+      # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
+      # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
+      - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)
+        run: bash scripts/enable-ffmpeg-decoder.sh
+
+      # שידורי IPTV חיים עם keyframes שאינם IDR: בלי זה ExoPlayer נתקע על
+      # ספינר לנצח ו-VLC מנגן. ראו הסבר בראש הסקריפט.
+      - name: Allow non-IDR keyframes in ExoPlayer HLS (IPTV live)
+        run: bash scripts/enable-hls-nonidr.sh
+
+      # ה-OkHttpClient של React Native מוגדר עם timeouts של 0 (אינסוף), ו-
+      # react-native-video משתמש בו כמו שהוא. ערוץ שפותח חיבור ולא שולח
+      # בייטים תקע את הנגן לנצח בלי לזרוק שגיאה — ולכן גם הנפילה-אחורה
+      # מעולם לא נדרכה. ראו הסבר בראש הסקריפט.
+      - name: Give ExoPlayer real HTTP timeouts (endless-spinner fix)
+        run: bash scripts/exoplayer-http-timeouts.sh
+
+      # גם זה חייב לרוץ אחרי npm install. בלעדיו האפליקציה קורסת בלחיצה על
+      # פליי: החבילה קוראת src.getBoolean("autoplay") על מפתח שלא קיים.
+      - name: Fix libVLC crash on play (missing autoplay key)
+        run: bash scripts/fix-vlc-autoplay-crash.sh
 
       - name: Ensure gradle-plugin at top-level node_modules
         run: |
@@ -76,15 +148,24 @@ jobs:
             echo "Created settings.gradle"
           fi
 
+      # packages: '' מדלג על התקנת ברירת המחדל של הפעולה. ברירת המחדל שלה
+      # היא "tools platform-tools", וגוגל הסירה את החבילה tools ממאגר ה-SDK
+      # — כך שכל בנייה נפלה ב-sdkmanager עוד לפני ההידור. מה שבאמת נדרש
+      # מותקן במפורש בשלב הבא, אז אין מה לאבד.
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ''
 
       - name: Install Android SDK components
         run: |
           yes | sdkmanager --licenses > /dev/null 2>&1 || true
           sdkmanager \
+            "platform-tools" \
             "platforms;android-34" \
             "build-tools;34.0.0" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
             "ndk;26.1.10909125"
 
       - name: Make gradlew executable
@@ -183,14 +264,20 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zovex-release-apk
-          path: android/app/build/outputs/apk/release/app-release.apk
+          path: android/app/build/outputs/apk/release/app-universal-release.apk
           retention-days: 30
 
+      # דריסת ה-release בשם latest מחליפה את ה-APK שכל המשתמשים מורידים.
+      # בנייה מענף פיתוח אמורה לייצר artifact לבדיקה, לא להחליף לכולם את
+      # האפליקציה בקוד שטרם נבדק. לכן הפרסום מותנה: אוטומטי רק מ-main,
+      # ומענף אחר רק בבחירה מפורשת.
       - name: Publish APK to GitHub Release (stable public download link)
+        if: github.ref == 'refs/heads/main' || inputs.publish == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk zovex.apk
+          # אוניברסלי: אף משתמש קיים לא נשבר בגלל ארכיטקטורה
+          cp android/app/build/outputs/apk/release/app-universal-release.apk zovex.apk
           if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload latest zovex.apk --repo "$GITHUB_REPOSITORY" --clobber
           else
@@ -200,3 +287,69 @@ jobs:
               --notes "קובץ ה-APK העדכני ביותר. הקישור הזה מתעדכן אוטומטית עם כל build חדש."
           fi
           echo "Public download URL: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/zovex.apk"
+
+      # מסלול נפרד לבדיקות טלוויזיה. התקנה על טלוויזיה דרך artifact של
+      # Actions היא סיזיפית — היא דורשת התחברות לגיטהאב ופתיחת zip, ואין
+      # דפדפן נוח על המסך. לכן בנייה לבדיקה יכולה להתפרסם ל-release בשם Tv,
+      # שנותן כתובת ציבורית ישירה שכל טלוויזיה יודעת להוריד — בלי לגעת
+      # ב-latest, שהוא ה-APK שכל המשתמשים הקיימים מורידים.
+      # שם האסֶט נשאר base.apk בכוונה: זו הכתובת שכפתור הטלוויזיה באתר
+      # מצביע אליה, ולכן היא חייבת להישאר יציבה בין בניות.
+      - name: Publish APK to the Tv release (TV test channel)
+        if: inputs.publish_tv == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # אוניברסלי, כמו הערוץ הציבורי. וריאנט פר-ארכיטקטורה חסך ~30MB
+          # אבל יצר בלבול אמיתי: שלושה קבצים עם אותו versionCode, שאנדרואיד
+          # מסרב להתקין אחד מעל השני, ווריאנט לא מתאים קורס. בהפצה ידנית
+          # קובץ אחד שעובד בכל מקום שווה יותר מ-30MB.
+          cp android/app/build/outputs/apk/release/app-universal-release.apk base.apk
+          # ‎--prerelease‎ חובה, מאותו נימוק בדיוק כמו בערוץ הבודקים:
+          # גיטהאב מחשב ‎releases/latest‎ לפי ה-release הלא-prerelease
+          # החדש ביותר. Tv פורסם בלעדיו ב-17/09 וחטף את התואר מ-latest,
+          # ולכן ‎releases/latest/download/zovex.apk‎ הפנה אל תגית Tv —
+          # שבה יושב base.apk ולא zovex.apk, כלומר **404**.
+          #
+          # זה שבר את כפתור ההורדה באתר ואת ‎/app/apk‎ בשרת למשך שבועיים,
+          # בלי שאף בנייה נכשלה.
+          #
+          # ‎gh release edit‎ גם בענף הקיים: הדגל נקבע ביצירה בלבד, ולכן
+          # release שכבר קיים היה נשאר לא-prerelease לנצח.
+          if gh release view Tv --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload Tv base.apk --repo "$GITHUB_REPOSITORY" --clobber
+            gh release edit Tv --repo "$GITHUB_REPOSITORY" --prerelease
+          else
+            gh release create Tv base.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "ZOVEX - גרסת טלוויזיה" \
+              --notes "APK לבדיקה על Android TV. מתעדכן בכל בנייה עם publish_tv."
+          fi
+          echo "TV download URL: https://github.com/$GITHUB_REPOSITORY/releases/download/Tv/base.apk"
+
+      # ערוץ בודקים. הצורך: לתת לאדם אחד קישור הורדה ישיר בלי שאיש אחר
+      # יקבל את הגרסה. artifact של Actions לא מתאים — הוא דורש חשבון גיטהאב
+      # והוצאה מ-zip; latest ו-Tv שניהם ציבוריים ומחוברים לכפתורים באתר.
+      #
+      # ‎--prerelease אינו קישוט: /app/version בשרת מצביע על
+      # ‎releases/latest/download/... ‏, וגיטהאב מחשב "latest" לפי ה-release
+      # הלא-prerelease החדש ביותר. בלי הדגל הזה כל בנייה לבדיקה הייתה הופכת
+      # ל"האחרונה" עבור גיטהאב.
+      - name: Publish APK to the test release (tester channel)
+        if: inputs.publish_test == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp android/app/build/outputs/apk/release/app-universal-release.apk zovex-test.apk
+          if gh release view test --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload test zovex-test.apk --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create test zovex-test.apk \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "ZOVEX - גרסת בדיקה" \
+              --notes "APK לבדיקה בלבד. הכתובת קבועה ומתעדכנת בכל בנייה עם publish_test. אינו מגיע למשתמשים."
+          fi
+          gh release edit test --repo "$GITHUB_REPOSITORY" --prerelease
+          echo "Tester download URL: https://github.com/$GITHUB_REPOSITORY/releases/download/test/zovex-test.apk"

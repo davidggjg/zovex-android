@@ -6,6 +6,21 @@ buildscript {
         targetSdkVersion = 34
         ndkVersion = "26.1.10909125"
         kotlinVersion = "1.9.22"
+        // [fix_cast_version] נועל את ערכת ה-Cast. בלי זה
+        // react-native-google-cast מושך אותה בגרסה דינמית (+), כלומר
+        // תמיד את החדשה ביותר.
+        //
+        // זה מה שעמד מאחורי כל השרשרת של 24/10: הגרסה החדשה (22.x)
+        // דורשת androidx.mediarouter 1.9.0-beta01, ששברה את הבנייה.
+        // הורדתי את mediarouter כדי להציל אותה — וכך נוצר מצב שבו ערכת
+        // Cast חדשה קוראת לשיטות שאינן קיימות ב-mediarouter הישן.
+        // התוצאה: קריסה מיידית בפתיחה בטלפון בלבד, כי Cast מאותחל שם
+        // ולא בטלוויזיה. זה בדיוק מה שדווח ב-1.0.59 וב-1.0.60.
+        //
+        // 21.3.0 היא הגרסה שמוצהרת ממילא ב-app/build.gradle, והיא
+        // מתיישבת עם mediarouter 1.7.0 ועם compileSdk 34. נעילה כאן
+        // מיישרת את כל המחסנית במקום להוריד חוליה אחת ממנה.
+        castFrameworkVersion = "21.3.0"
     }
 
     repositories {
@@ -34,11 +49,61 @@ allprojects {
     }
     // react-native-google-cast מושך kotlin-stdlib 2.1.0 שמתנגש עם המהדר (1.9.22).
     // כופים את גרסת ה-stdlib לגרסת הפרויקט כדי לפתור את חוסר-התאימות במטא-דאטה.
+    //
+    // [fix_androidx_core] androidx.core ננעל ל-1.13.1 מאותה סיבה בדיוק.
+    //
+    // ב-24/10 הבנייה התחילה להיכשל בלי ששום שורת קוד השתנתה. אומת: גם
+    // הקומיט מה-18/10, שנבנה אז בהצלחה, נכשל באותו שלב. השגיאה:
+    //
+    //     Dependency 'androidx.core:core-ktx:1.17.0' requires Android
+    //     Gradle plugin 8.9.1 or higher. This build currently uses 8.3.2.
+    //     Dependency 'androidx.core:core:1.17.0' requires ... compile
+    //     against version 36 or later. :app is compiled against android-34.
+    //
+    // גוגל שחררה את 1.17.0, ומשהו בעץ התלויות מושך את androidx.core בלי
+    // לנעול גרסה — ולכן כל בנייה לקחה את החדשה ביותר ונשברה מעצמה.
+    //
+    // 1.13.1 היא האחרונה שנבנית מול compileSdk 34: 1.15 דורשת 35,
+    // ו-1.16 ואילך דורשות 36. נעילה כאן עדיפה על שדרוג AGP ו-compileSdk
+    // באותה נשימה — שדרוג כזה נוגע בכל הפרויקט ואין סיבה לעשות אותו
+    // בתוך תיקון של באג בבורר עונות.
     configurations.all {
         resolutionStrategy {
             force "org.jetbrains.kotlin:kotlin-stdlib:1.9.22"
             force "org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.22"
             force "org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.22"
+            force "androidx.core:core:1.13.1"
+            force "androidx.core:core-ktx:1.13.1"
+            // [fix_mediarouter] react-native-google-cast מבקש את
+            // mediarouter בגרסה דינמית, ולכן Gradle לקח את 1.9.0-beta01
+            // ברגע שהיא פורסמה — והיא דורשת AGP 9.1.
+            //
+            // [fix_crash_1_0_59] 1.7.0 ולא 1.6.0.
+            //
+            // 1.0.59 קרסה מיידית בפתיחה בטלפון, ועבדה בטלוויזיה. 1.6.0
+            // היא הורדת גרסה אמיתית לעומת הבנייה שעבדה, ששם mediarouter
+            // נפתר ל-1.7.0. play-services-cast-framework מאותחל בטלפון
+            // ולא בטלוויזיה — ולכן חוסר התאמה שם מפיל את הטלפון בלבד,
+            // בדיוק כפי שדווח.
+            //
+            // 1.7.0 היא היציבה האחרונה שנבנית מול compileSdk 34.
+            force "androidx.mediarouter:mediarouter:1.7.0"
+        }
+        // [fix_prerelease] שורש הבעיה, ולא עוד תיקון נקודתי.
+        //
+        // שתי הבניות הקודמות נשברו מאותה סיבה בדיוק: ספרייה שמבוקשת
+        // בגרסה דינמית, וגוגל מפרסמת alpha/beta — אז הבנייה "משדרגת"
+        // את עצמה לגרסה שדורשת AGP חדש יותר ונופלת. זה קרה פעמיים
+        // ביום אחד, ובלי החסימה הזו זה יקרה שוב בפרסום הבא.
+        //
+        // componentSelection נבדק *רק* עבור סלקטורים דינמיים, ולכן
+        // ספרייה שמוצהרת בגרסה מפורשת אינה מושפעת ולא נוצר מצב של
+        // "אין גרסה מתאימה".
+        resolutionStrategy.componentSelection.all { selection ->
+            if (selection.candidate.group.startsWith("androidx.") &&
+                selection.candidate.version ==~ /(?i).*-(alpha|beta|rc|dev).*/) {
+                selection.reject("גרסת קדם-שחרור של androidx")
+            }
         }
     }
 }
