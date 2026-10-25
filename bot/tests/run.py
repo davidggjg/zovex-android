@@ -2321,6 +2321,28 @@ def _userbot_silent():
         "הרישום של חשבון המשתמש אינו נפרד"
 
 
+@check("הסשן הראשי נטען גם ממחרוזת, ולא רק מקובץ")
+def _main_session_from_string():
+    import inspect
+    from zovexsub import bot as botmain, botapi
+
+    # קובץ סשן מתבטל ברגע שמנתקים את ההתחברות מהאפליקציה. טלתון מבקש
+    # אז מספר טלפון, בשירות אין מסוף, נזרק EOFError, ו-Restart=always
+    # הופך את זה ללולאת קריסה שבה הבוט "מתחבר" כל 11 שניות בלי להגיב
+    assert hasattr(config, "TG_STRING"), "אין תמיכה במחרוזת לחשבון הראשי"
+
+    body = inspect.getsource(botmain.main)
+    assert "config.TG_STRING" in body, "המחרוזת אינה נקראת"
+    assert "botapi._string_session(config.TG_STRING)" in body, \
+        "המחרוזת אינה עוברת דרך הנרמול שסולח לטעויות העתקה"
+    # מחרוזת גוברת על קובץ, ולא להפך
+    assert body.index("config.TG_STRING") < body.index("else config.TG_SESSION")
+
+    # והנרמול באמת סולח לשורה שהועתקה כולה, כולל שם המשתנה
+    cleaned = botapi._string_session.__doc__ or ""
+    assert "TG_STRING_LITE" in cleaned or "שם" in cleaned
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

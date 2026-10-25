@@ -22,6 +22,11 @@ def _keys(name: str) -> list[str]:
 TG_API_ID = _int("TG_API_ID", 0)
 TG_API_HASH = os.getenv("TG_API_HASH", "")
 TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
+# מחרוזת סשן לחשבון הראשי, במקום קובץ. קובץ סשן מתבטל ברגע שמנתקים
+# את ההתחברות מהאפליקציה, ואז טלתון מבקש מספר טלפון — אין מסוף,
+# נזרק EOFError, והשירות נכנס ללולאת קריסה כל 11 שניות. מחרוזת
+# משוחזרת בפקודה אחת בלי התחברות אינטראקטיבית. ראו tests/mksession.py
+TG_STRING = os.getenv("TG_STRING", "").strip()
 # טוקן בוט מ-BotFather. ריק = עובדים עם חשבון המשתמש בלבד, כמו קודם.
 # הבוט מתחבר דרך MTProto ולא דרך ה-Bot API, ולכן תקרת ההעלאה שלו 2GB
 # ולא 50MB. קובץ גדול יותר עובר לחשבון המשתמש, שהוא Premium

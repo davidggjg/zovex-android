@@ -865,7 +865,13 @@ async def main() -> None:
     # ניקוי שאריות מהרצה קודמת — לא משאירים סרטונים על השרת
     pipeline.cleanup(config.WORK_DIR)
     config.WORK_DIR.mkdir(parents=True, exist_ok=True)
-    client = TelegramClient(config.TG_SESSION, config.TG_API_ID, config.TG_API_HASH)
+    # מחרוזת גוברת על קובץ: קובץ סשן מתבטל ברגע שמנתקים את ההתחברות
+    # מהאפליקציה, וטלתון מבקש אז מספר טלפון. בשירות אין מסוף, נזרק
+    # EOFError, ו-Restart=always הופך את זה ללולאת קריסה שקטה שבה
+    # הבוט "מתחבר" כל 11 שניות ואינו מגיב לאיש
+    session = (botapi._string_session(config.TG_STRING) if config.TG_STRING
+               else config.TG_SESSION)
+    client = TelegramClient(session, config.TG_API_ID, config.TG_API_HASH)
     client.add_event_handler(on_message, events.NewMessage())
     await client.start()
 
