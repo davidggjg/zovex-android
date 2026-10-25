@@ -2305,16 +2305,13 @@ def _userbot_silent():
     import inspect
     from zovexsub import bot as botmain
 
-    # בשיחות פרטיות ובהודעות השמורות החשבון שותק — שם העבודה שייכת
-    # ל-@zooigrmbot, ואין סיבה שהחשבון הפרטי יענה למי שמתכתב אתו
-    assert config.USERBOT_IN_PRIVATE == 0, config.USERBOT_IN_PRIVATE
+    # החשבון הפרטי שותק לחלוטין — לא בשיחות, לא בקבוצות ולא בהודעות
+    # השמורות. זהו חשבון אישי, והמסלול הזה התפרץ לשיחות עם חברים
+    assert config.USERBOT_TRIGGER == 0, config.USERBOT_TRIGGER
     guard = inspect.getsource(botmain.on_message)
-    assert "event.is_private and not config.USERBOT_IN_PRIVATE" in guard, \
-        "אין חסימה לשיחות פרטיות"
+    assert "if not config.USERBOT_TRIGGER:" in guard, "אין מתג כיבוי"
     # והיציאה היא הדבר הראשון, לפני כל קריאה או ניתוב
-    assert guard.index("USERBOT_IN_PRIVATE") < guard.index("clean(event.raw_text)")
-    # ורק שיחות פרטיות נחסמות: ערוצים וקבוצות ממשיכים כרגיל
-    assert "event.is_private" in guard
+    assert guard.index("USERBOT_TRIGGER") < guard.index("clean(event.raw_text)")
 
     # והמסלול של @zooigrmbot נפרד לגמרי — רישום אחר, התקנה אחרת
     launch = inspect.getsource(botmain.main) if hasattr(botmain, "main") \
