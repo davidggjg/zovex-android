@@ -2342,6 +2342,13 @@ def _main_session_from_string():
     cleaned = botapi._string_session.__doc__ or ""
     assert "TG_STRING_LITE" in cleaned or "שם" in cleaned
 
+    # וסשן שבוטל אומר זאת במפורש, במקום EOFError סתום שחוזר כל 11
+    # שניות ומשאיר בוט שלא מגיב בלי שום הסבר
+    assert "is_user_authorized()" in body, "אין בדיקת הרשאה לפני start"
+    assert "אינו מורשה" in body, "השגיאה אינה מסבירה מה קרה"
+    assert "mksession.py" in body, "השגיאה אינה אומרת מה לעשות"
+    assert body.index("is_user_authorized()") < body.index("await client.start()")
+
 
 def main() -> int:
     failed = 0

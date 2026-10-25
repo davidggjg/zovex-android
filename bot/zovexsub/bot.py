@@ -873,6 +873,21 @@ async def main() -> None:
                else config.TG_SESSION)
     client = TelegramClient(session, config.TG_API_ID, config.TG_API_HASH)
     client.add_event_handler(on_message, events.NewMessage())
+    # start() מבקש מספר טלפון כשהסשן אינו מורשה, ובשירות אין מסוף —
+    # נזרק EOFError סתום, ו-Restart=always הופך את זה ללולאת קריסה כל
+    # 11 שניות. השגיאה האמיתית ("הסשן בוטל") נקברת בתוך עקבות של
+    # טלתון, והמשתמש רואה בוט שלא מגיב בלי שום הסבר.
+    #
+    # הבדיקה כאן עולה לחיבור אחד, ומחליפה את זה בהודעה שאומרת בדיוק
+    # מה קרה ומה לעשות
+    await client.connect()
+    if not await client.is_user_authorized():
+        log.error(
+            "הסשן של החשבון הראשי אינו מורשה — הוא בוטל, כנראה בניתוק "
+            "התקנים מהאפליקציה. צור מחרוזת חדשה והכנס אותה ל-TG_STRING:\n"
+            "    cd /opt/zovexsub/repo/bot\n"
+            "    /opt/zovexsub/venv/bin/python tests/mksession.py")
+        raise SystemExit(1)
     await client.start()
 
     global me_id
