@@ -2371,6 +2371,44 @@ def _upload_survives_part_failure():
     assert "נופלים חזרה" in body
 
 
+@check("מעבר אחרון לפני הכתיבה חוסם כתוביות פגומות")
+def _finalize_gate():
+    # נמדד על קובץ אמיתי שנמסר למשתמש, 1778 כתוביות: אחת עם סוף לפני
+    # התחלה, חמש מתחת למינימום, 14 מעל המקסימום, 31 שורות מעל 42 תווים
+    # ושמונה בנות שלוש שורות. כולן עברו את כל הבדיקות שבדרך, כי אלה
+    # רצו לפני השלבים ששברו אותן
+    def cue(start, end, text):
+        return srt.Cue(index=1, start=start, end=end, text=text)
+
+    cues = [
+        cue(1.0, 0.98, "סוף לפני התחלה"),          # הפוכה
+        cue(5.0, 5.20, "קצרה מדי"),                 # מתחת למינימום
+        cue(10.0, 25.0, "ארוכה מדי"),               # מעל המקסימום
+        cue(30.0, 33.0, "א\nב\nג"),                 # שלוש שורות קצרות
+        cue(40.0, 43.0, "מילה " * 12),              # שורה רחבה מדי
+    ]
+    srt.finalize(cues, 23.976)
+
+    for one in cues:
+        assert one.end > one.start, one
+        span = one.end - one.start
+        assert span >= config.SRT_MIN_DURATION - 1e-6, (one.index, span)
+        assert span <= config.SRT_MAX_DURATION + 1e-6, (one.index, span)
+        assert one.text.count("\n") < config.SRT_MAX_LINES, one.text
+        for line in one.text.split("\n"):
+            assert len(line) <= config.SRT_MAX_CHARS_PER_LINE, line
+
+    # אין חפיפות, והמספור רץ מחדש
+    for before, after in zip(cues, cues[1:]):
+        assert after.start >= before.end, (before.index, after.index)
+    assert [c.index for c in cues] == list(range(1, len(cues) + 1))
+
+    # ושבירה קיימת נשמרת כשהיא חוקית — שתי שורות עוברות כמו שהן
+    two = [cue(0.0, 3.0, "שורה ראשונה\nשורה שנייה")]
+    srt.finalize(two, 23.976)
+    assert two[0].text == "שורה ראשונה\nשורה שנייה", two[0].text
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

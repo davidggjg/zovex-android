@@ -202,6 +202,14 @@ async def run(source: Path, work: Path, *, progress: Progress,
             closed = srt.close_gaps(cues, fps)
             log.info("נסגרו %d מרווחי הבהוב", closed)
 
+    # השער האחרון לפני הכתיבה: כל מה שרץ עד כאן שינה טקסט וזמנים,
+    # ואיש לא בדק אותם שוב. ראו srt.finalize
+    repaired = srt.finalize(cues, fps)
+    if repaired:
+        log.info("מעבר אחרון תיקן: %s",
+                 " · ".join(f"{name} {count}"
+                            for name, count in repaired.items()))
+
     srt_path = work / f"{source.stem}.he.srt"
     srt_path.write_text(srt.render(cues), encoding="utf-8")
     (work / "notes.md").write_text(notes, encoding="utf-8")

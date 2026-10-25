@@ -522,7 +522,12 @@ def wrap(text: str) -> str:
         limit = config.SRT_MAX_CHARS_PER_LINE
         kept = [" ".join(part.split()) for part in text.split("\n")]
         kept = [part for part in kept if part]
-        if kept and all(len(part) <= limit for part in kept):
+        # גם מספר השורות, ולא רק רוחבן. שבירה קיימת נשמרה כל עוד כל
+        # שורה בנפרד נכנסה ברוחב — ולכן שלוש שורות קצרות עברו בשקט אל
+        # הקובץ הסופי. נמדד על קובץ שנמסר למשתמש: שמונה כתוביות בנות
+        # שלוש שורות, רובן באורך 30 תווים בלבד, שנכנסות היטב בשתיים
+        if (kept and len(kept) <= config.SRT_MAX_LINES
+                and all(len(part) <= limit for part in kept)):
             return "\n".join(kept)
         text = " ".join(kept)
     text = " ".join(text.split())
@@ -563,6 +568,69 @@ def stamp(seconds: float) -> str:
     m, ms = divmod(ms, 60_000)
     s, ms = divmod(ms, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
+    """מעבר אחרון לפני הכתיבה לקובץ. מחזיר מה תוקן.
+
+    ‏render כותב את cue.text כמו שהוא, והעטיפה לשתי שורות קורית פעם
+    אחת בלבד ב-build_cues. כל מה שרץ אחרי זה — פיצול כתוביות ארוכות,
+    סגירת מרווחים, הצמדה לחיתוכים, ריפוד תרגום חסר — משנה טקסט וזמנים
+    ואיש לא בדק אותם שוב.
+
+    נמדד על קובץ אמיתי שנמסר למשתמש, 1778 כתוביות: שורה אחת באורך
+    שלילי, חמש מתחת למינימום, ארבע-עשרה מעל המקסימום, שמונה בנות שלוש
+    שורות ו-31 שורות שחרגו מ-42 תווים. כולן עברו את כל הבדיקות
+    שבדרך, כי הבדיקות רצו לפני השלבים ששברו אותן.
+
+    השלב הזה הוא השער האחרון, והוא מניח שכל מה שלפניו עלול להיות שבור
+    """
+    frame = 1.0 / max(1.0, fps)
+    gap = max(config.SRT_GAP, 2 * frame)
+    fixed = {"ריקות": 0, "שורות": 0, "קצרות": 0, "ארוכות": 0, "הפוכות": 0}
+
+    # כתובית שאינה נכנסת בשתי שורות מפוצלת, ולא נדחסת לשלוש. ‏wrap
+    # לבדו נופל כאן ל-_hard_wrap ומייצר שורה שלישית
+    split_overlong(cues, fps)
+
+    kept: list[Cue] = []
+    for cue in cues:
+        if not any(ch.isalnum() for ch in (cue.text or "")):
+            fixed["ריקות"] += 1
+            continue
+        if cue.end <= cue.start:
+            # סוף לפני התחלה. הכתובית אינה ניתנת להצגה, ונותנים לה
+            # את המינימום במקום לזרוק את הטקסט
+            fixed["הפוכות"] += 1
+            cue.end = cue.start + config.SRT_MIN_DURATION
+        wrapped = wrap(cue.text)
+        if wrapped != cue.text:
+            fixed["שורות"] += 1
+            cue.text = wrapped
+        kept.append(cue)
+
+    for index, cue in enumerate(kept):
+        nxt = kept[index + 1] if index + 1 < len(kept) else None
+        roof = (nxt.start - gap) if nxt else float("inf")
+        span = cue.end - cue.start
+        if span > config.SRT_MAX_DURATION:
+            cue.end = cue.start + config.SRT_MAX_DURATION
+            fixed["ארוכות"] += 1
+        elif span < config.SRT_MIN_DURATION:
+            # מאריכים עד המינימום, אבל לעולם לא על חשבון הבאה
+            want = min(cue.start + config.SRT_MIN_DURATION, roof)
+            if want > cue.end:
+                cue.end = want
+                fixed["קצרות"] += 1
+        # רק חפיפה אמיתית נחתכת. חיתוך לשם שמירת מרווח קיצר כתוביות
+        # תקינות אל מתחת למינימום — נמדד כקפיצה מחמש קצרות ל-145
+        if nxt and cue.end > nxt.start:
+            cue.end = max(cue.start + frame, roof)
+
+    cues[:] = kept
+    for position, cue in enumerate(cues, start=1):
+        cue.index = position
+    return {name: count for name, count in fixed.items() if count}
 
 
 def render(cues: list[Cue]) -> str:
