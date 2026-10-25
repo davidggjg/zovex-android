@@ -2350,6 +2350,27 @@ def _main_session_from_string():
     assert body.index("is_user_authorized()") < body.index("await client.start()")
 
 
+@check("חלק שנכשל בהעלאה אינו מפיל אותה, וההעלאה ממשיכה באותו קובץ")
+def _upload_survives_part_failure():
+    import inspect
+    from zovexsub import fastio
+
+    body = inspect.getsource(fastio._parallel_upload)
+    # נמדד בשרת: שלושה חלקים שלא נענו הפילו 80 אחוז מהעלאה של 779MB,
+    # והקובץ עלה מאפס דרך טלתון
+    assert "return_exceptions=True" in body, "חלק שנכשל עדיין מפיל הכל"
+    # החלק שנכשל חוזר לתור, ולכן יש מה להמשיך
+    assert "queue.put_nowait(index)" in inspect.getsource(fastio._parallel_upload)
+    # ואותו file_id נשמר — זו אותה העלאה, לא חדשה
+    assert body.count("file_id = ") == 1, "file_id נוצר יותר מפעם אחת"
+    assert body.index("file_id = ") < body.index("return_exceptions=True")
+
+    # סט חיבורים שמת חוזר קטן יותר, כמו בהורדה
+    assert "workers >> (revival + 1)" in body, "אותו מספר חיבורים חוזר"
+    # ורק אחרי שהסבבים נגמרו נופלים חזרה
+    assert "נופלים חזרה" in body
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

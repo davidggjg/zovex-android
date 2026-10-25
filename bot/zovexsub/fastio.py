@@ -727,7 +727,35 @@ async def _parallel_upload(client, path: Path, size: int, parts: int,
     try:
         log.info("מעלה ב-%d חיבורים במקביל (%.0fMB, %d חלקים)",
                  workers, size / 1048576, parts)
-        await asyncio.gather(*(worker(sender) for sender in senders))
+        # חלק בודד שנכשל לא מפיל את ההעלאה כולה. קודם gather הרים את
+        # החריגה הראשונה, כל העובדים ננטשו, והמסלול חזר None — כלומר
+        # טלתון העלה את הקובץ מאפס. נמדד בשרת: 80 אחוז שנזרקו בגלל
+        # שלושה חלקים שלא נענו.
+        #
+        # כאן ממשיכים באותה העלאה: אותו file_id, החלקים שנכשלו חזרו
+        # לתור, וחיבורים חדשים לוקחים אותם. פחות חיבורים בכל סבב, כי
+        # סט שלם שמת פעם אחת ימות שוב באותו גודל
+        healthy = list(senders)
+        for revival in range(config.TG_REVIVALS + 1):
+            outcome = await asyncio.gather(
+                *(worker(sender) for sender in healthy),
+                return_exceptions=True)
+            if queue.empty():
+                break
+            broken = [item for item in outcome
+                      if isinstance(item, BaseException)]
+            if revival == config.TG_REVIVALS:
+                log.warning("נותרו %d חלקים אחרי %d סבבים — נופלים חזרה",
+                            queue.qsize(), revival)
+                raise broken[0] if broken else RuntimeError("ההעלאה לא הושלמה")
+            room = max(2, workers >> (revival + 1))
+            log.warning("נותרו %d חלקים (%d עובדים נפלו) — %d חיבורים חדשים",
+                        queue.qsize(), len(broken), room)
+            await _close_senders(healthy)
+            healthy = await asyncio.wait_for(
+                _open_senders(client, client.session.dc_id, room),
+                timeout=config.TG_CONNECT_TIMEOUT)
+            senders.extend(healthy)
     finally:
         os.close(handle)
         await _close_senders(senders)
