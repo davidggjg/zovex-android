@@ -2470,7 +2470,8 @@ def _blocked_link_explained():
     # עם aria2c — כולם 403. אותו קישור בדיוק עובר מטלפון סלולרי באותה
     # עיר. המסנן פועל על ה-IP, לפני שהבקשה נקראת
     said = fetch._explain("ERROR: Unable to download webpage: "
-                          "HTTP Error 403: Forbidden")
+                          "HTTP Error 403: Forbidden",
+                          "https://s1.cdnmvs.online/x/index-v1-a1.m3u8")
     assert "403" in said and "שרת" in said, said
     assert "לשלוח את הקובץ" in said, "אין דרך פעולה למשתמש"
 
@@ -2488,6 +2489,21 @@ def _blocked_link_explained():
         assert "--proxy" not in fetch._browser_args("https://example.com/a")
     finally:
         config.FETCH_PROXY = saved
+
+
+@check("הסבר של יוטיוב אינו ניתן לקישור שאינו יוטיוב")
+def _explain_scoped():
+    from zovexsub import fetch
+
+    # נמדד אצל המשתמש: קישור HLS נכשל, והבוט ענה לו על PO token
+    # ועוגיות של יוטיוב — ושלח אותו לרדוף אחרי פתרון שאינו קשור
+    noise = "ERROR: Sign in to confirm you are not a bot"
+    other = fetch._explain(noise, "https://zovex.duckdns.org/x.m3u8")
+    assert "PO token" not in other and "יוטיוב" not in other, other
+
+    # ועל קישור יוטיוב ההסבר נשאר
+    tube = fetch._explain(noise, "https://www.youtube.com/watch?v=x")
+    assert "יוטיוב" in tube, tube
 
 
 def main() -> int:

@@ -433,8 +433,8 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
         if _is_block(stderr):
             _note_failure()
         if _stale_player(stderr) and await update_nightly():
-            raise StalePlayer(_explain(stderr))
-        raise FetchError(_explain(stderr))
+            raise StalePlayer(_explain(stderr, url))
+        raise FetchError(_explain(stderr, url))
 
     files = sorted(work.glob("source.*"), key=lambda p: p.stat().st_size, reverse=True)
     if not files:
@@ -543,16 +543,22 @@ def _is_block(stderr: str) -> bool:
     return any(sign in low for sign in _BLOCK_SIGNS)
 
 
-def _explain(stderr: str) -> str:
+def _explain(stderr: str, url: str = "") -> str:
     """הופך את השגיאה של yt-dlp להסבר שאפשר לפעול לפיו.
 
     יוטיוב חסמו הורדות מכתובות של שרתים, והשגיאה הגולמית לא מסבירה מה
     לעשות. שלוש התקלות הנפוצות מקבלות כאן הסבר ופתרון.
+
+    ההסברים של יוטיוב חלים על קישורי יוטיוב בלבד. בלי התנאי הזה
+    קישור שנכשל מסיבה אחרת לגמרי קיבל הסבר על PO token ועל עוגיות
+    של יוטיוב — נמדד אצל המשתמש על קישור HLS שאין לו שום קשר אליה,
+    והוא שלח אותו לרדוף אחרי פתרון שאינו קשור לתקלה
     """
     log.error("yt-dlp נכשל:\n%s", stderr.strip()[-2000:])
     low = stderr.lower()
+    tube = _is_youtube(url) if url else True
 
-    if ("sign in" in low or "confirm you" in low
+    if tube and ("sign in" in low or "confirm you" in low
             or "not a bot" in low or "po token" in low):
         if config.FETCH_POT_URL:
             return ("יוטיוב דורשת אימות שאינך בוט, וגם שרת ה-PO token "
@@ -566,10 +572,10 @@ def _explain(stderr: str) -> str:
                 "     brainicism/bgutil-ytdlp-pot-provider\n"
                 "   FETCH_POT_URL=http://127.0.0.1:4416\n"
                 "3. לייצא עוגיות מדפדפן מחובר ולהצביע ב-FETCH_COOKIES")
-    if "429" in low or "too many requests" in low:
+    if tube and ("429" in low or "too many requests" in low):
         return ("יוטיוב חוסם זמנית את כתובת השרת (429). נסה שוב בעוד "
                 "כמה דקות, או הוסף קובץ עוגיות ב-FETCH_COOKIES.")
-    if "failed to extract" in low or "player response" in low:
+    if tube and ("failed to extract" in low or "player response" in low):
         return ("yt-dlp לא הצליח לקרוא את הנגן של יוטיוב — הגרסה שמותקנת "
                 "ישנה מדי.\n"
                 "עדכון: pip install -U --pre \"yt-dlp[default]\"")
