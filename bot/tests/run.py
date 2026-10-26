@@ -2409,6 +2409,31 @@ def _finalize_gate():
     assert two[0].text == "שורה ראשונה\nשורה שנייה", two[0].text
 
 
+@check("שגיאה עם סוגריים משולשים אינה מבריחה את ההודעה")
+def _html_escaped_errors():
+    import inspect
+    from zovexsub import localbot
+
+    # נמדד אצל המשתמש: שגיאת רשת שהכילה "<HTTPError...>" חזרה כ-
+    # "can't parse entities: Unsupported start tag httperror",
+    # והסיבה האמיתית לא הגיעה אליו מעולם
+    out = localbot.code("<HTTPError 403> a & b")
+    assert "&lt;HTTPError 403&gt;" in out, out
+    assert "&amp;" in out, out
+    assert out.startswith("<code>") and out.endswith("</code>")
+
+    # ואין יותר הזרקה ישירה של טקסט שגיאה לתוך HTML
+    body = inspect.getsource(__import__("zovexsub.botjob", fromlist=["x"]))
+    assert "<code>{" not in body, "טקסט שגיאה עדיין נדחף ל-HTML בלי בריחה"
+
+    # רשת ביטחון: הודעה שנדחתה בגלל עיצוב נשלחת בלי עיצוב, כי הודעת
+    # שגיאה שנעלמת גרועה מהודעה בלי הדגשה
+    sender = inspect.getsource(localbot.say)
+    assert "parse entities" in sender and 'fields.pop("parse_mode")' in sender
+    editor = inspect.getsource(localbot.edit)
+    assert "parse entities" in editor and 'fields.pop("parse_mode")' in editor
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

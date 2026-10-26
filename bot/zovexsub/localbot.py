@@ -150,6 +150,19 @@ def keyboard(rows: list[list[tuple[str, str]]]) -> str:
     ]}, ensure_ascii=False)
 
 
+def code(text: str) -> str:
+    """טקסט בתוך <code>, אחרי בריחה מתווי HTML.
+
+    הודעות נשלחות ב-parse_mode=HTML, ולכן שגיאה שמכילה סוגר משולש
+    שוברת את ההודעה כולה. נמדד אצל המשתמש: שגיאת רשת שהכילה
+    "<HTTPError...>" הפכה ל-"can't parse entities: Unsupported start
+    tag httperror", והסיבה האמיתית לא הגיעה אליו מעולם
+    """
+    safe = (str(text).replace("&", "&amp;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+    return f"<code>{safe}</code>"
+
+
 async def say(chat_id, text: str, *, buttons: str = "",
               reply_to: int = 0) -> dict:
     fields = {"chat_id": str(chat_id), "text": text, "parse_mode": "HTML"}
@@ -157,7 +170,16 @@ async def say(chat_id, text: str, *, buttons: str = "",
         fields["reply_markup"] = buttons
     if reply_to:
         fields["reply_to_message_id"] = str(reply_to)
-    return await call("sendMessage", **fields)
+    try:
+        return await call("sendMessage", **fields)
+    except RuntimeError as exc:
+        # רשת ביטחון: הודעה שלא נשלחה בגלל תגית לא חוקית תישלח בלי
+        # עיצוב. הודעת שגיאה שנעלמת גרועה בהרבה מהודעה בלי הדגשה
+        if "parse entities" not in str(exc).lower():
+            raise
+        log.warning("הודעה נדחתה בגלל עיצוב (%s) — נשלחת כטקסט רגיל", exc)
+        fields.pop("parse_mode")
+        return await call("sendMessage", **fields)
 
 
 async def edit(chat_id, message_id: int, text: str,
@@ -172,6 +194,10 @@ async def edit(chat_id, message_id: int, text: str,
         # טלגרם דוחה עריכה לטקסט זהה. זה לא כשל אמיתי
         if "not modified" in str(exc).lower():
             return {}
+        if "parse entities" in str(exc).lower():
+            log.warning("עריכה נדחתה בגלל עיצוב (%s) — ללא עיצוב", exc)
+            fields.pop("parse_mode")
+            return await call("editMessageText", **fields)
         raise
 
 

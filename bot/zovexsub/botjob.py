@@ -218,7 +218,7 @@ async def _via_storage(chat_id, source_message: int, size: int,
                     type(exc).__name__, exc)
         await localbot.say(chat_id_of(screen),
                            f"⚠️ המסלול של החשבון נפל, מנסה את הבוט.\n"
-                           f"<code>{type(exc).__name__}: {exc}</code>")
+                           + localbot.code(f"{type(exc).__name__}: {exc}"))
         target.unlink(missing_ok=True)
         return False
     if target.stat().st_size < size:
@@ -312,7 +312,7 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
         # כל עריכה, ולכן הסיבה מעולם לא הגיעה לעיניים
         await localbot.say(chat_id_of(screen),
                            f"⚠️ המסלול המהיר נפל, עובר לגיבוי האיטי.\n"
-                           f"<code>{type(exc).__name__}: {exc}</code>")
+                           + localbot.code(f"{type(exc).__name__}: {exc}"))
         target.unlink(missing_ok=True)
         return False
     finally:
@@ -408,7 +408,7 @@ async def _fetch(chat_id, file_id: str, name: str, work: Path,
         # הסיבה נשלחת למשתמש ולא רק ללוג: בלעדיה כל כשל נראה זהה,
         # וההודעה הכללית הקודמת שלחה לחפש בכיוון הלא נכון
         log.warning("קריאת הסרטון נכשלה: %s", why)
-        await localbot.say(chat_id, f"לא הצלחתי לקרוא את הסרטון.\n<code>{why}</code>")
+        await localbot.say(chat_id, "לא הצלחתי לקרוא את הסרטון.\n" + localbot.code(why))
         return None
     # העתקה ולא הזזה: הקובץ שייך לשרת, והוא עשוי להידרש לו שוב
     await asyncio.get_running_loop().run_in_executor(
@@ -522,7 +522,7 @@ async def take_cover(chat_id, file_id: str) -> None:
     found, why = await localbot.locate(file_id)
     if found is None:
         await localbot.say(chat_id,
-                           f"לא הצלחתי לקרוא את התמונה.\n<code>{why}</code>")
+                           "לא הצלחתי לקרוא את התמונה.\n" + localbot.code(why))
         return
 
     holding = config.WORK_DIR / f"cover-{chat}-{uuid.uuid4().hex[:6]}"
@@ -585,7 +585,7 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     found, why = await localbot.locate(file_id)
     if found is None:
         await localbot.say(chat_id,
-                           f"לא הצלחתי לקרוא את קובץ הכתוביות.\n<code>{why}</code>")
+                           "לא הצלחתי לקרוא את קובץ הכתוביות.\n" + localbot.code(why))
         return
 
     source = _waiting[chat]
@@ -640,8 +640,8 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                 await localbot.say(
                     chat_id,
                     "⚠️ הצריבה המקבילית נפלה, ממשיך בתהליך יחיד "
-                    "(איטי יותר).\n<code>" + speed.split(":", 1)[-1].strip()
-                    + "</code>")
+                    "(איטי יותר).\n"
+                    + localbot.code(speed.split(":", 1)[-1].strip()))
             await screen.show(f"🔥 צורב · {fraction * 100:.0f}% · {speed}")
 
         style = media.Style(size=choice.size, font=choice.font,
