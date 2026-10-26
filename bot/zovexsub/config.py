@@ -598,6 +598,9 @@ RECOVER_MIN = float(os.getenv("RECOVER_MIN") or 1.2)
 RECOVER_MAX = _int("RECOVER_MAX", 160)
 RECOVER_PAD = float(os.getenv("RECOVER_PAD") or 0.8)
 RECOVER_WORKERS = _int("RECOVER_WORKERS", 6)
+# איזה חלק מקטע דיבור צריך להיות מכוסה בתמלול כדי שלא ייחשב חור.
+# אפס פירושו הדרישה הישנה — אפס חפיפה בדיוק
+RECOVER_COVER = float(os.getenv("RECOVER_COVER") or 0.6)
 DRIFT_MIN_SPAN = float(os.getenv("DRIFT_MIN_SPAN") or 900)
 # הפרש מינימלי בין שני החצאים שנחשב סחיפה ולא רעש
 DRIFT_MIN_CHANGE = float(os.getenv("DRIFT_MIN_CHANGE") or 0.35)

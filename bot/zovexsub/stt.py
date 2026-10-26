@@ -199,12 +199,27 @@ def _segments_from(payload: dict, offset: float) -> list[Segment]:
 
 def speech_gaps(segments: list[Segment], speech: list[tuple[float, float]],
                 least: float) -> list[tuple[float, float]]:
-    """קטעים שבהם זוהה דיבור ולא נוצר שום תמלול."""
+    """קטעים שבהם זוהה דיבור והתמלול כמעט שתק.
+
+    הדרישה המקורית הייתה אפס חפיפה: מקטע תמלול אחד שנגע בקצה הקטע
+    הכשיר אותו כמכוסה. אבל מקטע של תמלול נמתח הרבה מעבר למה שנאמר
+    בו, ולכן בדיוק המקומות שבהם התמלול פספס דיבור הם המקומות שבהם
+    מקטע שכן נמתח עליהם — והם נפסלו מהצלה. נמדד מול קובץ רשמי:
+    119 שורות רשמיות לא היה להן שום כיסוי אצלנו.
+
+    לכן הכיסוי נמדד בשברים: קטע דיבור שהתמלול מכסה פחות מ-
+    ‏RECOVER_COVER ממנו נחשב חור, ומתומלל שוב
+    """
+    need = min(1.0, max(0.0, config.RECOVER_COVER))
     found = []
     for begin, end in speech:
-        if end - begin < least:
+        width = end - begin
+        if width < least:
             continue
-        if not any(s.start < end and s.end > begin for s in segments):
+        covered = sum(min(end, s.end) - max(begin, s.start)
+                      for s in segments
+                      if s.start < end and s.end > begin)
+        if covered < width * need:
             found.append((begin, end))
     return found
 

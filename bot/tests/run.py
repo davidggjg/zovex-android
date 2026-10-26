@@ -2523,6 +2523,25 @@ def _recover_picks_longest():
     assert stt.pick_gaps([(5.0, 6.0), (1.0, 2.0)], 40) == [(1.0, 2.0), (5.0, 6.0)]
 
 
+@check("קטע דיבור שמקטע תמלול רק נגע בו נחשב חור וזוכה להצלה")
+def _gaps_partial_cover():
+    from zovexsub import config, stt
+
+    # מקטע התמלול נמתח 0.5 שניות לתוך קטע דיבור של עשר שניות.
+    # בדרישת אפס־החפיפה הקודמת זה הכשיר את כל הקטע כמכוסה
+    seg = stt.Segment(0, 24.0, 30.5, "שלום")
+    speech = [(30.0, 40.0)]
+    assert stt.speech_gaps([seg], speech, 1.2) == [(30.0, 40.0)]
+
+    # קטע שמכוסה ממש אינו נחשב חור
+    full = stt.Segment(0, 30.0, 39.5, "משפט שלם שנאמר כאן")
+    assert stt.speech_gaps([full], speech, 1.2) == []
+
+    # וקטע קצר מהמינימום לא נבדק בכלל
+    assert stt.speech_gaps([], [(30.0, 30.5)], 1.2) == []
+    assert 0.0 <= config.RECOVER_COVER <= 1.0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
