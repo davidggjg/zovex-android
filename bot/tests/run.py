@@ -2461,6 +2461,35 @@ def _browser_headers():
     assert "_browser_args(url)" in inspect.getsource(fetch._ytdlp)
 
 
+@check("חסימת 403 מוסברת, ואפשר לנתב דרך פרוקסי")
+def _blocked_link_explained():
+    import inspect
+    from zovexsub import fetch
+
+    # נמדד בשרת: curl חשוף, curl עם UA של דפדפן, yt-dlp נקי ו-yt-dlp
+    # עם aria2c — כולם 403. אותו קישור בדיוק עובר מטלפון סלולרי באותה
+    # עיר. המסנן פועל על ה-IP, לפני שהבקשה נקראת
+    said = fetch._explain("ERROR: Unable to download webpage: "
+                          "HTTP Error 403: Forbidden")
+    assert "403" in said and "שרת" in said, said
+    assert "לשלוח את הקובץ" in said, "אין דרך פעולה למשתמש"
+
+    # והפרוקסי מגיע ל-yt-dlp כשהוגדר, לכל קישור — גם יוטיוב, כי
+    # החסימה היא על ה-IP ולא על האתר
+    saved = config.FETCH_PROXY
+    try:
+        config.FETCH_PROXY = "socks5://127.0.0.1:1080"
+        for link in ("https://example.com/a.m3u8",
+                     "https://www.youtube.com/watch?v=x"):
+            args = fetch._browser_args(link)
+            assert "--proxy" in args, link
+            assert "socks5://127.0.0.1:1080" in args, link
+        config.FETCH_PROXY = ""
+        assert "--proxy" not in fetch._browser_args("https://example.com/a")
+    finally:
+        config.FETCH_PROXY = saved
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

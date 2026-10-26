@@ -74,13 +74,17 @@ def _browser_args(url: str) -> list[str]:
     ביוטיוב לא נוגעים: שם ה-UA חלק מזרימת ה-PO token, ושינוי שלו
     שובר מסלול שעובד
     """
+    args: list[str] = []
+    if config.FETCH_PROXY:
+        # הפרוקסי חל על כל קישור, גם יוטיוב: החסימה היא על ה-IP של
+        # השרת ולא על האתר הספציפי
+        args += ["--proxy", config.FETCH_PROXY]
     if _is_youtube(url):
-        return []
+        return args
     where = urllib.parse.urlsplit(url)
     origin = (config.FETCH_REFERER
               or (f"{where.scheme}://{where.netloc}/"
                   if where.scheme and where.netloc else ""))
-    args: list[str] = []
     if config.FETCH_UA:
         args += ["--user-agent", config.FETCH_UA]
     if origin:
@@ -577,6 +581,22 @@ def _explain(stderr: str) -> str:
         return ("yt-dlp דורש סביבת JavaScript להורדה מיוטיוב, ו-deno "
                 "אינו מותקן.\nהתקנה: curl -fsSL https://deno.land/install.sh | sh"
                 "\nואז: systemctl restart zovexsub")
+    if "403" in low or "forbidden" in low:
+        # נמדד: curl חשוף מהשרת מקבל 403, ואותו קישור בדיוק עובר
+        # מטלפון סלולרי באותה עיר. רשתות הפצה חוסמות טווחי אחסון
+        # בלי קשר למדינה, והמסנן פועל לפני שהבקשה נקראת — ולכן אין
+        # כותרת, גרסה או דגל שמשנים את זה
+        if config.FETCH_PROXY:
+            return ("האתר חוסם את הבקשה (403), גם דרך הפרוקסי שהוגדר "
+                    f"({config.FETCH_PROXY}). ייתכן שגם הוא מזוהה "
+                    "ככתובת של שרת.")
+        return ("האתר חוסם את כתובת השרת (403).\n"
+                "זו חסימה לפי סוג הרשת ולא לפי מדינה: ספקי אחסון "
+                "חסומים, רשתות ביתיות וסלולריות לא. לכן אותו קישור "
+                "עובד בטלפון ונכשל כאן.\n"
+                "אפשרויות:\n"
+                "1. להוריד במכשיר ולשלוח את הקובץ לבוט\n"
+                "2. להגדיר FETCH_PROXY לכתובת פרוקסי ברשת ביתית")
     if "unsupported url" in low:
         return "הקישור הזה לא נתמך."
     if "private video" in low or "members-only" in low:
