@@ -2542,6 +2542,30 @@ def _gaps_partial_cover():
     assert 0.0 <= config.RECOVER_COVER <= 1.0
 
 
+@check("קישור דרייב מוריד את הקובץ המקורי ולא את זרמי הנגן של גוגל")
+def _drive_takes_source():
+    from zovexsub import config, fetch
+
+    # המחלץ של yt-dlp נותן ל-source רק url, ext ו-quality — בלי
+    # height ובלי vcodec. התבנית הרגילה דורשת אותם, ולכן בדרייב
+    # ירדו זרמי הנגן המצומצמים ולא הקובץ
+    for link in ("https://drive.google.com/file/d/abc123/view",
+                 "https://drive.usercontent.google.com/download?id=abc123",
+                 "https://docs.google.com/uc?id=abc123"):
+        assert fetch._format_for(link) == config.FETCH_FORMAT_DRIVE, link
+        assert "source" in fetch._format_for(link), link
+
+    # ובדרייב גם בחירת איכות של המשתמש אינה דורסת את זה: אין איכויות
+    # לבחור מהן, יש קובץ אחד
+    assert "source" in fetch._format_for(
+        "https://drive.google.com/file/d/abc123/view",
+        "bestvideo[height<=720]+bestaudio")
+
+    # מחוץ לדרייב שום דבר לא משתנה
+    assert fetch._format_for("https://www.youtube.com/watch?v=x") == config.FETCH_FORMAT
+    assert fetch._format_for("https://example.com/a.m3u8", "bestaudio") == "bestaudio"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -390,6 +390,9 @@ FETCH_FORMAT = os.getenv(
 )
 # מקטעים שיורדים במקביל. יוטיוב מגישה DASH מפוצל למקטעים, וזה המנוף
 # העיקרי על הקצב. ארבעה היה שמרני מדי לקו של עשרות מגה־בייט לשנייה
+# בדרייב לוקחים את הקובץ המקורי (source) ולא את הזרמים שגוגל
+# מקודדת לנגן שלה. ראה _format_for ב-fetch.py
+FETCH_FORMAT_DRIVE = os.getenv("FETCH_FORMAT_DRIVE", "source/best")
 FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 8)
 # יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
 # מחשבון מחובר פותר את זה. ריק = בלי עוגיות

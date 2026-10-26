@@ -63,6 +63,38 @@ def _is_youtube(url: str) -> bool:
                ("youtube.com", "youtu.be", "youtube-nocookie.com"))
 
 
+def _is_drive(url: str) -> bool:
+    """האם זה קישור לקובץ בגוגל דרייב."""
+    host = urllib.parse.urlsplit(url).netloc.lower()
+    return any(part in host for part in
+               ("drive.google.com", "drive.usercontent.google.com",
+                "docs.google.com"))
+
+
+def _format_for(url: str, fmt: str = "") -> str:
+    """בורר התבנית לקישור הזה.
+
+    בדרייב זה לא עניין של טעם. המחלץ של yt-dlp מציע שני סוגים:
+    הזרמים שגוגל מקודדת מחדש בשביל הנגן שלה, ובנוסף תבנית אחת
+    בשם source — הקובץ המקורי עצמו. לזרמי הנגן יש height, vcodec
+    ו-acodec, ול-source אין אף אחד מהם (נבדק במקור של המחלץ:
+    googledrive.py, הוא מוסיף ל-source רק url, ext ו-quality).
+
+    התבנית שלנו היא bestvideo[height<=1080]+bestaudio/best[...]/best,
+    וכל איבר בה דורש height או vcodec — כלומר source נפסל תמיד,
+    ובדרייב ירדו אצלנו **זרמי הנגן** ולא הקובץ. זה מסביר את הכל:
+    ‏"אין בזה איכויות", ההורדה שנתקעת על קצב של פחות ממגה־בייט
+    (ה-CDN של הנגן מצומצם, ולא זה של הקבצים), ואותו קובץ שיורד
+    בטלפון בדקות — הטלפון מוריד את הקובץ, אנחנו הורדנו תמלול וידאו.
+
+    המחלץ גם כופה על זרמי הנגן http_chunk_size של 10MB, כלומר
+    בקשות טווח טוריות, וזה מבטל את ההורדה המקבילית לגמרי
+    """
+    if _is_drive(url):
+        return config.FETCH_FORMAT_DRIVE
+    return fmt or config.FETCH_FORMAT
+
+
 def _browser_args(url: str) -> list[str]:
     """כותרות שגורמות לבקשה להיראות כמו דפדפן.
 
@@ -348,7 +380,7 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
         "--extractor-args", f"youtube:player_client={config.FETCH_CLIENTS}",
         "--no-playlist", "--newline",
         "--progress-template", TEMPLATE,
-        "-f", fmt or config.FETCH_FORMAT,
+        "-f", _format_for(url, fmt),
         "--merge-output-format", "mp4",
         "--retries", "10", "--fragment-retries", "10",
         "--concurrent-fragments", str(config.FETCH_CONNECTIONS),
@@ -363,7 +395,7 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
     # ובלי השורה הזאת אין דרך לדעת זאת מהלוג
     log.info("מוריד: %s · חלקים במקביל: %s · תבנית: %s",
              "aria2c" if "--downloader" in cmd else "פנימי של yt-dlp",
-             config.FETCH_CONNECTIONS, fmt or config.FETCH_FORMAT)
+             config.FETCH_CONNECTIONS, _format_for(url, fmt))
 
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
