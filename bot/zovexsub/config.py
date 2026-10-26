@@ -27,6 +27,16 @@ TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
 # נזרק EOFError, והשירות נכנס ללולאת קריסה כל 11 שניות. מחרוזת
 # משוחזרת בפקודה אחת בלי התחברות אינטראקטיבית. ראו tests/mksession.py
 TG_STRING = os.getenv("TG_STRING", "").strip()
+
+# כותרות דפדפן לקישורים שאינם יוטיוב. רשתות הפצה חוסמות בקשה בלי
+# User-Agent מוכר ובלי Referer — נמדד כ-HTTP Error 403 על קישור m3u8
+# שעבד בדפדפן. ביוטיוב לא נוגעים: שינוי ה-UA שובר את זרימת ה-PO token
+FETCH_UA = os.getenv(
+    "FETCH_UA",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36").strip()
+# ריק = נגזר מהקישור עצמו (סכימה + דומיין). רוב ה-CDN בודקים דומיין
+FETCH_REFERER = os.getenv("FETCH_REFERER", "").strip()
 # טוקן בוט מ-BotFather. ריק = עובדים עם חשבון המשתמש בלבד, כמו קודם.
 # הבוט מתחבר דרך MTProto ולא דרך ה-Bot API, ולכן תקרת ההעלאה שלו 2GB
 # ולא 50MB. קובץ גדול יותר עובר לחשבון המשתמש, שהוא Premium

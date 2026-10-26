@@ -8,6 +8,7 @@ import os
 import importlib.util
 import json
 import logging
+import urllib.parse
 import re
 import shutil
 import sys
@@ -53,6 +54,39 @@ def _command() -> list[str]:
     if importlib.util.find_spec("yt_dlp") is not None:
         return [sys.executable, "-m", "yt_dlp"]
     return ["yt-dlp"]
+
+
+def _is_youtube(url: str) -> bool:
+    """האם זה קישור יוטיוב. שם חלים כללים אחרים לגמרי."""
+    host = urllib.parse.urlsplit(url).netloc.lower()
+    return any(part in host for part in
+               ("youtube.com", "youtu.be", "youtube-nocookie.com"))
+
+
+def _browser_args(url: str) -> list[str]:
+    """כותרות שגורמות לבקשה להיראות כמו דפדפן.
+
+    רשתות הפצה חוסמות בקשה שאינה נראית כך. נמדד על קישור m3u8 שעבד
+    בכל דפדפן וחזר כאן כ-"HTTP Error 403: Forbidden": ‏yt-dlp שולח
+    User-Agent משלו ואינו שולח Referer כלל, ורוב ה-CDN בודקים בדיוק
+    את השניים האלה.
+
+    ביוטיוב לא נוגעים: שם ה-UA חלק מזרימת ה-PO token, ושינוי שלו
+    שובר מסלול שעובד
+    """
+    if _is_youtube(url):
+        return []
+    where = urllib.parse.urlsplit(url)
+    origin = (config.FETCH_REFERER
+              or (f"{where.scheme}://{where.netloc}/"
+                  if where.scheme and where.netloc else ""))
+    args: list[str] = []
+    if config.FETCH_UA:
+        args += ["--user-agent", config.FETCH_UA]
+    if origin:
+        args += ["--referer", origin,
+                 "--add-header", f"Origin:{origin.rstrip('/')}"]
+    return args
 
 
 def _aria2_args() -> list[str]:
@@ -116,7 +150,8 @@ async def heights(url: str, timeout: float = 45.0) -> list[int]:
 
     כישלון אינו מפיל כלום: הקורא נופל לרשימה הקבועה
     """
-    cmd = _command() + ["-J", "--no-warnings", "--no-playlist", url]
+    cmd = _command() + _browser_args(url) + [
+        "-J", "--no-warnings", "--no-playlist", url]
     if config.FETCH_COOKIES:
         cmd += ["--cookies", config.FETCH_COOKIES]
     try:
@@ -300,7 +335,7 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
         log.warning("קובץ העוגיות לא נמצא ב-%s", cookies)
         cookies = None
 
-    cmd = _command() + [
+    cmd = _command() + _browser_args(url) + [
         # --no-config: קובץ הגדרות אישי בשרת שינה התנהגות בלי שאיש ידע.
         # -4: רזולוציית IPv6 נכשלת בשקט אצל חלק מהספקים ועולה בזמן.
         # player_client: הלקוח שיוטיוב מגישה לו את הנגן. הערכים משתנים

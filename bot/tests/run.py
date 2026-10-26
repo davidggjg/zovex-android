@@ -2434,6 +2434,33 @@ def _html_escaped_errors():
     assert "parse entities" in editor and 'fields.pop("parse_mode")' in editor
 
 
+@check("קישור שאינו יוטיוב מקבל כותרות דפדפן, ויוטיוב לא")
+def _browser_headers():
+    import inspect
+    from zovexsub import fetch
+
+    # נמדד אצל המשתמש: קישור m3u8 שעבד בכל דפדפן חזר כאן עם
+    # "HTTP Error 403: Forbidden". ‏yt-dlp שולח User-Agent משלו
+    # ואינו שולח Referer כלל, ורוב ה-CDN בודקים בדיוק את השניים
+    link = "https://s1.cdnmvs.online/abc/videos_new/1080.mp4/index-v1-a1.m3u8"
+    args = fetch._browser_args(link)
+    assert "--user-agent" in args, args
+    assert "--referer" in args, args
+    # ה-Referer נגזר מהקישור עצמו כשלא הוגדר אחר
+    assert "https://s1.cdnmvs.online/" in args, args
+
+    # ביוטיוב לא נוגעים: שם ה-UA חלק מזרימת ה-PO token
+    for site in ("https://www.youtube.com/watch?v=x",
+                 "https://youtu.be/x",
+                 "https://www.youtube-nocookie.com/embed/x"):
+        assert fetch._browser_args(site) == [], site
+
+    # ושני מסלולי הקריאה ל-yt-dlp מקבלים אותן — גם בדיקת האיכויות
+    # וגם ההורדה. אחרת התפריט יוצא ריק וההורדה נחסמת
+    assert "_browser_args(url)" in inspect.getsource(fetch.heights)
+    assert "_browser_args(url)" in inspect.getsource(fetch._ytdlp)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
