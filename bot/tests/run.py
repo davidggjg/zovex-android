@@ -2566,6 +2566,24 @@ def _drive_takes_source():
     assert fetch._format_for("https://example.com/a.m3u8", "bestaudio") == "bestaudio"
 
 
+@check("מכסת ההורדות של דרייב מוסברת, ולא כ\"דווח על באג\"")
+def _drive_quota_explained():
+    from zovexsub import fetch
+
+    raw = ("WARNING: [GoogleDrive] Too many users have viewed or downloaded "
+           "this file recently.\nERROR: [GoogleDrive] abc: No video formats "
+           "found!; please report this issue on https://github.com/yt-dlp")
+    said = fetch._explain(raw, "https://drive.google.com/file/d/abc/view")
+    assert "מכסת" in said, said
+    assert "צור עותק" in said, said
+    assert "report this issue" not in said, said
+
+    # ואותה שגיאה בלי דרייב אינה מקבלת את ההסבר הזה
+    other = fetch._explain("ERROR: No video formats found!",
+                           "https://example.com/a.m3u8")
+    assert "מכסת" not in other, other
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
