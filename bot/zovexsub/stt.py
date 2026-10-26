@@ -209,6 +209,21 @@ def speech_gaps(segments: list[Segment], speech: list[tuple[float, float]],
     return found
 
 
+def pick_gaps(gaps: list[tuple[float, float]],
+              most: int) -> list[tuple[float, float]]:
+    """החורים הארוכים ביותר, מוחזרים בסדר הזמנים.
+
+    התקרה חייבת לחתוך לפי אורך ולא לפי זמן. כשהחיתוך היה gaps[:MAX]
+    על רשימה ממוינת בזמן, סרט שלם קיבל הצלה רק בעשרים הדקות
+    הראשונות — ב"כוכבי הכלב" החור ב-1:45:24, 239 שניות ושלוש־עשרה
+    שורות בכתוביות הרשמיות, היה החור השלוש־מאות ולכן מעולם לא נגעו בו
+    """
+    if most <= 0 or len(gaps) <= most:
+        return sorted(gaps)
+    longest = sorted(gaps, key=lambda g: g[1] - g[0], reverse=True)[:most]
+    return sorted(longest)
+
+
 async def recover_gaps(segments: list[Segment],
                        speech: list[tuple[float, float]],
                        audio: Path, work: Path, on_step=None) -> int:
@@ -229,40 +244,57 @@ async def recover_gaps(segments: list[Segment],
     if not gaps:
         log.info("אין קטעי דיבור ללא תמלול — אין מה להציל")
         return 0
-    gaps = gaps[:config.RECOVER_MAX]
+    total_gaps = len(gaps)
+    gaps = pick_gaps(gaps, config.RECOVER_MAX)
     lost = sum(end - begin for begin, end in gaps)
-    log.warning("%d קטעי דיבור ללא תמלול (%.0f שניות) — מתמלל אותם שוב",
-                len(gaps), lost)
+    log.warning("%d קטעי דיבור ללא תמלול (מתוך %d), %.0f שניות — מתמלל שוב",
+                len(gaps), total_gaps, lost)
 
     pool = KeyPool("groq", config.GROQ_API_KEYS)
     pad = config.RECOVER_PAD
     added = 0
+    # הטור היה חונק: חיתוך ffmpeg וקריאת Groq לכל חור, אחד-אחד. עם
+    # תקרה של 160 חורים זה שעה. הם בלתי תלויים לחלוטין, ולכן רצים יחד
+    gate = asyncio.Semaphore(max(1, config.RECOVER_WORKERS))
+    done = 0
     async with httpx.AsyncClient(timeout=httpx.Timeout(300.0,
                                                        connect=20.0)) as web:
-        for number, (begin, end) in enumerate(gaps, 1):
+        async def one(number: int, begin: float, end: float):
+            nonlocal done
             # ריפוד משני הצדדים: מילה שנחתכה בדיוק בגבול הקטע אינה
             # ניתנת לזיהוי, וההקשר שלפניה עוזר למודל
             start = max(0.0, begin - pad)
             piece = work / f"gap{number:03d}.flac"
-            try:
-                await media.cut_audio(audio, start, end + pad, piece)
-                payload = await _transcribe_chunk(
-                    web, pool, Chunk(piece, start), None, work)
-            except Exception as exc:  # noqa: BLE001 — חור אחד אינו מפיל
-                log.warning("הצלת קטע %d נכשלה: %s", number, exc)
-                payload = None
-            finally:
-                piece.unlink(missing_ok=True)
-
-            if payload:
-                # רק מה שנופל בתוך החור עצמו. הריפוד נועד להקשר,
-                # והטקסט שבו כבר קיים בכתוביות השכנות
-                for found in _segments_from(payload, start):
-                    if found.end > begin and found.start < end:
-                        segments.append(found)
-                        added += 1
+            async with gate:
+                try:
+                    await media.cut_audio(audio, start, end + pad, piece)
+                    payload = await _transcribe_chunk(
+                        web, pool, Chunk(piece, start), None, work)
+                except Exception as exc:  # noqa: BLE001 — חור אחד אינו מפיל
+                    log.warning("הצלת קטע %d נכשלה: %s", number, exc)
+                    payload = None
+                finally:
+                    piece.unlink(missing_ok=True)
+            done += 1
             if on_step:
-                await on_step(number, len(gaps))
+                await on_step(done, len(gaps))
+            if not payload:
+                return []
+            # רק מה שנופל בתוך החור עצמו. הריפוד נועד להקשר,
+            # והטקסט שבו כבר קיים בכתוביות השכנות
+            return [f for f in _segments_from(payload, start)
+                    if f.end > begin and f.start < end]
+
+        rescued = await asyncio.gather(
+            *(one(i, b, e) for i, (b, e) in enumerate(gaps, 1)),
+            return_exceptions=True)
+    for batch in rescued:
+        if isinstance(batch, BaseException):
+            log.warning("הצלת קטע נכשלה: %s", batch)
+            continue
+        for found in batch:
+            segments.append(found)
+            added += 1
 
     if added:
         segments.sort(key=lambda s: s.start)

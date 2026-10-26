@@ -2506,6 +2506,23 @@ def _explain_scoped():
     assert "יוטיוב" in tube, tube
 
 
+@check("תקרת ההצלה חותכת לפי אורך החור ולא לפי מקומו בסרט")
+def _recover_picks_longest():
+    from zovexsub import stt
+
+    # נמדד על "כוכבי הכלב": 369 חורים בסרט אחד, והחיתוך לפי זמן עצר
+    # בדקה 14 — החור של 239 שניות ב-1:45 מעולם לא תומלל שוב
+    gaps = [(float(i), float(i) + 1.2) for i in range(0, 300, 3)]
+    gaps.append((6324.0, 6563.0))
+    picked = stt.pick_gaps(gaps, 40)
+    assert len(picked) == 40, len(picked)
+    assert (6324.0, 6563.0) in picked, "החור הארוך ביותר נחתך"
+    assert picked == sorted(picked), "הרשימה חייבת לחזור בסדר הזמנים"
+
+    # מתחת לתקרה לא נוגעים בכלום חוץ מהמיון
+    assert stt.pick_gaps([(5.0, 6.0), (1.0, 2.0)], 40) == [(1.0, 2.0), (5.0, 6.0)]
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

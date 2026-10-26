@@ -613,8 +613,16 @@ def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
         nxt = kept[index + 1] if index + 1 < len(kept) else None
         roof = (nxt.start - gap) if nxt else float("inf")
         span = cue.end - cue.start
-        if span > config.SRT_MAX_DURATION:
-            cue.end = cue.start + config.SRT_MAX_DURATION
+        # התקרה האמיתית היא זמן הקריאה ועוד שהייה, ולא שבע שניות
+        # קשיחות. מקטע תמלול ארוך למשפט קצר השאיר מילה אחת על המסך
+        # שבע שניות — נמדד מול קובץ רשמי שבו אין אף כתובית כזאת
+        letters = len(cue.text.replace("\n", " "))
+        needed = min(config.SRT_MAX_DURATION,
+                     max(config.SRT_MIN_DURATION,
+                         letters / max(1.0, config.SRT_READ_SPEED)
+                         + config.SRT_LINGER))
+        if span > needed:
+            cue.end = cue.start + needed
             fixed["ארוכות"] += 1
         elif span < config.SRT_MIN_DURATION:
             # מאריכים עד המינימום, אבל לעולם לא על חשבון הבאה

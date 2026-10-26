@@ -595,8 +595,9 @@ SRT_TAIL_GAP = float(os.getenv("SRT_TAIL_GAP") or 60.0)
 # תקרה למספר הניסיונות, וריפוד להקשר משני צידי החור
 RECOVER_GAPS = _int("RECOVER_GAPS", 1)
 RECOVER_MIN = float(os.getenv("RECOVER_MIN") or 1.2)
-RECOVER_MAX = _int("RECOVER_MAX", 40)
+RECOVER_MAX = _int("RECOVER_MAX", 160)
 RECOVER_PAD = float(os.getenv("RECOVER_PAD") or 0.8)
+RECOVER_WORKERS = _int("RECOVER_WORKERS", 6)
 DRIFT_MIN_SPAN = float(os.getenv("DRIFT_MIN_SPAN") or 900)
 # הפרש מינימלי בין שני החצאים שנחשב סחיפה ולא רעש
 DRIFT_MIN_CHANGE = float(os.getenv("DRIFT_MIN_CHANGE") or 0.35)
@@ -613,6 +614,12 @@ DRIFT_MAX_RATE = float(os.getenv("DRIFT_MAX_RATE") or 0.01)
 THUMB_MAX = _int("THUMB_MAX", 320)
 THUMB_BYTES = _int("THUMB_BYTES", 190_000)
 THUMB_QUALITY = _int("THUMB_QUALITY", 2)
+# כמה זמן כתובית נשארת מעבר למה שנדרש כדי לקרוא אותה. מקטע תמלול
+# ארוך למשפט קצר הוא מצב נפוץ — מוזיקה או שקט סביב הדיבור — ובלי
+# התקרה הזאת "תלכי" נשארה על המסך שבע שניות, 0.7 תווים לשנייה.
+# נמדד מול קובץ רשמי של פלטפורמת סטרימינג: שם אין אף כתובית על
+# תקרת שבע השניות, ואצלנו היו 21
+SRT_LINGER = float(os.getenv("SRT_LINGER") or 1.2)
 SRT_LEAD = float(os.getenv("SRT_LEAD") or 0.18)
 SRT_SNAP_CUTS = _int("SRT_SNAP_CUTS", 1)
 SCENE_THRESHOLD = float(os.getenv("SCENE_THRESHOLD") or 0.35)
