@@ -1071,6 +1071,19 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         # אורך המקור ולא ייפול ממנו בכמה פריימים
         length = (duration - begin if index == segments - 1
                   else min(span, duration - begin))
+        # ומספר הפריימים המדויק שהקטע הזה חייב להוציא. ‎-t לבדו נותן
+        # לffmpeg להוציא פריים אחד יותר או פחות בכל קטע, והשגיאה
+        # מצטברת לאורך הסרט: הכתוביות של כל קטע נחתכות לפי הגבול
+        # התיאורטי ‎index*span, אבל הקטע שלפניו כבר הזיז את ציר הזמן.
+        # נמדד על קליפ של שלוש דקות, אותו מקור ואותן כתוביות:
+        #   תהליך יחיד   0.041 שניות
+        #   3 קטעים      0.082
+        #   5 קטעים      0.122
+        #   10 קטעים     0.164
+        #   16 קטעים     0.259
+        # כלומר כ-15 אלפיות לכל קטע, וסרט של שעתיים נחתך ל-56 קטעים
+        piece_frames = (frames - per_segment * (segments - 1)
+                        if index == segments - 1 else per_segment)
         piece_srt = srt_tools.slice_file(marked, begin, begin + length,
                                          work / f"seg{index:02d}.srt")
         # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון
@@ -1095,7 +1108,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
         cmd = [
             "ffmpeg", "-nostdin", "-y",
-            "-ss", f"{begin:.3f}", "-t", f"{length:.3f}",
+            "-ss", f"{begin:.3f}", "-t", f"{length + 2 * step:.3f}",
             "-threads", str(threads), "-hwaccel", "auto", "-i", str(video),
             "-vf", filters,
         ] + _encoder_args(settings, threads, duration)
@@ -1111,6 +1124,9 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         # החשש שבגללו נוסף הגייט — ש--fps_mode יפיל את ffmpeg 4.x —
         # כבר נפתר בתוך cfr_args, שבודק את הגרסה ונופל ל--vsync
         cmd += await cfr_args(fps)
+        # התקרה המדויקת. ‎-t שלמעלה נשאר כגבול פענוח בלבד
+        if piece_frames > 0:
+            cmd += ["-frames:v", str(piece_frames)]
         cmd += ["-an", str(piece)]
 
         async def progress(fraction: float, speed: str) -> None:
