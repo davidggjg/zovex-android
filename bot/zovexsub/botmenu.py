@@ -42,6 +42,7 @@ class Choice:
     speed: str = ""              # מהיר (H.264) / איכותי (H.265)
     url: str = ""                # קישור, כשהעבודה התחילה מקישור
     quality: str = ""            # רזולוציית ההורדה מקישור
+    track: int = 0               # רצועת השמע שנבחרה, במספור של ffmpeg
 
 
 # כל שלב: כותרת, שורות כפתורים, והשדה שנשמר
@@ -100,6 +101,37 @@ def quality_keys(tall: list[int]) -> list:
     rows.append([("🔝 הטובה ביותר", "q:best")])
     rows.append([("❌ ביטול", "cancel")])
     return rows
+
+TRACK = ("🔊 <b>לקובץ הזה יש כמה רצועות שמע</b>\n\n"
+         "מאיזו רצועה לתמלל, ואיזו תיכנס לסרטון הסופי?")
+
+
+def track_keys(tracks: list[dict]) -> list:
+    """כפתור לכל רצועה שבאמת קיימת בקובץ.
+
+    נבנה מהקובץ ולא מרשימה קבועה, בדיוק כמו כפתורי האיכות: לקובץ
+    אחד יש אנגלית ועברית ולאחר אנגלית ופרשנות הבמאי
+    """
+    rows = []
+    for track in tracks:
+        label = track.get("label") or f"רצועה {track['index'] + 1}"
+        rows.append([(f"{track['index'] + 1}. {label}",
+                      f"trk:{track['index']}")])
+    rows.append([("❌ ביטול", "cancel")])
+    return rows
+
+
+async def offer_track(chat_id, tracks: list[dict], on_done) -> None:
+    """שואל מאיזו רצועת שמע לעבוד. נשלח רק כשיש יותר מאחת."""
+    sent = await localbot.say(chat_id, TRACK,
+                              buttons=localbot.keyboard(track_keys(tracks)))
+    message_id = sent.get("message_id")
+    if not message_id:
+        raise RuntimeError("שאלת הרצועה נשלחה בלי מזהה הודעה")
+    _open[message_id] = Choice(chat_id=int(chat_id), message_id=message_id,
+                               done=on_done)
+    log.info("שאלת רצועת שמע: %d רצועות (הודעה %s)", len(tracks), message_id)
+
 
 ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
        "הכתוביות כבר נשלחו למעלה.")
@@ -249,6 +281,18 @@ async def _press(query: dict) -> None:
         choice.cancelled = True
         await localbot.edit(choice.chat_id, message_id,
                             "בוטל. הכתוביות נשלחו למעלה.")
+        return
+
+    if data.startswith("trk:"):
+        _open.pop(message_id, None)
+        choice.track = int(data.split(":", 1)[1] or 0)
+        await localbot.edit(choice.chat_id, message_id,
+                            f"🔊 עובד מרצועה {choice.track + 1}.")
+        if choice.done:
+            # ברקע, ולא ב-await: ‏_press רץ בלולאה היחידה שמושכת
+            # עדכונים מטלגרם, ותמלול שמוחזק בה הופך את הבוט לאילם
+            # מרגע הלחיצה. זה הבאג שבדיקת _pump_stays_free שומרת עליו
+            _detach(choice.done(choice), "עבודה מבחירת רצועה")
         return
 
     if data.startswith("q:"):

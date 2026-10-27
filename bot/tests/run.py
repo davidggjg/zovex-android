@@ -2706,6 +2706,30 @@ def _audio_track_choice():
         assert args and args != ["-an"], args
 
 
+@check("שאלת הרצועה נבנית מהקובץ, ונשאלת רק כשיש יותר מרצועה אחת")
+def _track_question():
+    import inspect
+    from zovexsub import botjob, botmenu
+
+    rows = botmenu.track_keys([
+        {"index": 0, "label": "אנגלית"},
+        {"index": 1, "label": "עברית · Hebrew dub"},
+    ])
+    # כפתור לכל רצועה, ועוד שורת ביטול
+    assert len(rows) == 3, rows
+    assert rows[0][0][1] == "trk:0" and rows[1][0][1] == "trk:1", rows
+    assert "עברית" in rows[1][0][0], rows[1]
+
+    # רצועה בלי תווית לא מייצרת כפתור ריק
+    bare = botmenu.track_keys([{"index": 0}])
+    assert "רצועה 1" in bare[0][0][0], bare
+
+    # ורק קובץ עם כמה רצועות נשאל — אחרת זו לחיצה מיותרת בכל סרטון
+    body = inspect.getsource(botjob)
+    assert "if len(tracks) > 1:" in body, "השאלה נשאלת גם על רצועה אחת"
+    assert "await go(0)" in body, "המסלול הרגיל חייב להמשיך בלי שאלה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

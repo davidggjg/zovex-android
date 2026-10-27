@@ -486,17 +486,43 @@ async def run(choice) -> None:
         async def progress(text: str) -> None:
             await screen.show(text)
 
-        result = await pipeline.run(source, work, progress=progress)
-        await screen.show(
-            f"✅ <b>{result.cues} כתוביות</b> · {result.duration / 60:.1f} דק׳ · "
-            f"שפת מקור: {result.language}", force=True)
-        srt_file = Path(result.srt_path)
-        try:
-            await localbot.call("sendDocument", chat_id=str(chat_id),
-                                document=localbot._to_container(srt_file))
-        finally:
-            localbot.clear_outbox(srt_file.name)
-        await _offer_burn(chat_id, source, Path(result.srt_path), work)
+        async def go(track: int) -> None:
+            result = await pipeline.run(source, work, progress=progress,
+                                        track=track)
+            await screen.show(
+                f"✅ <b>{result.cues} כתוביות</b> · "
+                f"{result.duration / 60:.1f} דק׳ · "
+                f"שפת מקור: {result.language}", force=True)
+            srt_file = Path(result.srt_path)
+            try:
+                await localbot.call("sendDocument", chat_id=str(chat_id),
+                                    document=localbot._to_container(srt_file))
+            finally:
+                localbot.clear_outbox(srt_file.name)
+            await _offer_burn(chat_id, source, Path(result.srt_path), work,
+                              track=track)
+
+        # רצועה אחת היא הרוב המוחלט, ואין מה לשאול עליה. רק קובץ עם
+        # כמה רצועות — מקור ודיבוב, או מקור ופרשנות — מקבל שאלה,
+        # אחרת היינו מוסיפים לחיצה לכל סרטון בשביל מקרה נדיר
+        tracks = await media.audio_tracks(source)
+        if len(tracks) > 1:
+            for item in tracks:
+                item["label"] = media.track_label(item)
+            log.info("נמצאו %d רצועות שמע: %s", len(tracks),
+                     ", ".join(t["label"] for t in tracks))
+            await screen.show("🔊 יש כמה רצועות שמע — בחר למעלה.", force=True)
+
+            async def picked(pick) -> None:
+                if pick.cancelled:
+                    pipeline.cleanup(work)
+                    return
+                await go(pick.track)
+
+            await botmenu.offer_track(chat_id, tracks, picked)
+            return
+
+        await go(0)
     except Exception as exc:  # noqa: BLE001 — מדווחים ולא מפילים את הבוט
         log.exception("עבודת הבוט נכשלה")
         await screen.show(f"❌ {exc}", force=True)
@@ -611,11 +637,15 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     await _offer_burn(chat_id, source, srt_path, work)
 
 
-async def _offer_burn(chat_id, source: Path, srt_path: Path, work: Path) -> None:
+async def _offer_burn(chat_id, source: Path, srt_path: Path, work: Path,
+                      track: int = 0) -> None:
     async def chosen(choice) -> None:
         if choice.cancelled:
             pipeline.cleanup(work)
             return
+        # הרצועה נבחרה לפני התמלול, והבחירה הזאת חייבת להגיע גם
+        # לצריבה: אחרת נתמלל מרצועה אחת ונצרוב אחרת
+        choice.track = track
         await _burn(chat_id, source, srt_path, work, choice)
 
     await botmenu.offer(chat_id, chosen)
@@ -656,7 +686,8 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         # בלבד, ולכן אפשר להחזיק גם איכות וגם מהירות
         profile = {"מהיר": "fast", "איכותי": "fast265"}.get(choice.speed, "")
         await media.burn(source, srt_path, dst, on_progress=on_burn,
-                         style=style, profile=profile)
+                         style=style, profile=profile,
+                         track=getattr(choice, "track", 0) or 0)
         info = await media.probe(dst)
         stream = next((s for s in info.get("streams", [])
                        if s.get("codec_type") == "video"), {})

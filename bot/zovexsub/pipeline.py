@@ -33,7 +33,7 @@ class Result:
 
 
 async def run(source: Path, work: Path, *, progress: Progress,
-              card: "prog.Card | None" = None) -> Result:
+              card: "prog.Card | None" = None, track: int = 0) -> Result:
     """progress מקבל טקסט מוכן להצגה — כאן נבנים השלבים עם אחוזים וזמן משוער.
 
     card אופציונלי: כשהוא קיים כל שלב שמסתיים נשאר כשורה בהיסטוריה
@@ -62,7 +62,7 @@ async def run(source: Path, work: Path, *, progress: Progress,
         )
 
     await progress(f"🎧 מחלץ אודיו · {duration / 60:.0f} דקות וידאו")
-    audio = await media.extract_audio(source, work / "audio.flac")
+    audio = await media.extract_audio(source, work / "audio.flac", track)
 
     stage = make("✍️ מתמלל")
     stage.pulse()
