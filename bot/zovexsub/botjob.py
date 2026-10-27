@@ -35,11 +35,16 @@ _given: dict[int, Path] = {}
 class Screen:
     """הודעה אחת שמתעדכנת, עם ויסות כדי לא להציף את טלגרם."""
 
-    def __init__(self, chat_id, message_id: int):
+    def __init__(self, chat_id, message_id: int, buttons: str = ""):
         self.chat_id = chat_id
         self.message_id = message_id
         self.last = 0.0
         self.shown = ""
+        # הכפתורים נשלחים מחדש בכל עריכה, ולא פעם אחת. ‏localbot.edit
+        # שולח reply_markup ריק כשלא מעבירים לו כפתורים, ולכן כפתור
+        # על הודעת ההתקדמות נמחק בעדכון הבא — שניות אחרי שהופיע. זה
+        # מה שנראה כמו "הכפתור פג תוקף"
+        self.buttons = buttons
 
     async def show(self, text: str, *, force: bool = False) -> None:
         text = _banner(self.chat_id) + text
@@ -49,9 +54,37 @@ class Screen:
             return
         self.last, self.shown = now, text
         try:
-            await localbot.edit(self.chat_id, self.message_id, text)
+            await localbot.edit(self.chat_id, self.message_id, text,
+                                buttons=self.buttons)
         except Exception as exc:  # noqa: BLE001 — דיווח לא מפיל עבודה
             log.debug("עדכון מסך נכשל: %s", exc)
+
+
+# העבודה שרצה בכל צ'אט, כדי שכפתור עצור יוכל לבטל אותה. העבודה
+# רצה מנותקת (botmenu._detach), ולכן יש מה לבטל
+_jobs: dict[int, "asyncio.Task"] = {}
+
+
+def claim(chat_id) -> None:
+    """רושם את העבודה הנוכחית כשל הצ'אט הזה."""
+    task = asyncio.current_task()
+    if task is not None:
+        _jobs[int(chat_id)] = task
+
+
+def release(chat_id) -> None:
+    _jobs.pop(int(chat_id), None)
+
+
+async def stop(chat_id) -> None:
+    """מבטל את העבודה שרצה בצ'אט. נקרא מכפתור עצור."""
+    task = _jobs.pop(int(chat_id), None)
+    if task is None or task.done():
+        await localbot.say(chat_id, "אין עבודה פעילה לעצור.")
+        return
+    log.warning("המשתמש עצר את העבודה בצ'אט %s", chat_id)
+    task.cancel()
+    await localbot.say(chat_id, "🛑 העבודה נעצרה.")
 
 
 def _banner(chat_id) -> str:
@@ -424,7 +457,9 @@ async def run(choice) -> None:
     work = config.WORK_DIR / uuid.uuid4().hex[:10]
     work.mkdir(parents=True, exist_ok=True)
     note = await localbot.say(chat_id, "📥 קורא את הסרטון…")
-    screen = Screen(chat_id, note.get("message_id", 0))
+    screen = Screen(chat_id, note.get("message_id", 0),
+                    buttons=botmenu.stop_keys(chat_id))
+    claim(chat_id)
 
     # נרשמים כממתינים לפני ההורדה ולא אחריה: הקובץ של המשתמש מגיע
     # כמעט תמיד תוך כדי, וקודם הוא נפל בין הכיסאות
@@ -523,10 +558,18 @@ async def run(choice) -> None:
             return
 
         await go(0)
+    except asyncio.CancelledError:
+        # כפתור עצור. מנקים את תיקיית העבודה ומודיעים, ואז נותנים
+        # לביטול להמשיך — תהליך שמתעלם מביטול הוא תהליך שלא נעצר
+        log.warning("העבודה בוטלה על ידי המשתמש")
+        pipeline.cleanup(work)
+        raise
     except Exception as exc:  # noqa: BLE001 — מדווחים ולא מפילים את הבוט
         log.exception("עבודת הבוט נכשלה")
         await screen.show(f"❌ {exc}", force=True)
         pipeline.cleanup(work)
+    finally:
+        release(chat_id)
 
 
 # צ'אטים שממתינים לתמונת תצוגה מקדימה, והתמונה המוכנה כשהגיעה.
@@ -654,7 +697,11 @@ async def _offer_burn(chat_id, source: Path, srt_path: Path, work: Path,
 async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                 choice) -> None:
     note = await localbot.say(chat_id, "🔥 צורב…")
-    screen = Screen(chat_id, note.get("message_id", 0))
+    screen = Screen(chat_id, note.get("message_id", 0),
+                    buttons=botmenu.stop_keys(chat_id))
+    # הצריבה וההעלאה הן השלבים הארוכים, ובהם כפתור עצור נחוץ יותר
+    # מכל. הן רצות מנותקות מהתפריט, ולכן יש להן משימה משלהן לבטל
+    claim(chat_id)
     dst = work / f"{source.stem}.he.mp4"
     try:
         said_fallback = False
@@ -755,10 +802,14 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
             if pulse is not None:
                 pulse.cancel()
         await screen.show("✅ הסתיים", force=True)
+    except asyncio.CancelledError:
+        log.warning("הצריבה בוטלה על ידי המשתמש")
+        raise
     except Exception as exc:  # noqa: BLE001
         log.exception("הצריבה בבוט נכשלה")
         await screen.show(f"❌ {exc}", force=True)
     finally:
+        release(chat_id)
         # ניקוי, אחרת תמונה שנשארה תזלוג לעבודה הבאה באותו צ'אט
         _cover_wait.discard(int(chat_id))
         stale = _cover.pop(int(chat_id), None)
@@ -887,6 +938,7 @@ def waiting_for(chat_id) -> bool:
 def install() -> None:
     """מחבר את הבוט לנהג הזה."""
     botmenu.on_choice = run
+    botmenu.on_stop = stop
     botmenu.on_subtitle = take_subtitle
     botmenu.on_waiting = waiting_for
     botmenu.on_cover = take_cover

@@ -2818,6 +2818,45 @@ def _download_ledger():
         assert not any(fastio._ledger_load(dst, size, part, total))
 
 
+@check("כפתור עצור שורד כל עדכון התקדמות, ונעצר גם מהודעה שאינה בתפריט")
+def _stop_button_survives():
+    import asyncio
+    import inspect
+    from zovexsub import botjob, botmenu, localbot
+
+    # localbot.edit שולח reply_markup ריק כשלא מעבירים כפתורים, ולכן
+    # מסך ההתקדמות חייב לשלוח אותם מחדש בכל עריכה — אחרת הכפתור
+    # נמחק שניות אחרי שהופיע, וזה מה שנראה כמו "פג תוקף"
+    sent: list = []
+
+    async def fake_edit(chat_id, message_id, text, *, buttons=""):
+        sent.append(buttons)
+        return {}
+
+    saved = localbot.edit
+    localbot.edit = fake_edit
+    try:
+        screen = botjob.Screen(1, 2, buttons=botmenu.stop_keys(1))
+        asyncio.run(screen.show("אחד", force=True))
+        asyncio.run(screen.show("שתיים", force=True))
+    finally:
+        localbot.edit = saved
+
+    assert len(sent) == 2, sent
+    assert all("stop:1" in b for b in sent), sent
+
+    # והלחיצה מטופלת לפני ה-return על Choice חסר: הודעת ההתקדמות
+    # אינה רשומה ב-_open, ולכן שם היא הייתה נופלת בשקט
+    body = inspect.getsource(botmenu._press)
+    before = body.index('data.startswith("stop:")')
+    after = body.index("if choice is None:")
+    assert before < after, "עצור מטופל אחרי ה-return ולכן לא יעבוד"
+
+    # ויש מה לבטל: העבודה נרשמת ומשתחררת
+    assert "claim(chat_id)" in inspect.getsource(botjob)
+    assert "release(chat_id)" in inspect.getsource(botjob)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

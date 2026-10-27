@@ -179,6 +179,12 @@ def source_screen(chat_id) -> tuple[str, list]:
 # on_subtitle כששלח קובץ כתוביות משלו
 on_choice = None
 on_subtitle = None
+on_stop = None
+
+# כפתור עצור להודעת ההתקדמות. הוא יושב על הודעה שאינה חלק משיחת
+# התפריט, ולכן הוא מטופל לפני חיפוש ה-Choice
+def stop_keys(chat_id) -> str:
+    return localbot.keyboard([[("🛑 עצור", f"stop:{int(chat_id)}")]])
 on_waiting = None
 # on_cover כשהמשתמש שלח תמונה לתצוגה מקדימה, on_wanting_cover כדי
 # לדעת אם מחכים לאחת
@@ -294,6 +300,14 @@ async def _press(query: dict) -> None:
     message_id = message.get("message_id")
     choice = _open.get(message_id)
     await localbot.tap(query.get("id", ""))
+
+    # עצור קודם כל: הוא יושב על הודעת ההתקדמות, שאינה רשומה ב-_open,
+    # ולכן הוא היה נופל על ה-return שלמטה בלי לעשות דבר
+    if data.startswith("stop:"):
+        if on_stop:
+            _detach(on_stop(int(data.split(":", 1)[1] or 0)), "עצירת עבודה")
+        return
+
     if choice is None:
         return
 
