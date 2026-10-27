@@ -14,7 +14,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import config
+from . import config, media
 
 log = logging.getLogger(__name__)
 
@@ -219,18 +219,81 @@ async def heights(url: str, timeout: float = 45.0) -> list[int]:
     return ordered
 
 
-def format_for(quality: str) -> str:
+async def audio_options(url: str, timeout: float = 45.0) -> list[dict]:
+    """שפות השמע שקיימות בקישור, אחת לכל שפה.
+
+    ‏heights() מדלגת בכוונה על כל מסלול שמע — היא נבנתה לקרוא
+    רזולוציות. התוצאה הייתה שקישור עם כמה שפות נראה לבוט כמו קישור
+    עם אחת, והתבנית bestvideo+bestaudio הורידה את מה ש-yt-dlp חשב
+    שהוא "הטוב ביותר" — כלומר שפת ברירת המחדל של האתר, לא זו שרוצים.
+
+    לכל שפה יש בדרך כלל כמה מסלולים בקצבי סיב שונים. נשמר הטוב
+    ביותר לכל שפה, אחרת המשתמש היה מקבל שתים־עשרה כפתורים כדי
+    לבחור בין שתי שפות
+    """
+    cmd = _command() + _browser_args(url) + [
+        "-J", "--no-warnings", "--no-playlist", url]
+    if config.FETCH_COOKIES:
+        cmd += ["--cookies", config.FETCH_COOKIES]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, env=child_env())
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError) as exc:
+        log.warning("בדיקת שפות השמע נכשלה (%s)", exc)
+        return []
+    if proc.returncode != 0 or not out:
+        return []
+    try:
+        info = json.loads(out.decode("utf-8", "replace"))
+    except ValueError:
+        return []
+
+    best: dict[str, dict] = {}
+    for item in info.get("formats") or ():
+        # מסלול שמע נקי בלבד: יש קול ואין וידאו
+        if (item.get("vcodec") or "none") != "none":
+            continue
+        if (item.get("acodec") or "none") == "none":
+            continue
+        ident = str(item.get("format_id") or "")
+        if not ident:
+            continue
+        code = str(item.get("language") or "und").lower()
+        rate = float(item.get("abr") or 0.0)
+        if code not in best or rate > best[code]["abr"]:
+            best[code] = {
+                "id": ident,
+                "language": code,
+                "name": media.LANGUAGE_NAMES.get(code, code),
+                "abr": rate,
+                "note": str(item.get("format_note") or "").strip(),
+            }
+    found = sorted(best.values(), key=lambda t: t["name"])
+    log.info("שפות שמע בקישור: %s",
+             ", ".join(f"{t['name']} ({t['id']})" for t in found) or "לא נמצאו")
+    return found
+
+
+def format_for(quality: str, audio: str = "") -> str:
     """בוחר תבנית yt-dlp לפי הרזולוציה שהמשתמש ביקש.
 
     "best" מוריד את הקיים הטוב ביותר, כולל 4K. כל השאר תוקרה בגובה,
     עם נפילה אחורה לכל מה שקיים — אחרת סרטון שאין לו את הרזולוציה
     המדויקת פשוט נכשל במקום לרדת דרגה
     """
+    # רצועת שמע מפורשת גוברת על "הטוב ביותר": זו כל המטרה של הבחירה.
+    # הנפילה האחורית נשארת bestaudio, כדי שמזהה שפג תוקפו לא יפיל
+    # את ההורדה כולה
+    want = f"{audio}/bestaudio" if audio else "bestaudio"
     if not quality or quality == "best":
-        return "bestvideo+bestaudio/best" if quality else config.FETCH_FORMAT
+        if not quality:
+            return (f"bestvideo+{want}/best" if audio else config.FETCH_FORMAT)
+        return f"bestvideo+{want}/best"
     if not quality.isdigit():
-        return config.FETCH_FORMAT
-    return (f"bestvideo[height<={quality}]+bestaudio/"
+        return (f"bestvideo+{want}/best" if audio else config.FETCH_FORMAT)
+    return (f"bestvideo[height<={quality}]+{want}/"
             f"best[height<={quality}]/best")
 
 

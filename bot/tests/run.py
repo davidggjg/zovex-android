@@ -2730,6 +2730,55 @@ def _track_question():
     assert "await go(0)" in body, "המסלול הרגיל חייב להמשיך בלי שאלה"
 
 
+@check("שפות השמע נקראות מהקישור, אחת לשפה, והתבנית נבנית סביבן")
+def _link_audio_languages():
+    import asyncio
+    import json
+    import os
+    import stat
+    import tempfile
+    from zovexsub import fetch
+
+    # מה ש-yt-dlp מחזיר על קישור עם שתי שפות: כמה מסלולי שמע לכל
+    # שפה בקצבי סיב שונים, ועוד מסלולי וידאו נקיים
+    payload = {"formats": [
+        {"format_id": "137", "vcodec": "avc1", "acodec": "none", "height": 1080},
+        {"format_id": "140", "vcodec": "none", "acodec": "mp4a",
+         "language": "eng", "abr": 128.0, "format_note": "medium"},
+        {"format_id": "139", "vcodec": "none", "acodec": "mp4a",
+         "language": "eng", "abr": 48.0, "format_note": "low"},
+        {"format_id": "251", "vcodec": "none", "acodec": "opus",
+         "language": "heb", "abr": 160.0, "format_note": "high"},
+        {"format_id": "600", "vcodec": "none", "acodec": "none"},
+    ]}
+
+    with tempfile.TemporaryDirectory() as box:
+        fake = os.path.join(box, "fake-ytdlp")
+        with open(fake, "w", encoding="utf-8") as fh:
+            fh.write("#!/bin/sh\ncat <<'JSON'\n" + json.dumps(payload)
+                     + "\nJSON\n")
+        os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
+
+        saved = fetch._command
+        fetch._command = lambda: [fake]
+        try:
+            found = asyncio.run(fetch.audio_options("https://example.com/v"))
+        finally:
+            fetch._command = saved
+
+    # אחת לכל שפה, והטובה שבקצבי הסיב — לא שתים־עשרה כפתורים
+    assert [v["language"] for v in found] == ["eng", "heb"], found
+    assert [v["id"] for v in found] == ["140", "251"], found
+    assert found[1]["name"] == "עברית", found[1]
+
+    # והמזהה נכנס לתבנית, עם נפילה אחורה שלא תפיל הורדה
+    built = fetch.format_for("1080", "251")
+    assert "+251/bestaudio" in built, built
+    # בלי בחירה שום דבר לא משתנה
+    assert fetch.format_for("1080") == (
+        "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best")
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from . import config, fetch, localbot, prefs
 
@@ -43,6 +43,8 @@ class Choice:
     url: str = ""                # קישור, כשהעבודה התחילה מקישור
     quality: str = ""            # רזולוציית ההורדה מקישור
     track: int = 0               # רצועת השמע שנבחרה, במספור של ffmpeg
+    audio: str = ""              # מזהה תבנית השמע מקישור, כשנבחרה שפה
+    voices: list = field(default_factory=list)   # שפות השמע שבקישור
 
 
 # כל שלב: כותרת, שורות כפתורים, והשדה שנשמר
@@ -101,6 +103,23 @@ def quality_keys(tall: list[int]) -> list:
     rows.append([("🔝 הטובה ביותר", "q:best")])
     rows.append([("❌ ביטול", "cancel")])
     return rows
+
+VOICE = ("🔊 <b>באיזו שפה השמע?</b>\n\n"
+         "בקישור הזה יש כמה שפות. התמלול והתרגום ייעשו מזו שתבחר.")
+
+
+def voice_keys(voices: list[dict]) -> list:
+    """כפתור לכל שפה שקיימת בקישור, אחת לשפה."""
+    rows = []
+    for voice in voices:
+        label = voice.get("name") or voice.get("language") or "לא מצוין"
+        if voice.get("note"):
+            label = f"{label} · {voice['note']}"
+        rows.append([(label, f"aud:{voice['id']}")])
+    rows.append([("🔝 ברירת המחדל של האתר", "aud:")])
+    rows.append([("❌ ביטול", "cancel")])
+    return rows
+
 
 TRACK = ("🔊 <b>לקובץ הזה יש כמה רצועות שמע</b>\n\n"
          "מאיזו רצועה לתמלל, ואיזו תיכנס לסרטון הסופי?")
@@ -257,7 +276,9 @@ async def greet_link(chat_id, url: str) -> None:
     _open[message_id] = choice
     log.info("קישור התקבל בבוט: %s", url[:120])
 
-    tall = await fetch.heights(url)
+    tall, voices = await asyncio.gather(fetch.heights(url),
+                                        fetch.audio_options(url))
+    choice.voices = voices
     title = QUALITY
     if not tall:
         title += "\n\n<i>לא הצלחתי לקרוא את האיכויות מהקישור — " \
@@ -297,6 +318,24 @@ async def _press(query: dict) -> None:
 
     if data.startswith("q:"):
         choice.quality = data.split(":", 1)[1]
+        # שפות השמע נקראו מראש, יחד עם האיכויות. אין כאן קריאת רשת
+        # בכוונה: ‏_press רץ בלולאה שמושכת עדכונים מטלגרם
+        if len(choice.voices) > 1:
+            await localbot.edit(choice.chat_id, message_id, VOICE,
+                                buttons=localbot.keyboard(
+                                    voice_keys(choice.voices)))
+            return
+        text, keys = source_screen(choice.chat_id)
+        await localbot.edit(choice.chat_id, message_id, text,
+                            buttons=localbot.keyboard(keys))
+        return
+
+    if data.startswith("aud:"):
+        choice.audio = data.split(":", 1)[1]
+        chosen = next((v for v in choice.voices
+                       if v["id"] == choice.audio), None)
+        log.info("שפת שמע נבחרה: %s",
+                 chosen["name"] if chosen else "ברירת מחדל")
         text, keys = source_screen(choice.chat_id)
         await localbot.edit(choice.chat_id, message_id, text,
                             buttons=localbot.keyboard(keys))

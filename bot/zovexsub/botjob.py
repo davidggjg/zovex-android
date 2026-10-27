@@ -344,7 +344,7 @@ async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
             parts.append(note)
         await screen.show("🔗 מוריד · " + " · ".join(parts))
 
-    want = fetch.format_for(choice.quality)
+    want = fetch.format_for(choice.quality, getattr(choice, "audio", ""))
     log.info("הורדה מקישור באיכות %s (%s)", choice.quality or "ברירת מחדל", want)
     await screen.show(f"🔗 מוריד מהקישור · {choice.quality or 'איכות ברירת מחדל'}",
                       force=True)
