@@ -233,12 +233,40 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
 החזר JSON: {{"fixes": [{{"i": <אינדקס>, "addressee": "יחיד/יחידה/רבים/אין",
 "he": "<השורה המתוקנת>"}}]}}"""
 
+        async def skip(why: str) -> None:
+            """חלון שלא חזר נספר כמו חלון שחזר.
+
+            קודם כשל החזיר return בלי לקדם את המונה, ולכן האחוזים
+            נתקעו מתחת ל-100 לנצח — נמדד אצל המשתמש: "99% · בודק
+            איכות 14/15 · אין תזוזה 10:26" על שלב שלמעשה הסתיים.
+            דיווח שמשקר בדיוק ברגע שצריך אותו גרוע מאין דיווח
+            """
+            nonlocal done
+            log.warning("חלון התאמת מגדר נכשל: %s", why)
+            async with lock:
+                done += len(window)
+                if on_step:
+                    await on_step(f"מתאים מגדר פנייה {done}/{len(indexed)}",
+                                  TRANSLATE_TO + (ADDRESSEE_TO - TRANSLATE_TO)
+                                  * done / max(1, len(indexed)))
+
         async with gate:
             try:
-                result = await gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
-                                               schema=schema, temperature=0.0)
+                # תקרה לחלון בודד. asyncio.gather ממתין לאיטי שבהם,
+                # ולכן חלון אחד שנתקע בלופ של נסיונות מחזיק את כל
+                # השלב: נמדד אצל המשתמש 23 קריאות ו-1430 שניות המתנה
+                # למודל על שלב שארך 1159 שניות — כלומר 1.2 קריאות
+                # באוויר בממוצע מתוך שמונה שהגייט מרשה. לא המפתחות
+                # היו הצוואר ולא המכסות (429 היה אפס), אלא הגרורים
+                result = await asyncio.wait_for(
+                    gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
+                                    schema=schema, temperature=0.0),
+                    timeout=config.GEMINI_WINDOW_TIMEOUT)
             except gemini.GeminiError as exc:
-                log.warning("חלון התאמת מגדר נכשל: %s", exc)
+                await skip(str(exc))
+                return
+            except asyncio.TimeoutError:
+                await skip(f"עבר {config.GEMINI_WINDOW_TIMEOUT:.0f} שניות")
                 return
 
         items = result.get("fixes") if isinstance(result, dict) else result
@@ -849,20 +877,30 @@ async def _quality_pass(segments: list[Segment], lines: list[str], notes: str,
         prompt = _quality_prompt(notes, paired)
         if not prompt:
             return []
+        async def step() -> None:
+            nonlocal done
+            async with lock:
+                done += 1
+                if on_step:
+                    await on_step(f"בודק איכות {done}/{len(starts)}",
+                                  ADDRESSEE_TO + (1.0 - ADDRESSEE_TO)
+                                  * done / max(1, len(starts)))
+
         try:
-            result = await gemini.ask_json(CHECK_SYSTEM, prompt,
-                                           schema=_QUALITY_SCHEMA, temperature=0.0)
-        except gemini.GeminiError as exc:
+            # אותה תקרה כמו בהתאמת המגדר, ומאותה סיבה
+            result = await asyncio.wait_for(
+                gemini.ask_json(CHECK_SYSTEM, prompt,
+                                schema=_QUALITY_SCHEMA, temperature=0.0),
+                timeout=config.GEMINI_WINDOW_TIMEOUT)
+        except (gemini.GeminiError, asyncio.TimeoutError) as exc:
             # חלון שנכשל לא מפיל את השאר. קודם כשל יחיד החזיר את כל
-            # התרגום בלי שום בדיקת איכות
-            log.warning("חלון בקרת איכות נכשל ומדולג: %s", exc)
+            # התרגום בלי שום בדיקת איכות.
+            # והוא גם נספר: בלי זה המונה נתקע על 14/15 לנצח
+            log.warning("חלון בקרת איכות נכשל ומדולג: %s",
+                        exc or type(exc).__name__)
+            await step()
             return []
-        async with lock:
-            done += 1
-            if on_step:
-                await on_step(f"בודק איכות {done}/{len(starts)}",
-                              ADDRESSEE_TO + (1.0 - ADDRESSEE_TO)
-                              * done / max(1, len(starts)))
+        await step()
         return (result.get("fixes") or []) if isinstance(result, dict) else []
 
     batches = await asyncio.gather(*(one(s) for s in starts))

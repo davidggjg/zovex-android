@@ -2584,6 +2584,39 @@ def _drive_quota_explained():
     assert "מכסת" not in other, other
 
 
+@check("חלון שנכשל נספר, והמונה מגיע ל-100% ולא נתקע")
+def _failed_window_counts():
+    import asyncio
+    from zovexsub import gemini, hebrew
+
+    # נמדד אצל המשתמש: "99% · בודק איכות 14/15 · אין תזוזה 10:26"
+    # על שלב שלמעשה הסתיים. חלון שנכשל החזיר return בלי לקדם
+    segments = [hebrew.Segment(i, float(i), float(i) + 1.0, f"line {i}")
+                for i in range(hebrew.QUALITY_WINDOW * 3)]
+    lines = [f"שורה {i}" for i in range(len(segments))]
+    windows = len(range(0, len(segments), hebrew.QUALITY_WINDOW))
+
+    seen: list[str] = []
+
+    async def on_step(note, _fraction):
+        seen.append(note)
+
+    async def boom(*_args, **_kwargs):
+        raise gemini.GeminiError("נפל")
+
+    saved = gemini.ask_json
+    gemini.ask_json = boom
+    try:
+        out = asyncio.run(hebrew._quality_pass(segments, lines, "", on_step))
+    finally:
+        gemini.ask_json = saved
+
+    # הטקסט לא נפגע, וכל חלון דווח — גם אלה שנכשלו
+    assert out == lines, "חלון שנכשל לא אמור לשנות טקסט"
+    assert len(seen) == windows, f"{len(seen)} דיווחים מול {windows} חלונות"
+    assert seen[-1] == f"בודק איכות {windows}/{windows}", seen[-1]
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
