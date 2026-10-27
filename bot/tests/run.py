@@ -2779,6 +2779,45 @@ def _link_audio_languages():
         "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best")
 
 
+@check("הורדה שנקטעה ממשיכה מהחלקים שכבר על הדיסק, ולא מאפס")
+def _download_ledger():
+    import tempfile
+    from pathlib import Path
+    from zovexsub import fastio
+
+    with tempfile.TemporaryDirectory() as box:
+        dst = Path(box) / "source.mp4"
+        size, part, total = 1035466213, 1048576, 988
+
+        # יומן חדש הוא ריק, ולא קורס על קובץ שאינו קיים
+        marks = fastio._ledger_load(dst, size, part, total)
+        assert len(marks) == total and not any(marks)
+
+        # 557 חלקים ירדו — זה המקרה שנמדד אצל המשתמש: 584 מתוך 1035MB
+        for index in range(557):
+            marks[index] = 1
+        fastio._ledger_save(dst, size, part, marks)
+
+        back = fastio._ledger_load(dst, size, part, total)
+        assert sum(1 for m in back if m) == 557, sum(back)
+        landed = sum(min(part, size - i * part)
+                     for i in range(total) if back[i])
+        # 557 חלקים של מגה־בייט = 584056832 בייט, בדיוק המספר
+        # שהופיע בשגיאה אצל המשתמש לפני התיקון
+        assert landed == 584056832, landed
+
+        # תוכנית חיתוך אחרת פוסלת את היומן: ההיסטים שונים, והחלקים
+        # הישנים יושבים במקומות הלא נכונים
+        other = fastio._ledger_load(dst, size, part * 2, total)
+        assert not any(other), "יומן מחיתוך אחר נלקח בטעות"
+        assert not any(fastio._ledger_load(dst, size + 1, part, total))
+
+        # ואחרי הצלחה הוא נמחק
+        fastio._ledger_clear(dst)
+        assert not fastio._ledger_path(dst).exists()
+        assert not any(fastio._ledger_load(dst, size, part, total))
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

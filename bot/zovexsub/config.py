@@ -504,6 +504,11 @@ FAST_START_TIMEOUT = float(os.getenv("FAST_START_TIMEOUT") or 240)
 # תקרת זמן לבקשת חלק בודדת. בלעדיה חיבור שמפסיק לענות באמצע משאיר את
 # העובד שלו ממתין לנצח, וההורדה נתקעת באחוז אקראי בלי שגיאה
 TG_READ_TIMEOUT = float(os.getenv("TG_READ_TIMEOUT") or 60)
+# כמה פעמים לנסות את המסלול המקבילי לפני שעוברים לאיטי. יש יומן
+# חלקים, ולכן כל ניסיון ממשיך מאיפה שקודמו נעצר ולא מתחיל מאפס
+TG_FAST_ATTEMPTS = _int("TG_FAST_ATTEMPTS", 3)
+# כל כמה חלקים לשמור את יומן ההורדה לדיסק
+TG_LEDGER_EVERY = _int("TG_LEDGER_EVERY", 16)
 TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
 # אם לא ירד אף בייט בפרק הזמן הזה, ההעברה מוכרזת תקועה ונופלת חזרה
 # אחרי FLOOD_PREMIUM_WAIT אין טעם לנסות שוב באותו חשבון: טלגרם

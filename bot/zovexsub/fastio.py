@@ -54,14 +54,32 @@ async def download(client, message, dst: Path, on_progress=None) -> Path:
     workers = _connections(size, max(1, config.TG_CONNECTIONS))
 
     if size and workers > 1 and size >= 8 * 1024 * 1024:
-        try:
-            return await asyncio.wait_for(
-                _parallel_download(client, message, dst, size, workers, on_progress),
-                timeout=config.TG_FAST_TIMEOUT or None)
-        except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
-            log.warning("ההורדה המקבילה נכשלה (%s: %s), עוברים למסלול הרגיל",
-                        type(exc).__name__, exc)
-            dst.unlink(missing_ok=True)
+        # ניסיון אחד בלבד היה הבאג: קובץ של ג'יגה שנקטע ב-56% נזרק
+        # כולו, והמסלול האיטי התחיל מאפס. עכשיו יש יומן חלקים, ולכן
+        # ניסיון נוסף ממשיך מאיפה שנעצר. עוברים למסלול האיטי רק
+        # כשניסיון שלם לא הוסיף אפילו חלק אחד
+        landed = -1
+        for attempt in range(1, max(1, config.TG_FAST_ATTEMPTS) + 1):
+            try:
+                return await asyncio.wait_for(
+                    _parallel_download(client, message, dst, size, workers,
+                                       on_progress),
+                    timeout=config.TG_FAST_TIMEOUT or None)
+            except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
+                have = sum(1 for m in _ledger_load(
+                    dst, size, _parts(size), -(-size // _parts(size))) if m)
+                log.warning("ההורדה המקבילה נכשלה (%s: %s) — %d חלקים על "
+                            "הדיסק, ניסיון %d מתוך %d",
+                            type(exc).__name__, exc, have, attempt,
+                            config.TG_FAST_ATTEMPTS)
+                if have <= landed:
+                    log.warning("הניסיון לא הוסיף שום חלק — עוברים למסלול הרגיל")
+                    break
+                landed = have
+        # המסלול האיטי קורא את הגודל שעל הדיסק, והקובץ הוקצה מראש
+        # במלואו — ולכן קובץ חלקי נראה לו שלם. הוא מתחיל נקי
+        dst.unlink(missing_ok=True)
+        _ledger_clear(dst)
 
     last = 0
     for attempt in range(1, config.TG_READ_RETRIES + 1):
@@ -323,20 +341,75 @@ async def _close_senders(senders: list) -> None:
             log.debug("סגירת חיבור נכשלה: %s", exc)
 
 
+def _ledger_path(dst: Path) -> Path:
+    return dst.with_name(dst.name + ".parts")
+
+
+def _ledger_load(dst: Path, size: int, part: int, total: int) -> bytearray:
+    """אילו חלקים כבר ירדו בניסיון קודם.
+
+    ‏_parallel_download מקצה את כל הקובץ מראש ב-truncate, ולכן קובץ
+    חלקי נראה שלם לפי גודל — ולכן הכשלון טיפל בזה במחיקה. נמדד אצל
+    המשתמש: ירדו 584 מתוך 1035 מגה־בייט, הכל נמחק, והמסלול האיטי
+    התחיל מאפס וקיבל 3 מגה־בייט. החלקים בלתי תלויים ונכתבים לפי
+    היסט, ולכן די לזכור מי מהם הושלם כדי להמשיך בדיוק משם
+    """
+    empty = bytearray(total)
+    book = _ledger_path(dst)
+    try:
+        raw = book.read_bytes()
+    except OSError:
+        return empty
+    head, _, bits = raw.partition(b"\n")
+    try:
+        was_size, was_part, was_total = (int(x) for x in head.split())
+    except ValueError:
+        return empty
+    # תוכנית חיתוך אחרת פירושה שההיסטים אחרים, והחלקים הישנים
+    # יושבים במקומות הלא נכונים
+    if (was_size, was_part, was_total) != (size, part, total):
+        log.info("יומן ההורדה שייך לחיתוך אחר — מתחילים נקי")
+        return empty
+    if len(bits) != total:
+        return empty
+    return bytearray(bits)
+
+
+def _ledger_save(dst: Path, size: int, part: int, marks: bytearray) -> None:
+    try:
+        _ledger_path(dst).write_bytes(
+            f"{size} {part} {len(marks)}\n".encode() + bytes(marks))
+    except OSError as exc:
+        log.debug("שמירת יומן ההורדה נכשלה: %s", exc)
+
+
+def _ledger_clear(dst: Path) -> None:
+    _ledger_path(dst).unlink(missing_ok=True)
+
+
 async def _parallel_download(client, message, dst: Path, size: int,
                              workers: int, on_progress) -> Path:
     asked = workers
     dc_id, location = utils.get_input_location(message.media)
     dc_id = dc_id or client.session.dc_id
 
-    with dst.open("wb") as fh:
-        fh.truncate(size)
-
     part = _parts(size)
     workers = min(workers, -(-size // part))
     total_parts = -(-size // part)
+    marks = _ledger_load(dst, size, part, total_parts)
+    if not dst.exists() or dst.stat().st_size != size:
+        marks = bytearray(total_parts)
+    if not any(marks):
+        with dst.open("wb") as fh:
+            fh.truncate(size)
 
-    done = 0
+    # הבייטים שכבר על הדיסק נספרים בפתיחה, אחרת בדיקת הסיום הייתה
+    # מכריזה על קובץ חסר דווקא כשההמשכה הצליחה
+    done = sum(min(part, size - index * part)
+               for index in range(total_parts) if marks[index])
+    if done:
+        log.warning("ממשיכים הורדה: %d מתוך %d חלקים כבר על הדיסק (%.0fMB)",
+                    sum(1 for m in marks if m), total_parts, done / 1048576)
     lock = asyncio.Lock()
     handle = os.open(dst, os.O_WRONLY)
     senders = await asyncio.wait_for(
@@ -411,11 +484,15 @@ async def _parallel_download(client, message, dst: Path, size: int,
     write_lock = asyncio.Lock()
     pending: asyncio.Queue[int] = asyncio.Queue()
     for index in range(total_parts):
-        pending.put_nowait(index)
+        if not marks[index]:
+            pending.put_nowait(index)
     last_progress = time.monotonic()
     # השגיאה הראשונה מטלגרם. בלעדיה הודעת הסיום אומרת רק "ירדו 0
     # בייט", וזה מסתיר את הסיבה האמיתית מאחורי סיכום חשבונאי
     first_error: list = []
+    # מונה חלקים מאז השמירה האחרונה של היומן. רשימה ולא מספר, כדי
+    # שהעובדים יוכלו לעדכן אותו בלי nonlocal בכל אחד מהם
+    since_ledger = [0]
 
     async def fetch(sender, offset: int):
         """בקשה אחת, עם תקרת זמן וניסיונות חוזרים.
@@ -496,6 +573,13 @@ async def _parallel_download(client, message, dst: Path, size: int,
             await grow()
             async with lock:
                 done += len(block)
+                marks[index] = 1
+                # היומן נשמר תוך כדי ולא בסוף: הכשלון הוא בדיוק מה
+                # שמונע הגעה לסוף, וביומן שנשמר רק שם אין שום תועלת
+                since_ledger[0] += 1
+                if since_ledger[0] >= config.TG_LEDGER_EVERY:
+                    since_ledger[0] = 0
+                    _ledger_save(dst, size, part, marks)
                 last_progress = time.monotonic()
                 if on_progress:
                     await on_progress(done, size, _note(state))
@@ -645,8 +729,12 @@ async def _parallel_download(client, message, dst: Path, size: int,
     # באמצע הקובץ היה עובר בשקט ומגיע למשתמש כווידאו פגום. נספרים
     # הבייטים שבאמת נכתבו
     if done != size:
+        # היומן נשאר על הדיסק בכוונה: הוא מה שמאפשר לניסיון הבא
+        # להמשיך מכאן במקום להתחיל מאפס
+        _ledger_save(dst, size, part, marks)
         why = f" · {first_error[0]}" if first_error else ""
         raise RuntimeError(f"ירדו {done} בייט מתוך {size} — הקובץ חסר{why}")
+    _ledger_clear(dst)
     # המספר שאי אפשר לנחש במקומו: כמה באמת יצא מהקו הזה
     spent = max(0.001, time.monotonic() - started)
     log.info("ההורדה הסתיימה: %.0fMB ב-%.0f שניות = %.1f MB/s · "
