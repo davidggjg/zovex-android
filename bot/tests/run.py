@@ -2662,6 +2662,50 @@ def _gemini_client_shared():
         asyncio.run(first.aclose())
 
 
+@check("רצועת שמע נבחרת, וקובץ עם שתי רצועות אינו מתומלל תמיד מהראשונה")
+def _audio_track_choice():
+    import asyncio
+    import shutil
+    import subprocess
+    import tempfile
+    from pathlib import Path
+    from zovexsub import media
+
+    if not shutil.which("ffmpeg"):
+        return                      # בלי ffmpeg אין מה לבדוק כאן
+
+    with tempfile.TemporaryDirectory() as box:
+        work = Path(box)
+        clip = work / "two.mp4"
+        # שתי רצועות בתדרים שונים, מתויגות eng ו-heb
+        subprocess.run([
+            "ffmpeg", "-nostdin", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=black:s=160x90:r=12",
+            "-f", "lavfi", "-i", "sine=frequency=300:sample_rate=48000",
+            "-f", "lavfi", "-i", "sine=frequency=1200:sample_rate=48000",
+            "-t", "2", "-map", "0:v", "-map", "1:a", "-map", "2:a",
+            "-metadata:s:a:0", "language=eng",
+            "-metadata:s:a:1", "language=heb",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+            str(clip)], check=True)
+
+        found = asyncio.run(media.audio_tracks(clip))
+        assert [t["language"] for t in found] == ["eng", "heb"], found
+        assert found[1]["name"] == "עברית", found[1]
+        assert media.track_label(found[0]).startswith("אנגלית")
+
+        # והחילוץ באמת שולף רצועה אחרת, ולא את אותה אחת פעמיים
+        first = work / "a0.flac"
+        second = work / "a1.flac"
+        asyncio.run(media.extract_audio(clip, first, track=0))
+        asyncio.run(media.extract_audio(clip, second, track=1))
+        assert first.read_bytes() != second.read_bytes(), "אותה רצועה פעמיים"
+
+        # רצועה שאינה קיימת נצמדת לקיימת ולא מפילה את הצריבה
+        args = asyncio.run(media._audio_args(clip, 99))
+        assert args and args != ["-an"], args
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

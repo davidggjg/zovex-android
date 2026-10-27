@@ -214,11 +214,68 @@ async def has_audio(path: Path) -> bool:
     return any(s.get("codec_type") == "audio" for s in info.get("streams", []))
 
 
-async def extract_audio(src: Path, dst: Path) -> Path:
-    """FLAC 16kHz מונו — מה ש-Whisper אוהב, וגם הקטן ביותר ללא איבוד דיוק."""
+# שפות שהתווית שלהן בקובץ נכתבת בכמה צורות. ffprobe מחזיר מה שהמקודד
+# כתב, וזה לא אחיד: "he", "heb", "iw" (הקוד הישן של עברית) כולם אותה שפה
+LANGUAGE_NAMES = {
+    "heb": "עברית", "he": "עברית", "iw": "עברית",
+    "eng": "אנגלית", "en": "אנגלית",
+    "ara": "ערבית", "ar": "ערבית",
+    "rus": "רוסית", "ru": "רוסית",
+    "fre": "צרפתית", "fra": "צרפתית", "fr": "צרפתית",
+    "spa": "ספרדית", "es": "ספרדית",
+    "ger": "גרמנית", "deu": "גרמנית", "de": "גרמנית",
+    "und": "לא מצוין",
+}
+
+
+async def audio_tracks(path: Path) -> list[dict]:
+    """רצועות השמע בקובץ, בסדר שבו ffmpeg ממספר אותן ב--map 0:a:N.
+
+    קובץ עם שתי רצועות הוא מצב רגיל: דיבוב ועוד מקור, או מקור ופרשנות
+    הבמאי. ‏extract_audio לקח תמיד 0:a:0 — הרצועה הראשונה — ולכן סרט
+    שהרצועה הראשונה בו אינה השפה שרוצים תומלל מהשפה הלא נכונה, בלי
+    שום דרך לבחור אחרת
+    """
+    try:
+        info = await probe(path)
+    except Exception as exc:  # noqa: BLE001 — בלי מידע נשארים ברצועה 0
+        log.warning("לא ניתן לקרוא את רצועות השמע (%s)", exc)
+        return []
+    out = []
+    for position, stream in enumerate(
+            s for s in info.get("streams", []) if s.get("codec_type") == "audio"):
+        tags = stream.get("tags") or {}
+        code = str(tags.get("language") or "und").lower()
+        out.append({
+            "index": position,
+            "language": code,
+            "name": LANGUAGE_NAMES.get(code, code),
+            "title": str(tags.get("title") or "").strip(),
+            "codec": (stream.get("codec_name") or "").lower(),
+            "channels": int(stream.get("channels") or 0),
+        })
+    return out
+
+
+def track_label(track: dict) -> str:
+    """תיאור קצר לרצועה, לכפתור או ללוג."""
+    parts = [track["name"]]
+    if track["title"]:
+        parts.append(track["title"])
+    if track["channels"] > 2:
+        parts.append(f"{track['channels']} ערוצים")
+    return " · ".join(parts)
+
+
+async def extract_audio(src: Path, dst: Path, track: int = 0) -> Path:
+    """FLAC 16kHz מונו — מה ש-Whisper אוהב, וגם הקטן ביותר ללא איבוד דיוק.
+
+    ‏track הוא המספור של ffmpeg: 0 היא הרצועה הראשונה, וזו ברירת
+    המחדל שהייתה קשיחה כאן קודם
+    """
     await _run([
         "ffmpeg", "-nostdin", "-y", "-threads", str(config.FFMPEG_THREADS),
-        "-i", str(src), "-vn", "-map", "0:a:0",
+        "-i", str(src), "-vn", "-map", f"0:a:{max(0, track)}",
         "-ac", "1", "-ar", "16000", "-c:a", "flac", "-compression_level", "8",
         str(dst),
     ])
@@ -626,7 +683,7 @@ def rtl_copy(srt: Path) -> Path:
 PORTABLE_AUDIO = {"aac", "mp3"}
 
 
-async def _audio_args(video: Path) -> list[str]:
+async def _audio_args(video: Path, track: int = 0) -> list[str]:
     """שומר שמע תואם כמו שהוא, וממיר כל השאר ל-AAC.
 
     העתקה עיוורת הייתה הבאג: מקור EAC3 הועתק פנימה, ואצל רוב הצופים
@@ -644,8 +701,11 @@ async def _audio_args(video: Path) -> list[str]:
               if s.get("codec_type") == "audio"]
     if not tracks:
         return ["-an"]
-    codec = (tracks[0].get("codec_name") or "").lower()
-    channels = int(tracks[0].get("channels") or 2)
+    # הרצועה שנבחרה, ולא תמיד הראשונה. בלי זה נבדק הקודק של רצועה
+    # אחת ונצרבה אחרת — ומקור EAC3 שהועתק כמו שהוא יוצא אילם
+    chosen = tracks[min(max(0, track), len(tracks) - 1)]
+    codec = (chosen.get("codec_name") or "").lower()
+    channels = int(chosen.get("channels") or 2)
     if codec in PORTABLE_AUDIO:
         log.info("שמע %s נשאר כמו שהוא", codec)
         return ["-c:a", "copy"]
@@ -865,8 +925,13 @@ def core_pool() -> CorePool:
 
 
 async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
-         style: Style | None = None, profile: str = "") -> Path:
-    """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים."""
+         style: Style | None = None, profile: str = "",
+         track: int = 0) -> Path:
+    """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים.
+
+    ‏track היא רצועת השמע שתיכנס לפלט, במספור של ffmpeg. ברירת
+    המחדל 0 היא מה שהיה קשיח כאן קודם
+    """
     duration = await duration_seconds(video)
     segments = config.burn_chunks(duration)
     # מחשבים מחדש לפי הזיכרון שפנוי עכשיו, ולא לפי זה שהיה בהפעלה
@@ -884,7 +949,8 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
             try:
                 return await _burn_parallel(video, srt, dst, duration,
                                             segments, on_progress, style,
-                                            profile, reuse=attempt > 1)
+                                            profile, reuse=attempt > 1,
+                                            track=track)
             except Exception as failure:  # noqa: BLE001
                 exc = failure
                 if attempt == 1:
@@ -908,7 +974,7 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
                 await on_progress(0.0, f"נפל למסלול יחיד: {tail}")
 
     return await _burn_single(video, srt, dst, duration, on_progress, style,
-                              profile)
+                              profile, track=track)
 
 
 def _settings_for(video: Path, duration: float, height: int,
@@ -922,7 +988,7 @@ def _settings_for(video: Path, duration: float, height: int,
 
 async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
                        on_progress=None, style: Style | None = None,
-                       profile: str = "") -> Path:
+                       profile: str = "", track: int = 0) -> Path:
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
     settings = _settings_for(video, duration, await video_height(video),
@@ -938,7 +1004,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
         "-hwaccel", "auto",
         "-i", str(video), "-vf", _video_filters(marked, credit, style),
     ] + _encoder_args(settings, threads, duration)
-    cmd += await _audio_args(video)
+    cmd += await _audio_args(video, track)
     cmd += ["-movflags", "+faststart", str(dst)]
 
     limit = config.burn_timeout(duration)
@@ -959,7 +1025,8 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
 async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                          segments: int, on_progress=None,
                          style: Style | None = None,
-                         profile: str = "", reuse: bool = False) -> Path:
+                         profile: str = "", reuse: bool = False,
+                         track: int = 0) -> Path:
     """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
 
     מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
@@ -1171,14 +1238,14 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     if on_progress:
         await on_progress(ASSEMBLE_FROM, "מרכיב")
 
-    audio = await _audio_args(video)
+    audio = await _audio_args(video, track)
 
     async def demuxer() -> None:
         """החיבור המהיר: concat demuxer והעתקה בלי קידוד מחדש."""
         await _run_progress([
             "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
             "-i", str(listing), "-i", str(video),
-            "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy",
+            "-map", "0:v:0", "-map", f"1:a:{max(0, track)}?", "-c:v", "copy",
         ] + audio + [
             "-movflags", "+faststart", "-shortest", str(dst),
         ], duration, assembling, timeout=limit)
@@ -1209,7 +1276,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         joined = "concat:" + "|".join(parts)
         await _run_progress([
             "ffmpeg", "-nostdin", "-y", "-i", joined, "-i", str(video),
-            "-map", "0:v:0", "-map", "1:a:0?", "-c:v", "copy",
+            "-map", "0:v:0", "-map", f"1:a:{max(0, track)}?", "-c:v", "copy",
         ] + audio + [
             "-movflags", "+faststart", "-shortest", str(dst),
         ], duration, assembling, timeout=limit)
