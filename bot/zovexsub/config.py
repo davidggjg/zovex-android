@@ -707,6 +707,16 @@ ALIGN_THREADS = _int("ALIGN_THREADS", 2)
 # נמדד אצל המשתמש: שלב של 1159 שניות עם 1.2 קריאות באוויר בממוצע
 # מתוך שמונה, ו-429 אפס — הגרורים היו הצוואר, לא המכסות
 GEMINI_WINDOW_TIMEOUT = float(os.getenv("GEMINI_WINDOW_TIMEOUT") or 240)
+# תקרת חיבורים בלקוח המשותף של ג'מיני. שווה למקביליות המקסימלית
+# (PARALLEL_CEILING) ועוד מרווח, כדי שחיבור לא יהיה הצוואר
+# רמת החשיבה של המודל בקריאות JSON. ריק = לא שולחים את השדה כלל,
+# כלומר ברירת המחדל של המודל. MINIMAL / LOW / MEDIUM / HIGH —
+# הערכים אומתו מול ThinkingLevel ב-SDK הרשמי. תיקון מגדר ובקרת
+# איכות הן משימות סכמה קצרות שאינן צריכות חשיבה עמוקה
+GEMINI_THINKING = (os.getenv("GEMINI_THINKING") or "LOW").strip().upper()
+if GEMINI_THINKING in ("", "0", "OFF", "NO", "DEFAULT"):
+    GEMINI_THINKING = ""
+GEMINI_CONNECTIONS = _int("GEMINI_CONNECTIONS", 24)
 GEMINI_ROUNDS = _int("GEMINI_ROUNDS", 4)
 GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)
 

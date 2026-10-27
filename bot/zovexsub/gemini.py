@@ -45,6 +45,28 @@ class GeminiError(RuntimeError):
     pass
 
 
+# לקוח אחד לכל התהליך, ולא אחד לכל קריאה. קודם כל _chain_once פתח
+# AsyncClient משלו, כלומר מסירת יד TCP ו-TLS חדשה לכל בקשה — בסרט
+# אחד זה 56 קריאות תרגום ועוד עשרות של מגדר ובקרת איכות, כל אחת
+# משלמת את הפתיחה מחדש ואף אחת לא מנצלת ריבוב HTTP/2. התיעוד של
+# httpx אומר במפורש שהלקוח נועד לחיות לאורך זמן ולא לבקשה בודדת
+_client: "httpx.AsyncClient | None" = None
+_client_lock = asyncio.Lock()
+
+
+async def client() -> "httpx.AsyncClient":
+    global _client
+    if _client is None or _client.is_closed:
+        async with _client_lock:
+            if _client is None or _client.is_closed:
+                limits = httpx.Limits(
+                    max_connections=config.GEMINI_CONNECTIONS,
+                    max_keepalive_connections=config.GEMINI_CONNECTIONS,
+                    keepalive_expiry=60.0)
+                _client = httpx.AsyncClient(limits=limits)
+    return _client
+
+
 async def _list_models(key: str) -> list[str]:
     async with httpx.AsyncClient() as client:
         resp = await client.get(f"{BASE}", params={"key": key, "pageSize": 200},
@@ -195,129 +217,138 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
 async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict:
     last_error = "לא ידוע"
 
-    async with httpx.AsyncClient() as client:
-        chain = _chain(model)
-        now = time.monotonic()
-        available = [m for m in chain if _overloaded.get(m, 0.0) <= now]
-        for wanted in (available or chain):
-            name = await _resolve(wanted)
-            if name in _exhausted or all(
-                    (name, k) in _dead for k in config.GEMINI_API_KEYS):
+    web = await client()
+    chain = _chain(model)
+    now = time.monotonic()
+    available = [m for m in chain if _overloaded.get(m, 0.0) <= now]
+    for wanted in (available or chain):
+        name = await _resolve(wanted)
+        if name in _exhausted or all(
+                (name, k) in _dead for k in config.GEMINI_API_KEYS):
+            continue
+
+        # ארבעה ניסיונות קבועים לא הספיקו לסבב על שבעה מפתחות:
+        # המודל ננטש לפני שחלקם בכלל נוסו. התקרה גדלה עם המאגר
+        attempt, skipped = 0, 0
+        budget = max(4, 2 * len(config.GEMINI_API_KEYS))
+        while attempt < budget:
+            global _waiting_for_key
+            _waited = time.monotonic()
+            _waiting_for_key += 1
+            try:
+                key = await _pool.wait_for_free()
+            finally:
+                _waiting_for_key -= 1
+            tally.quota_wait += time.monotonic() - _waited
+            if (_blocked.get((name, key), 0.0) > time.monotonic()
+                    or (name, key) in _dead):
+                # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר. דילוג
+                # אינו ניסיון — קודם הוא שרף אחד מארבעת הניסיונות
+                # בלי לשלוח בקשה, והמודל ננטש אף שהיה מפתח פנוי
+                skipped += 1
+                if skipped > len(config.GEMINI_API_KEYS):
+                    break
+                continue
+            attempt += 1
+            _sent = time.monotonic()
+            tally.calls += 1
+            try:
+                resp = await web.post(
+                    f"{BASE}/{name}:generateContent",
+                    params={"key": key}, json=body,
+                    timeout=httpx.Timeout(timeout, connect=30.0),
+                )
+            except httpx.HTTPError as exc:
+                last_error = f"רשת: {exc}"
+                await asyncio.sleep(min(2 ** attempt, 15))
                 continue
 
-            # ארבעה ניסיונות קבועים לא הספיקו לסבב על שבעה מפתחות:
-            # המודל ננטש לפני שחלקם בכלל נוסו. התקרה גדלה עם המאגר
-            attempt, skipped = 0, 0
-            budget = max(4, 2 * len(config.GEMINI_API_KEYS))
-            while attempt < budget:
-                global _waiting_for_key
-                _waited = time.monotonic()
-                _waiting_for_key += 1
-                try:
-                    key = await _pool.wait_for_free()
-                finally:
-                    _waiting_for_key -= 1
-                tally.quota_wait += time.monotonic() - _waited
-                if (_blocked.get((name, key), 0.0) > time.monotonic()
-                        or (name, key) in _dead):
-                    # המפתח הזה מיצה את המודל הזה; ננסה מפתח אחר. דילוג
-                    # אינו ניסיון — קודם הוא שרף אחד מארבעת הניסיונות
-                    # בלי לשלוח בקשה, והמודל ננטש אף שהיה מפתח פנוי
-                    skipped += 1
-                    if skipped > len(config.GEMINI_API_KEYS):
+            tally.model_wait += time.monotonic() - _sent
+
+            if resp.status_code == 200:
+                _pool.report_ok(key)
+                return resp.json()
+
+            text = resp.text[:400]
+
+            if resp.status_code == 429:
+                tally.rate_limited += 1
+                # "limit: 0" = המודל חסום לתוכנית הזו, לא עומס רגעי
+                if "limit: 0" in text:
+                    _dead.add((name, key))
+                    log.warning("%s חסום עבור %s — מנסה מפתח אחר",
+                                name, _pool.mask(key))
+                    if all((name, other) in _dead
+                           for other in config.GEMINI_API_KEYS):
+                        log.warning("%s חסום בכל המפתחות — למודל הבא", name)
+                        last_error = f"{name} חסום בתוכנית"
                         break
-                    continue
-                attempt += 1
-                _sent = time.monotonic()
-                tally.calls += 1
-                try:
-                    resp = await client.post(
-                        f"{BASE}/{name}:generateContent",
-                        params={"key": key}, json=body,
-                        timeout=httpx.Timeout(timeout, connect=30.0),
-                    )
-                except httpx.HTTPError as exc:
-                    last_error = f"רשת: {exc}"
-                    await asyncio.sleep(min(2 ** attempt, 15))
+                    last_error = f"{name} חסום במפתח אחד"
                     continue
 
-                tally.model_wait += time.monotonic() - _sent
-
-                if resp.status_code == 200:
-                    _pool.report_ok(key)
-                    return resp.json()
-
-                text = resp.text[:400]
-
-                if resp.status_code == 429:
-                    tally.rate_limited += 1
-                    # "limit: 0" = המודל חסום לתוכנית הזו, לא עומס רגעי
-                    if "limit: 0" in text:
-                        _dead.add((name, key))
-                        log.warning("%s חסום עבור %s — מנסה מפתח אחר",
-                                    name, _pool.mask(key))
-                        if all((name, other) in _dead
-                               for other in config.GEMINI_API_KEYS):
-                            log.warning("%s חסום בכל המפתחות — למודל הבא", name)
-                            last_error = f"{name} חסום בתוכנית"
-                            break
-                        last_error = f"{name} חסום במפתח אחד"
-                        continue
-
-                    wait = _retry_delay(resp.text)
-                    if wait > LONG_WAIT:
-                        # מכסה יומית של המפתח הזה במודל הזה. המפתח עצמו
-                        # עדיין טוב למודלים אחרים, אז לא מקררים אותו כולו
-                        _blocked[(name, key)] = time.monotonic() + wait
-                        log.warning("%s מיצה את %s ל-%.0f דקות — מנסה מפתח אחר",
-                                    _pool.mask(key), name, wait / 60)
-                        last_error = f"{name}: מכסה יומית"
-                        continue
-
-                    # הגבלת קצב לדקה: גוגל אומרת כמה להמתין, ואין טעם
-                    # לקרר את המפתח הרבה מעבר לזה
-                    _pool.penalize(key, wait or 15)
-                    last_error = f"{name}: מכסה לדקה"
-                    # קודם ישנו כאן תמיד, גם כשמפתחות אחרים עמדו פנויים.
-                    # wait_for_free כבר ממתין רק כשאין אף מפתח זמין
+                wait = _retry_delay(resp.text)
+                if wait > LONG_WAIT:
+                    # מכסה יומית של המפתח הזה במודל הזה. המפתח עצמו
+                    # עדיין טוב למודלים אחרים, אז לא מקררים אותו כולו
+                    _blocked[(name, key)] = time.monotonic() + wait
+                    log.warning("%s מיצה את %s ל-%.0f דקות — מנסה מפתח אחר",
+                                _pool.mask(key), name, wait / 60)
+                    last_error = f"{name}: מכסה יומית"
                     continue
 
-                if resp.status_code >= 500:
-                    # השרת של המודל עמוס. במקום להתעקש, עוברים למודל
-                    # הבא ומסמנים את זה כעמוס לזמן קצר
-                    last_error = f"{name}: HTTP {resp.status_code}"
-                    if attempt >= 2:
-                        _overloaded[name] = time.monotonic() + OVERLOAD_REST
-                        log.warning("%s עמוס — מדלגים עליו לדקה וחצי", name)
-                        break
-                    await asyncio.sleep(2)
-                    continue
+                # הגבלת קצב לדקה: גוגל אומרת כמה להמתין, ואין טעם
+                # לקרר את המפתח הרבה מעבר לזה
+                _pool.penalize(key, wait or 15)
+                last_error = f"{name}: מכסה לדקה"
+                # קודם ישנו כאן תמיד, גם כשמפתחות אחרים עמדו פנויים.
+                # wait_for_free כבר ממתין רק כשאין אף מפתח זמין
+                continue
 
-                if resp.status_code == 404:
-                    _resolved.pop(wanted, None)
-                    refreshed = await _resolve(wanted)
-                    if refreshed != name:
-                        name = refreshed
-                        continue
-                    last_error = f"{name} לא קיים"
+            if resp.status_code >= 500:
+                # השרת של המודל עמוס. במקום להתעקש, עוברים למודל
+                # הבא ומסמנים את זה כעמוס לזמן קצר
+                last_error = f"{name}: HTTP {resp.status_code}"
+                if attempt >= 2:
+                    _overloaded[name] = time.monotonic() + OVERLOAD_REST
+                    log.warning("%s עמוס — מדלגים עליו לדקה וחצי", name)
                     break
+                await asyncio.sleep(2)
+                continue
 
-                if resp.status_code in (400, 401, 403) and "API_KEY" in text.upper():
-                    _pool.penalize(key, 3600)
-                    last_error = "מפתח נדחה"
+            if resp.status_code == 404:
+                _resolved.pop(wanted, None)
+                refreshed = await _resolve(wanted)
+                if refreshed != name:
+                    name = refreshed
                     continue
+                last_error = f"{name} לא קיים"
+                break
 
-                raise GeminiError(f"Gemini HTTP {resp.status_code}: {text}")
+            if (resp.status_code == 400 and "thinking" in text.lower()
+                    and _drop_thinking(body)):
+                # מודל שאינו מכיר את השדה מחזיר 400 "Unknown name".
+                # זה לא שווה כשל: מורידים את השדה ושולחים שוב לאותו
+                # מודל ואותו מפתח. אותה גישה כמו נפילת ה-cover
+                # בשליחת וידאו, ששם הצילה את המסירה
+                log.info("%s אינו מכיר thinkingConfig — ממשיכים בלעדיו", name)
+                continue
 
-            # אם כל המפתחות מיצו את המודל הזה, אין טעם לבדוק אותו שוב
-            now = time.monotonic()
-            if config.GEMINI_API_KEYS and all(
-                _blocked.get((name, key), 0.0) > now for key in config.GEMINI_API_KEYS
-            ):
-                _exhausted.add(name)
-                log.warning("כל המפתחות מיצו את %s כרגע", name)
+            if resp.status_code in (400, 401, 403) and "API_KEY" in text.upper():
+                _pool.penalize(key, 3600)
+                last_error = "מפתח נדחה"
+                continue
 
-            log.warning("עובר למודל הבא אחרי %s", last_error)
+            raise GeminiError(f"Gemini HTTP {resp.status_code}: {text}")
+
+        # אם כל המפתחות מיצו את המודל הזה, אין טעם לבדוק אותו שוב
+        now = time.monotonic()
+        if config.GEMINI_API_KEYS and all(
+            _blocked.get((name, key), 0.0) > now for key in config.GEMINI_API_KEYS
+        ):
+            _exhausted.add(name)
+            log.warning("כל המפתחות מיצו את %s כרגע", name)
+
+        log.warning("עובר למודל הבא אחרי %s", last_error)
 
     raise GeminiError(f"כל המודלים נכשלו — {last_error}")
 
@@ -331,6 +362,15 @@ def _text_of(payload: dict) -> str:
     return "".join(out).strip()
 
 
+def _drop_thinking(body: dict) -> bool:
+    """מוציא את thinkingConfig מהבקשה. מחזיר אם היה שם מה להוציא."""
+    gen = body.get("generationConfig")
+    if isinstance(gen, dict) and "thinkingConfig" in gen:
+        gen.pop("thinkingConfig", None)
+        return True
+    return False
+
+
 async def ask_json(system: str, user: str, *, schema: dict | None = None,
                    model: str | None = None, temperature: float = 0.2) -> object:
     """שאלה שהתשובה שלה חייבת להיות JSON תקין."""
@@ -338,6 +378,19 @@ async def ask_json(system: str, user: str, *, schema: dict | None = None,
                  "maxOutputTokens": 65536}
     if schema:
         gen["response_schema"] = schema
+    # רמת החשיבה. נמדד אצל המשתמש: 23 קריאות התאמת מגדר ו-1430 שניות
+    # המתנה למודל, כלומר 62 שניות לקריאה — על משימה שכל כולה "קבע אל
+    # מי פונים בשורה והחזר JSON". בכל מודלי Flash ו-Pro החשיבה דלוקה
+    # כברירת מחדל, ואסימוני החשיבה נספרים כפלט. התיעוד של גוגל ממליץ
+    # להנמיך את thinking_level כדי לקצר זמן ועלות, ולא לחתוך את
+    # maxOutputTokens — חיתוך כזה מחזיר תשובה קטועה.
+    #
+    # שם השדה אומת מול ה-SDK הרשמי של גוגל ולא מול בלוג:
+    #   GenerateContentConfig.thinking_config -> thinkingConfig
+    #   ThinkingConfig.thinking_level         -> thinkingLevel
+    #   ThinkingLevel: MINIMAL / LOW / MEDIUM / HIGH
+    if config.GEMINI_THINKING:
+        gen["thinkingConfig"] = {"thinkingLevel": config.GEMINI_THINKING}
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],

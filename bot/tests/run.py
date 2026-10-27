@@ -2617,6 +2617,51 @@ def _failed_window_counts():
     assert seen[-1] == f"בודק איכות {windows}/{windows}", seen[-1]
 
 
+@check("רמת החשיבה נשלחת, ומודל שדוחה אותה אינו מפיל את הקריאה")
+def _thinking_level_sent():
+    import asyncio
+    from zovexsub import config, gemini
+
+    seen: dict = {}
+
+    async def fake_call(model, body, **_kw):
+        seen.update(body)
+        return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    saved_call, saved_level = gemini._call, config.GEMINI_THINKING
+    gemini._call, config.GEMINI_THINKING = fake_call, "LOW"
+    try:
+        asyncio.run(gemini.ask_json("sys", "user"))
+    finally:
+        gemini._call, config.GEMINI_THINKING = saved_call, saved_level
+
+    # השם אומת מול ThinkingLevel ב-SDK הרשמי: thinkingConfig/thinkingLevel
+    gen = seen["generationConfig"]
+    assert gen["thinkingConfig"] == {"thinkingLevel": "LOW"}, gen
+
+    # ומודל שמחזיר 400 על השדה הזה — מורידים אותו וממשיכים
+    body = {"generationConfig": dict(gen)}
+    assert gemini._drop_thinking(body) is True
+    assert "thinkingConfig" not in body["generationConfig"]
+    # פעם שנייה אין מה להוריד, ולכן לא נכנסים ללופ אין-סופי
+    assert gemini._drop_thinking(body) is False
+
+
+@check("לקוח ה-HTTP של ג'מיני משותף ואינו נפתח מחדש לכל קריאה")
+def _gemini_client_shared():
+    import asyncio
+    from zovexsub import gemini
+
+    async def twice():
+        return await gemini.client(), await gemini.client()
+
+    first, second = asyncio.run(twice())
+    try:
+        assert first is second, "לקוח חדש לכל קריאה = מסירת יד TLS מחדש"
+    finally:
+        asyncio.run(first.aclose())
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
