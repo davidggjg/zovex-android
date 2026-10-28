@@ -1012,6 +1012,17 @@ function progressToSave(pos, dur) {
 export default function PlayerScreen({route, navigation}) {
   const {movie, startTime = 0, userId = null, seriesEpisodes = null, onLeaveCleanup = null} = route.params;
   const progressRef = useRef({position: startTime, duration: 0});
+
+  // [resumePoint] המיקום האחרון הידוע.
+  //
+  // שרשרת הנפילה (VLC → ExoPlayer → המרה בשרת → WebView) העבירה הלאה את
+  // המיקום שבו הנגינה *התחילה*, לא את זה שבו הצופה נמצא. אחרי עשרים דקות
+  // צפייה זה היה 0, ולכן כל נפילה החזירה את הסרט להתחלה.
+  //
+  // progressRef מתעדכן בכל onProgress ויודע תמיד איפה אנחנו; resumeAt הוא
+  // נקודת ההחלטה בכניסה. הגדול מביניהם הוא התשובה הנכונה בכל מצב.
+  const resumePoint = () =>
+    Math.max(progressRef.current.position || 0, resumeAt || 0);
   const lastSaveRef = useRef({at: 0, finished: false});
   const persistProgress = useCallback((pos, dur) => {
     if (!userId || !(dur > 0)) return;
@@ -1268,12 +1279,18 @@ export default function PlayerScreen({route, navigation}) {
 
   // Load saved progress in background and seek once the video is ready
   useEffect(() => {
-    if (!resumeAt || !webViewRef.current) return;
-    progressRef.current.position = resumeAt;
+    // [resumePoint] תלוי גם ב-wvKey.
+    //
+    // האפקט רץ קודם רק כש-resumeAt משתנה. נפילה מגדילה את wvKey ומרכיבה
+    // WebView חדש בלי ש-resumeAt זז — ולכן האפקט לא נורה, ואיש לא הקפיץ
+    // את הנגן החדש קדימה בכלל.
+    const at = resumePoint();
+    if (!at || !webViewRef.current) return;
+    progressRef.current.position = at;
     webViewRef.current.injectJavaScript(
-      `window._seekTo&&window._seekTo(${Math.floor(resumeAt)});true;`,
+      `window._seekTo&&window._seekTo(${Math.floor(at)});true;`,
     );
-  }, [resumeAt]);
+  }, [resumeAt, wvKey]);
 
   // מעבר לפרק הבא (משמש גם ל-WebView וגם לנגן הנייטיב כשפרק נגמר). מחזיר
   // true אם עבר לפרק הבא, false אם אין (סרט בודד / פרק אחרון).
@@ -1371,7 +1388,8 @@ export default function PlayerScreen({route, navigation}) {
             // עם אותה חתימה שכבר בקישור.
             const alt = vtFallbackSrc(buildSrc(movie, 0));
             if (alt) {
-              setVtFix({src: alt, at: isLive ? 0 : (startTime || 0)});
+              // [resumePoint] מהמיקום הנוכחי, לא מהכניסה למסך
+              setVtFix({src: alt, at: isLive ? 0 : resumePoint()});
               setWvKey(k => k + 1);
             }
           }
@@ -1536,7 +1554,9 @@ export default function PlayerScreen({route, navigation}) {
               setWvKey(k => k + 1);
             };
             if (nativeAudio && !audioFix) {
-              const at = nativeAudio.at;
+              // [resumePoint] nativeAudio.at הוא המיקום שבו הנגינה התחילה;
+            // אחרי צפייה ארוכה הוא כבר לא המקום שבו הצופה נמצא.
+            const at = isLive ? 0 : resumePoint();
               resolveFixSrc(buildSrc(movie, 0)).then(fixed => {
                 // בלי הענף הזה כשל בבניית הכתובת היה משאיר את המסך תקוע
                 // בשקט, במקום ליפול ל-WebView כמו שהיה קודם.
@@ -1589,7 +1609,9 @@ export default function PlayerScreen({route, navigation}) {
             // מתחת: ההמרה בשרת. יורדים אליה במקום להיתקע, והשרת מחליט
             // אם זה /vh (קובץ MP4) או /vt (כל השאר).
             if (nativeAudio && !audioFix) {
-              const at = nativeAudio.at;
+              // [resumePoint] nativeAudio.at הוא המיקום שבו הנגינה התחילה;
+            // אחרי צפייה ארוכה הוא כבר לא המקום שבו הצופה נמצא.
+            const at = isLive ? 0 : resumePoint();
               resolveFixSrc(buildSrc(movie, 0)).then(fixed => {
                 if (!fixed) return;
                 // שמונה שניות לפני שיורדים למדרגה הבאה, כדי שהשגיאה שמוצגת
