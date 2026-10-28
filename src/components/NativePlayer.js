@@ -111,6 +111,31 @@ export default function NativePlayer({
   // ניסיון חוזר אחד אוטומטי לפני שמדווחים כשלון — פנייה ראשונה לערוץ "ישן"
   // מעירה את ה-relay, והשנייה כבר מהירה. מחליפים key כדי שה-Video ייבנה מחדש.
   const [retryKey, setRetryKey] = useState(0);
+
+  // [transientError] ניסיונות חוזרים על תקלת רשת, והמיקום לחזור אליו.
+  //
+  // onError נורה גם על דברים חולפים — timeout, חיבור שנקטע, סטטוס HTTP
+  // רגעי — וכשמזרימים מטלגרם דרך השרת זה קורה באמצע סרטים תקינים. עד כה
+  // כל שגיאה כזו נחשבה "הקובץ אינו ניתן לפענוח" והפעילה החלפת מפענח.
+  const ioRetries = useRef(0);
+  const lastErrPos = useRef(0);
+  const resumeFromRef = useRef(0);
+  const MAX_IO_RETRIES = 3;
+
+  // קוד השגיאה של ExoPlayer מגיע לפעמים כמספר ולפעמים בתוך המחרוזת;
+  // נלקח הראשון שנמצא.
+  const errCode = e => {
+    const x = (e && (e.error || e)) || {};
+    const n = Number(x.errorCode);
+    if (!Number.isNaN(n) && n > 0) return n;
+    const m = String(x.errorString || x.errorException || '').match(/\b([1-4]\d{3})\b/);
+    return m ? Number(m[1]) : 0;
+  };
+
+  // 2xxx הוא משפחת הקלט/פלט של ExoPlayer — רשת, timeout, סטטוס HTTP —
+  // ו-1003 הוא timeout כללי. 3xxx (ניתוח מכולה) ו-4xxx (מפענח) הם כשל
+  // אמיתי בקובץ, ורק הם מצדיקים החלפת מסלול.
+  const isTransient = code => code === 1003 || (code >= 2000 && code < 3000);
   const liveRetried = useRef(false);
   // כשהניגון הישיר נכשל, עוברים פעם אחת למסלול ההמרה בשרת.
   const [vtSrc, setVtSrc] = useState(null);
@@ -303,11 +328,21 @@ export default function NativePlayer({
                         : cur.includes('/fs/') ? 'fs' : 'stream';
             setDiag(`[${route}] אודיו[${a || 'אין'}] וידאו[${v || 'אין'}] ${Math.round(dd)}ש`);
           }
-          if (startTime > 1) seekTo(startTime);
+          // [transientError] המיקום האמיתי קודם ל-startTime: אחרי ניסיון
+          // חוזר באמצע סרט, startTime הוא המיקום מהכניסה למסך ולא מהמקום
+          // שבו הצופה נמצא.
+          const wantAt = Math.max(resumeFromRef.current || 0, startTime || 0);
+          if (wantAt > 1) seekTo(wantAt);
         }}
         onProgress={p => {
           if (!dragging.current) {
             posRef.current = p.currentTime || 0;
+          // [transientError] נגינה רצופה מאפסת את מונה הניסיונות. בלעדיו
+          // סרט של שעתיים היה מוגבל לשלוש תקלות רשת לכל אורכו.
+          if (ioRetries.current &&
+              (posRef.current - lastErrPos.current) > 30) {
+            ioRetries.current = 0;
+          }
             setPos(posRef.current);
           }
           const d2 = Math.max(p.seekableDuration || 0, durRef.current || 0,
@@ -324,10 +359,28 @@ export default function NativePlayer({
             setRetryKey(k => k + 1);
             return;
           }
-          // ניסיון אחד למסלול ההמרה לפני שמדווחים כשלון. מנסים על כל
-          // שגיאה ולא לפי קוד מסוים: מיפוי קודי ExoPlayer שביר, והמחיר
-          // של ניסיון מיותר הוא שנייה אחת, בזמן שהמחיר של פספוס הוא
-          // סרט שלא נפתח בכלל.
+          // [transientError] תקלה חולפת — אותו מקור, אותו מיקום.
+          //
+          // זה הכשל שנראה כמו "מתנגן ואז קופץ להתחלה": timeout או חיבור
+          // שנקטע באמצע סרט תקין הפעילו החלפת מפענח, כאילו הקובץ עצמו
+          // פגום. כאן מנסים שוב את אותו הדבר לפני שמסיקים משהו על הקובץ.
+          const _code = errCode(e);
+          if (isTransient(_code) && ioRetries.current < MAX_IO_RETRIES) {
+            ioRetries.current += 1;
+            lastErrPos.current = posRef.current || 0;
+            resumeFromRef.current = posRef.current || 0;
+            if (debug) {
+              setDiag(d => `${d}\nתקלת רשת (${_code}) — ניסיון ` +
+                `${ioRetries.current}/${MAX_IO_RETRIES} מ-` +
+                `${Math.floor(resumeFromRef.current)}ש'`);
+            }
+            setReady(false);
+            setRetryKey(k => k + 1);
+            return;
+          }
+          // כשל אמיתי בקובץ (3xxx ניתוח, 4xxx מפענח) או שנגמרו הניסיונות:
+          // ניסיון אחד למסלול ההמרה לפני שמדווחים כשלון. המחיר של ניסיון
+          // מיותר הוא שנייה אחת, בזמן שהמחיר של פספוס הוא סרט שלא נפתח.
           if (!vtSrc) {
             const alt = vtFallbackSrc(src);
             if (alt) {
