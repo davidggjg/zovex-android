@@ -5,3 +5,7 @@ android/.gradle/
 android/app/build/
 *.keystore
 *.jks
+
+# קבצי קומפילציה של פייתון מהסקריפטים ב-scripts/
+__pycache__/
+*.pyc
