@@ -1,11 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
-
-    <!-- libVLC מצהירה minSdk 26 אבל האפליקציה תומכת מ-24 (ממירי TV ישנים).
-         בקוד, שידור חי ב-VLC מופעל רק ב-API 26 ומעלה (api/liveEngine). -->
-    <uses-sdk tools:overrideLibrary="com.yuanzhou.vlc" />
-
-    <uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -23,17 +18,8 @@
     <!-- Android TV: לא דורש מסך מגע / leanback, כדי שגם טלוויזיות יוכלו להתקין -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
-
-    <!-- react-native-vlc-media-player מצהירה ב-<application> שלה
-         android:label="@string/app_name" ו-android:supportsRtl="true".
-         ספרייה לא אמורה לקבוע מאפייני application, ובפועל:
-           • ה-label התנגש עם "ZOVEX" והפיל את מיזוג המניפסט.
-           • supportsRtl לא מוצהר אצלנו, וברירת המחדל היא false — כלומר
-             הספרייה הייתה מדליקה RTL בשקט. זה בדיוק האזור ששבר את הנגן
-             בעבר (הפריסה התהפכה), ולכן הוא מקובע כאן במפורש ל-false,
-             מה שמשמר את ההתנהגות הקיימת ולא מוסיף שינוי סמוי.
-         tools:replace מוודא שהערכים שלנו מנצחים בכל בנייה. -->
-    <application
+    <!-- Keep app label and RTL behavior explicit. -->
+<application
         android:name=".MainApplication"
         android:label="ZOVEX"
         android:supportsRtl="false"
