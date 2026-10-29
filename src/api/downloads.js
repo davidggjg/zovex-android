@@ -1,61 +1,30 @@
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import base64js from 'base64-js';
 
 // ── Offline downloads ────────────────────────────────────────────────────────
-// Downloaded videos are stored encrypted (XOR stream cipher, keyed by a
-// per-install random key that never leaves the device) under an obscure
-// filename in the app's *private* document directory - a location no other
-// app (gallery, file manager, etc.) can read on modern Android without root,
-// same as how Netflix/other streaming apps keep offline downloads out of
-// reach. This is a deterrent, not real DRM: anyone who fully reverse-engineers
-// the app could recover the key. It stops casual extraction/sharing, which is
-// the actual goal here - it isn't Widevine.
+// Downloaded videos are stored *as-is* under an obscure filename in the app's
+// private document directory - a location no other app (gallery, file manager,
+// etc.) can read on a non-rooted device, the same way Netflix and other
+// streaming apps keep offline downloads out of reach.
+//
+// Previous versions XOR-encrypted every file with an on-device key. The code's
+// own comment admitted it was "a deterrent, not real DRM - anyone who
+// reverse-engineers the app could recover the key." It added no real security
+// against that threat (the key sits on the same device), but it cost a fortune:
+// the XOR ran in pure JS with base64 round-trips and a per-byte loop, reading
+// and rewriting the whole file in 3MB chunks. On a 1GB file that was ~30
+// minutes to "encrypt" after the download, and ANOTHER ~30 minutes to decrypt
+// before playback could even start - which looked exactly like "offline
+// playback doesn't work." Dropping it makes finishing a download and starting
+// playback instant, while the private-storage hiding (the actual protection)
+// stays. If real DRM is ever needed it must be native (Widevine), never JS XOR.
 
 const MANIFEST_KEY = 'zovex_downloads_manifest_v1';
-const CIPHER_KEY_STORAGE = 'zovex_downloads_cipher_key_v1';
-const CHUNK_BYTES = 3 * 1024 * 1024; // 3MB per read/write chunk
-
+// שם מוסתר; רק סיומת וידאו כדי שהנגן/ExoPlayer יזהה מיכל. נשאר באחסון הפרטי.
 const DL_DIR = RNFS.DocumentDirectoryPath + '/zvxdl';
-const TMP_PLAY_DIR = RNFS.CachesDirectoryPath + '/zvxplay';
 
 async function ensureDirs() {
   if (!(await RNFS.exists(DL_DIR))) await RNFS.mkdir(DL_DIR);
-  if (!(await RNFS.exists(TMP_PLAY_DIR))) await RNFS.mkdir(TMP_PLAY_DIR);
-}
-
-function generateKeyBytes(len = 32) {
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = Math.floor(Math.random() * 256);
-  return bytes;
-}
-
-async function getOrCreateCipherKey() {
-  const stored = await AsyncStorage.getItem(CIPHER_KEY_STORAGE);
-  if (stored) return base64js.toByteArray(stored);
-  const bytes = generateKeyBytes(32);
-  await AsyncStorage.setItem(CIPHER_KEY_STORAGE, base64js.fromByteArray(bytes));
-  return bytes;
-}
-
-// Symmetric: calling this twice with the same key encrypts, then decrypts.
-async function xorTransformFile(srcPath, destPath, keyBytes, onProgress) {
-  const stat = await RNFS.stat(srcPath);
-  const total = parseInt(stat.size, 10);
-  if (await RNFS.exists(destPath)) await RNFS.unlink(destPath);
-  let offset = 0;
-  while (offset < total) {
-    const len = Math.min(CHUNK_BYTES, total - offset);
-    const b64 = await RNFS.read(srcPath, len, offset, 'base64');
-    const bytes = base64js.toByteArray(b64);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = bytes[i] ^ keyBytes[(offset + i) % keyBytes.length];
-    }
-    await RNFS.appendFile(destPath, base64js.fromByteArray(bytes), 'base64');
-    offset += len;
-    onProgress?.(total > 0 ? offset / total : 1);
-  }
-  return total;
 }
 
 async function loadManifest() {
@@ -72,18 +41,24 @@ async function saveManifest(list) {
   await AsyncStorage.setItem(MANIFEST_KEY, JSON.stringify(list));
 }
 
+// נתיב הקובץ המקומי של פריט. תומך גם בכניסות ישנות (encPath) לצורך מחיקה,
+// אבל כניסות ישנות היו מוצפנות ולא ינוגנו — הן פשוט יורדו מחדש.
+function entryPath(entry) {
+  return entry.filePath || entry.encPath || null;
+}
+
 export async function getDownloads() {
   return loadManifest();
 }
 
 export async function isDownloaded(id) {
   const list = await loadManifest();
-  return list.some(m => m.id === String(id));
+  return list.some(m => m.id === String(id) && m.filePath);
 }
 
 export async function getDownloadedIds() {
   const list = await loadManifest();
-  return new Set(list.map(m => m.id));
+  return new Set(list.filter(m => m.filePath).map(m => m.id));
 }
 
 // Downloadable only if we have a direct playable file URL (not an iframe
@@ -109,65 +84,77 @@ export async function downloadItem(item, onProgress) {
   const videoUrl = (item.video_url || item.video_id || '').trim();
   if (!videoUrl.startsWith('http')) throw new Error('אין קישור וידאו ישיר להורדה');
 
-  const key = await getOrCreateCipherKey();
-  const rawTmpPath = `${TMP_PLAY_DIR}/${id}.raw.tmp`;
-  const encPath = `${DL_DIR}/${id}.zvx`;
+  const filePath = `${DL_DIR}/${id}.mp4`;
+  const partPath = `${DL_DIR}/${id}.part`;
   const posterPath = item.thumbnail_url ? `${DL_DIR}/${id}.poster.jpg` : null;
 
-  if (await RNFS.exists(rawTmpPath)) await RNFS.unlink(rawTmpPath);
-  if (await RNFS.exists(encPath)) await RNFS.unlink(encPath);
+  if (await RNFS.exists(partPath)) await RNFS.unlink(partPath);
+  if (await RNFS.exists(filePath)) await RNFS.unlink(filePath);
 
-  try {
-    // Content is proxied through a slow, bandwidth-constrained backend and
-    // files often run 1GB+, so a download can sit at the same percentage for
-    // 15-20s at a time. progressDivider:2 (native reports only every whole
-    // 2% of progress) made that far worse - combined with the file size it
-    // could look completely frozen for the first 20-30s. Report on every
-    // native tick instead (progressDivider:0) and pass along raw byte counts
-    // so the UI can show live MB progress, which moves within a second or
-    // two even while the percentage itself barely ticks.
-    let lastEmit = 0;
-    const dl = RNFS.downloadFile({
-      fromUrl: videoUrl,
-      toFile: rawTmpPath,
-      progressDivider: 0,
-      begin: res => {
-        if (res.contentLength > 0) {
-          onProgress?.({phase: 'downloading', pct: 0, bytesWritten: 0, contentLength: res.contentLength});
-        }
-      },
-      progress: res => {
-        if (res.contentLength > 0) {
-          const now = Date.now();
-          if (now - lastEmit < 250) return;
-          lastEmit = now;
-          onProgress?.({
-            phase: 'downloading',
-            pct: res.bytesWritten / res.contentLength,
-            bytesWritten: res.bytesWritten,
-            contentLength: res.contentLength,
-          });
-        }
-      },
+  // מהירות וזמן-שנותר על חלון גולל של ~5 שניות. ממוצע מתחילת ההורדה נועל
+  // נמוך אחרי קטע איטי ולא זז; חלון קצר מתקן את עצמו מיד.
+  const samples = [];
+  const WINDOW_MS = 5000;
+  let lastEmit = 0;
+
+  function emit(bytesWritten, contentLength) {
+    const now = Date.now();
+    samples.push([now, bytesWritten]);
+    while (samples.length > 2 && now - samples[0][0] > WINDOW_MS) samples.shift();
+    let speed = 0; // bytes/sec
+    if (samples.length >= 2) {
+      const [t0, b0] = samples[0];
+      const dt = (now - t0) / 1000;
+      if (dt > 0) speed = (bytesWritten - b0) / dt;
+    }
+    const left = contentLength > 0 ? Math.max(0, contentLength - bytesWritten) : 0;
+    const eta = speed > 0 && contentLength > 0 ? Math.round(left / speed) : null;
+    onProgress?.({
+      phase: 'downloading',
+      pct: contentLength > 0 ? bytesWritten / contentLength : 0,
+      bytesWritten,
+      contentLength,
+      speed,          // בייט לשנייה, על חלון של 5 שניות
+      eta,            // שניות שנותרו, או null אם עוד לא ידוע
     });
-    await dl.promise;
-
-    await xorTransformFile(rawTmpPath, encPath, key, pct =>
-      onProgress?.({phase: 'encrypting', pct}),
-    );
-  } finally {
-    if (await RNFS.exists(rawTmpPath)) await RNFS.unlink(rawTmpPath);
   }
+
+  const dl = RNFS.downloadFile({
+    fromUrl: videoUrl,
+    toFile: partPath,
+    // progressDivider:0 → דיווח על כל טיק, כדי שספירת ה-MB תזוז תוך שנייה
+    // גם כשהאחוז כמעט לא זז (קבצים גדולים על קו איטי).
+    progressDivider: 0,
+    begin: res => {
+      if (res.contentLength > 0) emit(0, res.contentLength);
+    },
+    progress: res => {
+      const now = Date.now();
+      if (now - lastEmit < 250) return;   // מגבילים ~4 עדכונים לשנייה
+      lastEmit = now;
+      emit(res.bytesWritten, res.contentLength);
+    },
+  });
+  const result = await dl.promise;
+  if (result.statusCode && result.statusCode >= 400) {
+    if (await RNFS.exists(partPath)) await RNFS.unlink(partPath);
+    throw new Error(`ההורדה נכשלה (${result.statusCode})`);
+  }
+
+  // הקובץ ירד במלואו — מעבירים ממנת ה-.part לשם הסופי. עד לרגע הזה אין קובץ
+  // "מוכן", כך שהורדה שנקטעה לא נחשבת בטעות כזמינה.
+  await RNFS.moveFile(partPath, filePath);
 
   if (posterPath) {
     try {
+      if (await RNFS.exists(posterPath)) await RNFS.unlink(posterPath);
       await RNFS.downloadFile({fromUrl: item.thumbnail_url, toFile: posterPath}).promise;
     } catch {
       // poster is a nice-to-have for offline browsing; not fatal
     }
   }
 
-  const stat = await RNFS.stat(encPath);
+  const stat = await RNFS.stat(filePath);
   const entry = {
     id,
     title: item.title || item.name || '',
@@ -176,7 +163,7 @@ export async function downloadItem(item, onProgress) {
     episodeNumber: item.episode_number || null,
     episodeTitle: item.episode_title || null,
     posterLocalPath: posterPath && (await RNFS.exists(posterPath)) ? posterPath : null,
-    encPath,
+    filePath,
     sizeBytes: parseInt(stat.size, 10),
     downloadedAt: new Date().toISOString(),
   };
@@ -192,7 +179,8 @@ export async function deleteDownload(id) {
   const manifest = await loadManifest();
   const entry = manifest.find(m => m.id === strId);
   if (entry) {
-    if (await RNFS.exists(entry.encPath)) await RNFS.unlink(entry.encPath);
+    const p = entryPath(entry);
+    if (p && (await RNFS.exists(p))) await RNFS.unlink(p);
     if (entry.posterLocalPath && (await RNFS.exists(entry.posterLocalPath))) {
       await RNFS.unlink(entry.posterLocalPath);
     }
@@ -200,24 +188,19 @@ export async function deleteDownload(id) {
   await saveManifest(manifest.filter(m => m.id !== strId));
 }
 
-// Decrypts the stored file into a short-lived plaintext copy in the cache
-// dir (still private app storage) so the existing WebView video player can
-// open it via a file:// URI. Caller must invoke cleanup() once playback ends.
+// אין יותר פענוח: הקובץ שמור כמו שהוא, ומחזירים לו file:// ישירות. הניגון
+// מיידי. cleanup הוא no-op — אין קובץ זמני למחוק (הקובץ הקבוע נשאר).
 export async function preparePlayback(id) {
-  await ensureDirs();
   const strId = String(id);
   const manifest = await loadManifest();
   const entry = manifest.find(m => m.id === strId);
-  if (!entry) throw new Error('קובץ ההורדה לא נמצא');
-
-  const key = await getOrCreateCipherKey();
-  const outPath = `${TMP_PLAY_DIR}/${strId}.playback.mp4`;
-  if (await RNFS.exists(outPath)) await RNFS.unlink(outPath);
-  await xorTransformFile(entry.encPath, outPath, key);
-
+  const p = entry && entry.filePath;
+  if (!p || !(await RNFS.exists(p))) {
+    throw new Error('קובץ ההורדה לא נמצא — ייתכן שההורדה לא הסתיימה. הורד שוב.');
+  }
   return {
-    uri: 'file://' + outPath,
-    cleanup: () => RNFS.unlink(outPath).catch(() => {}),
+    uri: 'file://' + p,
+    cleanup: () => {},
   };
 }
 

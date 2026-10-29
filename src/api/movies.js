@@ -1,3 +1,5 @@
+import {getLanguage} from '../i18n';
+
 const MAIN_SITE_ORIGIN = 'https://zovex.duckdns.org';
 // /content/lite = אותו קטלוג בלי שדה ה-description הכבד (הכי גדול), עם ETag
 // ותמיכה ב-?limit לציור מיידי. הגרסה הקודמת משכה את /content המלא עם ?t=<now>
@@ -5,10 +7,15 @@ const MAIN_SITE_ORIGIN = 'https://zovex.duckdns.org';
 // (fetchItemDetail) כשפותחים סרט. זהה בדיוק לזרימה של האתר.
 const LITE_URL = 'https://zovex.duckdns.org/content/lite';
 const ITEM_URL = 'https://zovex.duckdns.org/content/item/';
+// מונה גרסת התוכן בלבד (~25 בתים). עולה בכל שמירה בפאנל. משמש לבדוק אם כדאי
+// למשוך קטלוג מחדש, בלי למשוך קטלוג. ראה add_content_version_endpoint.py.
+const VERSION_URL = 'https://zovex.duckdns.org/content/version';
 const BACKEND_URL = 'https://zovex.duckdns.org';
 
 let _moviesCache = null;
 let _moviesCacheTime = 0;
+// הגרסה שממנה נבנה מה ששמור אצלנו כרגע, מתוך הכותרת X-Content-Version.
+let _moviesCacheVersion = null;
 const CACHE_MS = 5 * 60 * 1000;
 
 // Some thumbnail_url values (mainly live-channel logos) are root-relative
@@ -40,6 +47,7 @@ export async function fetchMovies() {
     const data = _mapImages(raw);
     _moviesCache = data;
     _moviesCacheTime = now;
+    _moviesCacheVersion = _headerVersion(res);
     return data;
   } catch {
     return _moviesCache || [];
@@ -65,7 +73,11 @@ export async function fetchMoviesFast() {
 export async function fetchItemDetail(id) {
   if (!id) return null;
   try {
-    const res = await fetch(ITEM_URL + encodeURIComponent(id));
+    // השרת מחליף שם ותקציר בגרסה האנגלית של TMDB כשיש. פריט בלי tmdb_id
+    // חוזר בעברית — וזו התנהגות תקינה, לא כשל.
+    const lang = getLanguage();
+    const q = lang && lang !== 'he' ? `?lang=${encodeURIComponent(lang)}` : '';
+    const res = await fetch(ITEM_URL + encodeURIComponent(id) + q);
     if (!res.ok) throw new Error('fetch failed');
     const m = await res.json();
     if (m && m.thumbnail_url) m.thumbnail_url = resolveImage(m.thumbnail_url);
@@ -78,6 +90,44 @@ export async function fetchItemDetail(id) {
 export function clearCache() {
   _moviesCache = null;
   _moviesCacheTime = 0;
+  _moviesCacheVersion = null;
+}
+
+// ── זיהוי שינוי בקטלוג ───────────────────────────────────────────────────────
+// מחיקה בפאנל מעלה את מונה הגרסה בשרת מיד, והשרת מגיש את הקטלוג החדש כבר
+// בבקשה הבאה. מה שהשהה את זה היה הצד הזה: הקטלוג נמשך מחדש רק בחזרה מהרקע,
+// ורק אם עברו CACHE_MS. אפליקציה שנשארה פתוחה על המסך לא משכה שוב אף פעם,
+// ולכן פריט מחוק נשאר מוצג בלי גבול. הפתרון הוא לשאול את המספר הזה — לא את
+// הקטלוג — ולמשוך מחדש רק כשהוא זז.
+
+function _headerVersion(res) {
+  const v = parseInt(res?.headers?.get?.('x-content-version'), 10);
+  return Number.isFinite(v) ? v : null;
+}
+
+export function getCachedVersion() {
+  return _moviesCacheVersion;
+}
+
+// גרסת התוכן בשרת, או null אם אין חיבור / הנקודה עוד לא הותקנה בשרת.
+// null גורר "אל תעשה כלום": ההתנהגות נשארת כמו קודם ולא נגרמת משיכה מיותרת.
+export async function fetchContentVersion() {
+  try {
+    const res = await fetch(VERSION_URL);
+    if (!res.ok) return null;
+    const j = await res.json();
+    const v = parseInt(j && j.version, 10);
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+// true רק כשידוע בוודאות שהשרת מחזיק תוכן חדש יותר ממה ששמור אצלנו.
+export async function isCatalogStale() {
+  if (_moviesCacheVersion == null) return false;
+  const server = await fetchContentVersion();
+  return server != null && server !== _moviesCacheVersion;
 }
 
 // ── Backend API ──────────────────────────────────────────────────────────────
@@ -125,13 +175,94 @@ export async function fetchHistory(userId) {
   return Array.isArray(res) ? res : [];
 }
 
+// מחיקה מהיסטוריה ומ"המשך צפייה" — מעדכנת את השרת, לא רק את ה-UI,
+// אחרת הפריט חוזר ברענון הבא. מחזירות false בכישלון (כמו removeFavorite)
+// כדי שנדע להחזיר את הכרטיס למסך במקום להעמיד פנים שהמחיקה הצליחה.
+export async function removeFromHistory(mediaId, userId) {
+  if (!userId || !mediaId) return false;
+  const res = await apiCall(
+    `/api/history/${encodeURIComponent(String(mediaId))}`, 'DELETE', null, userId);
+  return !!res;
+}
+
+export async function clearHistory(userId) {
+  if (!userId) return false;
+  const res = await apiCall('/api/history', 'DELETE', null, userId);
+  return !!res;
+}
+
+// "המשך צפייה" מגיע מ-progress, ולכן ההסרה ממנו היא מחיקת ההתקדמות.
+export async function removeProgress(mediaId, userId) {
+  if (!userId || !mediaId) return false;
+  const res = await apiCall(
+    `/api/progress/${encodeURIComponent(String(mediaId))}`, 'DELETE', null, userId);
+  return !!res;
+}
+
+// ── טריילרים ─────────────────────────────────────────────────────────────────
+// מחזיר מפתח יוטיוב, או null כשאין. השרת מחזיק את מפתח ה-TMDB ואת המטמון —
+// ראה fix_add_trailers.py. null הוא תשובה תקינה ולא שגיאה: לחצי מהקטלוג אין
+// tmdb_id, ולתוכן ישראלי לרוב אין טריילר ב-TMDB בכלל.
+
+export async function fetchTrailerKey(id) {
+  if (!id) return null;
+  try {
+    const res = await fetch(`${BACKEND_URL}/content/trailer/${encodeURIComponent(String(id))}`);
+    if (!res.ok) return null;
+    const j = await res.json();
+    return j && j.key ? String(j.key) : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── מועדפים ──────────────────────────────────────────────────────────────────
+// נשמרים בשרת ולא במכשיר: מועדפים מקומיים נעלמים בהתקנה מחדש ולא עוברים
+// בין טלפון לטלוויזיה. אותו מנגנון בדיוק כמו ההיסטוריה (x-user-id).
+// הקריאות מחזירות false בכישלון ולא זורקות, כדי שלחיצה על לב ברשת גרועה
+// לא תפיל מסך.
+
+export async function fetchFavorites(userId) {
+  if (!userId) return [];
+  const res = await apiCall('/api/favorites', 'GET', null, userId);
+  return Array.isArray(res) ? res : [];
+}
+
+export async function addFavorite(item, userId) {
+  if (!userId || !item?.id) return false;
+  const res = await apiCall('/api/favorites', 'POST', {
+    media_id: String(item.id),
+    title: item.title || item.name || '',
+    thumbnail_url: item.thumbnail_url || '',
+  }, userId);
+  return !!res;
+}
+
+export async function removeFavorite(mediaId, userId) {
+  if (!userId || !mediaId) return false;
+  const res = await apiCall(
+    `/api/favorites/${encodeURIComponent(String(mediaId))}`, 'DELETE', null, userId);
+  return !!res;
+}
+
+// קבוצת המזהים המועדפים, לציור מהיר של הלב על כל כרטיס בלי קריאה לכל אחד.
+export async function fetchFavoriteIds(userId) {
+  const list = await fetchFavorites(userId);
+  return new Set(list.map(f => String(f.media_id)));
+}
+
 // ── Support / feedback ───────────────────────────────────────────────────────
 // גרסת האפליקציה. חייבת להתאים ל-versionName ב-build.gradle. השרת משווה אליה
 // כדי להחליט אם צריך לכפות עדכון.
 // חייבת להתאים ל-versionName ב-build.gradle. היא עמדה על 1.0.22 בעוד
 // ה-gradle כבר על 1.0.24 — שתי גרסאות פער, כלומר האפליקציה דיווחה על
 // עצמה מספר שאינו נכון והשוואת הגרסאות מול השרת התבססה עליו.
-export const APP_VERSION = '1.0.33';
+// חייב להיות זהה ל-versionName ב-android/app/build.gradle. זה המספר
+// שדיאלוג העדכון משווה מול /app/version של השרת, ולכן פער כאן שקול
+// לכיבוי בדיקת העדכונים: הוא היה 1.0.42 מול 1.0.43 בבנייה, והשרת הכריז
+// על 1.0.41 — כלומר כל משתמש נענה "אתה מעודכן" לנצח.
+// שלב check-version-sync ב-build-apk.yml מפיל את הבנייה אם השניים נפרדים.
+export const APP_VERSION = '1.0.63';
 
 export async function sendFeedback({userId, name, email, text, kind}) {
   if (!userId || !text) return false;

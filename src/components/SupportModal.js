@@ -4,6 +4,7 @@
 // והתשובה מופיעה כאן. כפתור טלגרם נשאר כאופציה.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, {useEffect, useState, useRef, useCallback} from 'react';
+import {t} from '../i18n';
 import TvFocusable from '../components/TvFocusable';
 import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView,
@@ -12,10 +13,12 @@ import {
 import {TELEGRAM_URL, DISCORD_URL} from '../config/links';
 import {sendFeedback, fetchMyFeedback} from '../api/movies';
 
+// התוויות נקראות בזמן ציור ולא בזמן טעינת המודול, אחרת השפה נקבעת פעם
+// אחת בעליית האפליקציה ולא מתעדכנת.
 const KINDS = [
-  {k: 'support', label: 'תמיכה 💬'},
-  {k: 'review', label: 'חוות דעת ⭐'},
-  {k: 'tip', label: 'טיפ 💡'},
+  {k: 'support', label: () => t('support.kind.support')},
+  {k: 'review', label: () => t('support.kind.review')},
+  {k: 'tip', label: () => t('support.kind.tip')},
 ];
 
 // זהה לאתר (src/components/home/SupportModal.jsx): בלי אימייל אין מה לחסום
@@ -83,7 +86,7 @@ export default function SupportModal({visible, onClose, user, onLoginWithGoogle}
     if (ok) refresh(userId);
   }, [text, sending, userId, kind, user, refresh]);
 
-  const kindLabel = k => (KINDS.find(x => x.k === k) || {}).label || '';
+  const kindLabel = k => { const f = (KINDS.find(x => x.k === k) || {}).label; return f ? f() : ''; };
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -121,7 +124,7 @@ export default function SupportModal({visible, onClose, user, onLoginWithGoogle}
                     key={x.k}
                     style={[styles.kindBtn, kind === x.k && styles.kindBtnOn]}
                     onPress={() => setKind(x.k)}>
-                    <Text style={[styles.kindTxt, kind === x.k && styles.kindTxtOn]}>{x.label}</Text>
+                    <Text style={[styles.kindTxt, kind === x.k && styles.kindTxtOn]}>{x.label()}</Text>
                   </TvFocusable>
                 ))}
               </View>
@@ -160,7 +163,7 @@ export default function SupportModal({visible, onClose, user, onLoginWithGoogle}
                   style={styles.input}
                   value={text}
                   onChangeText={setText}
-                  placeholder="כתבו הודעה..."
+                  placeholder={t('support.placeholder')}
                   placeholderTextColor="#777"
                   multiline
                   textAlign="right"
@@ -169,7 +172,7 @@ export default function SupportModal({visible, onClose, user, onLoginWithGoogle}
                   style={[styles.sendBtn, (!text.trim() || sending) && styles.sendBtnOff]}
                   onPress={send}
                   disabled={!text.trim() || sending}>
-                  <Text style={styles.sendTxt}>{sending ? '...' : 'שלח'}</Text>
+                  <Text style={styles.sendTxt}>{sending ? '...' : t('support.send')}</Text>
                 </TvFocusable>
               </View>
             </>

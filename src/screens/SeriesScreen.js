@@ -1,5 +1,6 @@
 import React, {useMemo, useState, useCallback} from 'react';
 import TvFocusable from '../components/TvFocusable';
+import {colors} from '../theme/tokens';
 import {
   View,
   Text,
@@ -131,7 +132,7 @@ export default function SeriesScreen({route, navigation}) {
 }
 
 const styles = StyleSheet.create({
-  container: {flex: 1, backgroundColor: '#0a0a0a'},
+  container: {flex: 1, backgroundColor: colors.bg},
   header: {flexDirection: 'row', padding: 16, alignItems: 'flex-start'},
   poster: {width: 80, height: 115, borderRadius: 10, resizeMode: 'cover'},
   headerInfo: {flex: 1, marginRight: 14},
@@ -159,11 +160,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginHorizontal: 4,
     borderRadius: 20,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: colors.surfaceElevated,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: colors.border,
   },
-  seasonBtnActive: {backgroundColor: '#e50914', borderColor: '#e50914'},
+  seasonBtnActive: {backgroundColor: colors.primary, borderColor: colors.primary},
   seasonText: {color: '#aaa', fontWeight: '600'},
   seasonTextActive: {color: '#fff'},
   list: {paddingBottom: 30},
@@ -172,7 +173,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#1a1a1a',
+    borderBottomColor: colors.border,
   },
   epThumb: {width: 130, height: 73, borderRadius: 8, resizeMode: 'cover'},
   noThumb: {
@@ -182,7 +183,7 @@ const styles = StyleSheet.create({
   },
   epInfo: {flex: 1, marginRight: 12},
   epNum: {
-    color: '#e50914',
+    color: colors.primaryHi,
     fontSize: 12,
     fontWeight: '700',
     textAlign: 'right',
