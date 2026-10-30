@@ -9,7 +9,9 @@
 השרת של טלגרם מוחק את from_id ומשאיר רק from_name — ואז המזהה
 אינו קיים בשום מקום בצד שלנו.
 
-שימוש:  python3 bot/whois.py 243
+שימוש:
+  python3 bot/whois.py 243        הודעה אחת, בפירוט
+  python3 bot/whois.py 230-250    סריקת טווח, לזהות איזו הודעה של מי
 """
 from __future__ import annotations
 
@@ -20,6 +22,59 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from zovexsub import botapi, config  # noqa: E402
+
+
+def _label(message) -> str:
+    """שם הקובץ בהודעה, כשיש."""
+    document = getattr(getattr(message, "media", None), "document", None)
+    for attribute in getattr(document, "attributes", ()) or ():
+        name = getattr(attribute, "file_name", None)
+        if name:
+            return str(name)
+    return "—"
+
+
+async def scan(first: int, last: int) -> int:
+    """סורק טווח הודעות ומראה מי שלח כל אחת ומה כתוב בכותרת ההעברה.
+
+    ההודעה שמעניינת היא ההעברה שהבוט עשה מהצ'אט שלו עם הזר. היא
+    מובדלת מהעלאות של החשבון עצמו בכך שהשולח שלה הוא הבוט
+    """
+    client = await botapi._connect(
+        botapi._string_session(config.TG_STRING), label="בדיקה")
+    if client is None:
+        print("החשבון לא התחבר")
+        return 1
+    try:
+        where = await botapi.storage(client)
+        if where is None:
+            print("ערוץ האחסון לא נפתר")
+            return 1
+        ids = list(range(first, last + 1))
+        found = await client.get_messages(where, ids=ids)
+        print(f"{'id':>5}  {'זמן':<20} {'שולח לערוץ':>14}  "
+              f"{'מקור ההעברה':<22} קובץ")
+        print("-" * 96)
+        for message in found:
+            if message is None:
+                continue
+            sender = getattr(message, "sender_id", None)
+            forward = getattr(message, "fwd_from", None)
+            origin = "—"
+            if forward is not None:
+                who = getattr(forward, "from_id", None)
+                if who is not None:
+                    origin = f"id={getattr(who, 'user_id', None) or who}"
+                else:
+                    origin = f"שם בלבד: {getattr(forward, 'from_name', '') or '?'}"
+            when = message.date.strftime("%d/%m %H:%M:%S")
+            print(f"{message.id:>5}  {when:<20} {str(sender):>14}  "
+                  f"{origin:<22} {_label(message)[:40]}")
+        print("\n‏id= פירושו שהמזהה קיים — זה מה שמחפשים.")
+        print("'שם בלבד' פירושו שהפרטיות מחקה אותו.")
+        return 0
+    finally:
+        await client.disconnect()
 
 
 async def main(message_id: int) -> int:
@@ -76,7 +131,12 @@ async def main(message_id: int) -> int:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or not sys.argv[1].isdigit():
-        print(__doc__)
-        raise SystemExit(2)
-    raise SystemExit(asyncio.run(main(int(sys.argv[1]))))
+    args = sys.argv[1:]
+    if len(args) == 1 and "-" in args[0]:
+        begin, _, stop = args[0].partition("-")
+        if begin.isdigit() and stop.isdigit():
+            raise SystemExit(asyncio.run(scan(int(begin), int(stop))))
+    if len(args) == 1 and args[0].isdigit():
+        raise SystemExit(asyncio.run(main(int(args[0]))))
+    print(__doc__)
+    raise SystemExit(2)
