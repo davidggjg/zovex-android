@@ -158,9 +158,17 @@ def code(text: str) -> str:
     "<HTTPError...>" הפכה ל-"can't parse entities: Unsupported start
     tag httperror", והסיבה האמיתית לא הגיעה אליו מעולם
     """
-    safe = (str(text).replace("&", "&amp;")
+    return f"<code>{escape(text)}</code>"
+
+
+def escape(text: str) -> str:
+    """בריחה מתווי HTML, בשביל טקסט חופשי בתוך הודעה.
+
+    שם של משתמש הוא טקסט שהוא עצמו בחר, ולכן הוא יכול להכיל סוגר
+    משולש — וההודעה כולה הייתה נדחית על "can't parse entities"
+    """
+    return (str(text).replace("&", "&amp;")
             .replace("<", "&lt;").replace(">", "&gt;"))
-    return f"<code>{safe}</code>"
 
 
 async def say(chat_id, text: str, *, buttons: str = "",

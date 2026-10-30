@@ -91,7 +91,15 @@ USERBOT_TRIGGER = _int("USERBOT_TRIGGER", 0)
 PREFS_FILE = os.getenv(
     "PREFS_FILE", str(Path(__file__).resolve().parent.parent / "prefs.json"))
 ALLOWLIST_FILE = os.getenv(
-    "ALLOWLIST_FILE", str(Path(__file__).resolve().parent.parent / "allowlist.json")
+    "ALLOWLIST_FILE", str(Path(__file__).resolve().parent.parent / "allowlist.json"))
+# המנהל הראשי: מקבל התראה על כל ניסיון שימוש לא מורשה, ויכול לאשר
+# משתמשים מתוך הצ'אט. בלעדיו אין למי לשלוח, והשער נסגר על כולם
+BOT_OWNER = _int("BOT_OWNER", 0)
+# מורשים קבועים מה-.env, בנוסף לקובץ שנערך מתוך טלגרם. רשימה מופרדת
+# בפסיקים. זה מה שמאפשר לזרוע את הרשימה בלי להקליד פקודות
+ALLOW_IDS = tuple(
+    int(part) for part in (os.getenv("ALLOW_IDS") or "").replace(" ", "").split(",")
+    if part.lstrip("-").isdigit()
 )
 
 GROQ_API_KEYS = _keys("GROQ_API_KEYS")

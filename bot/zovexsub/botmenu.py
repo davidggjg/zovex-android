@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 
-from . import config, fetch, localbot, prefs
+from . import allowlist, config, fetch, localbot, prefs
 
 log = logging.getLogger(__name__)
 
@@ -300,6 +301,8 @@ async def _press(query: dict) -> None:
     message_id = message.get("message_id")
     choice = _open.get(message_id)
     await localbot.tap(query.get("id", ""))
+    if not await _permitted(query, "לחיצה על כפתור"):
+        return
 
     # עצור קודם כל: הוא יושב על הודעת ההתקדמות, שאינה רשומה ב-_open,
     # ולכן הוא היה נופל על ה-return שלמטה בלי לעשות דבר
@@ -445,6 +448,91 @@ def _detach(coro, label: str) -> None:
     task.add_done_callback(finished)
 
 
+# מתי נשלחה התראה אחרונה על כל משתמש לא מורשה. בלי זה אדם אחד
+# שמנסה חמש פעמים ברצף מציף את המנהל בחמש התראות זהות
+_alerted: dict[int, float] = {}
+ALERT_EVERY = 600.0
+
+
+def _who(payload: dict) -> tuple[int, str, str]:
+    """מי שלח — מזהה, שם לתצוגה ושם משתמש."""
+    sender = payload.get("from") or {}
+    name = " ".join(part for part in (sender.get("first_name"),
+                                      sender.get("last_name")) if part)
+    handle = sender.get("username") or ""
+    return int(sender.get("id") or 0), name.strip(), handle
+
+
+async def _permitted(payload: dict, kind: str) -> bool:
+    """שומר הסף של מסלול ה-Bot API.
+
+    הבדיקה הזאת הייתה קיימת רק ב-bot.py, כלומר במסלול החשבון. כשכל
+    העבודה עברה ל-@zooigrmbot היא נשארה מאחור, והבוט היה פתוח לכל
+    מי שמצא אותו. נמדד אצל המשתמש: זרים השתמשו בו עד שכיבה של השרת
+    """
+    who, name, handle = _who(payload)
+    if allowlist.permitted(who):
+        return True
+
+    log.warning("נדחה במסלול הבוט: %s (%s) — %s", who, name or "ללא שם", kind)
+    boss = allowlist.owner()
+    now = time.monotonic()
+    if boss and now - _alerted.get(who, 0.0) > ALERT_EVERY:
+        _alerted[who] = now
+        when = time.strftime("%d/%m/%Y %H:%M:%S")
+        await localbot.say(boss,
+                           "🚨 <b>ניסיון שימוש בבוט ממשתמש לא מורשה</b>\n"
+                           f"👤 שם: {localbot.escape(name) or 'ללא שם'}\n"
+                           f"🔗 משתמש: {'@' + handle if handle else 'אין'}\n"
+                           f"🆔 מזהה: <code>{who}</code>\n"
+                           f"📨 סוג ניסיון: {kind}\n"
+                           f"🕒 זמן: {when}\n\n"
+                           f"לאישור: <code>/approve {who}</code>")
+    # למשתמש עצמו נאמר בדיוק מה המצב, ולא נשתק: הודעה שלא נענית
+    # נראית כמו בוט שבור, והוא ינסה עוד ועוד
+    chat = (payload.get("chat") or (payload.get("message") or {}).get("chat") or {})
+    if chat.get("id"):
+        await localbot.say(chat["id"],
+                           "הבוט הזה פרטי ופועל לפי אישור.\n"
+                           f"המזהה שלך: <code>{who}</code>\n"
+                           "בקשה נשלחה למנהל.")
+    return False
+
+
+async def _owner_command(message: dict) -> bool:
+    """פקודות ניהול מתוך הצ'אט של המנהל. מחזיר אם טופלה פקודה."""
+    who, _, _ = _who(message)
+    if not who or who != allowlist.owner():
+        return False
+    text = (message.get("text") or "").strip()
+    chat = (message.get("chat") or {}).get("id")
+    if not text.startswith("/"):
+        return False
+    parts = text.split()
+    name = parts[0].split("@", 1)[0].lower()
+    target = int(parts[1]) if len(parts) > 1 and parts[1].lstrip("-").isdigit() else 0
+
+    if name == "/approve" and target:
+        fresh = allowlist.add(target)
+        _alerted.pop(target, None)
+        await localbot.say(chat, f"✅ <code>{target}</code> "
+                                 + ("אושר." if fresh else "היה מאושר כבר."))
+        return True
+    if name in ("/deny", "/remove") and target:
+        gone = allowlist.remove(target)
+        await localbot.say(chat, f"🚫 <code>{target}</code> "
+                                 + ("הוסר." if gone else "לא היה ברשימה."))
+        return True
+    if name == "/users":
+        rows = [f"• <code>{allowlist.owner()}</code> — מנהל ראשי"]
+        rows += [f"• <code>{uid}</code>{' — ' + label if label else ''}"
+                 for uid, label in allowlist.listing()]
+        rows += [f"• <code>{uid}</code> — מ-.env" for uid in config.ALLOW_IDS]
+        await localbot.say(chat, "<b>מורשים:</b>\n" + "\n".join(rows))
+        return True
+    return False
+
+
 async def _incoming(message: dict) -> None:
     """הודעה שנכנסה לבוט.
 
@@ -454,6 +542,13 @@ async def _incoming(message: dict) -> None:
     """
     chat = (message.get("chat") or {}).get("id")
     if not chat:
+        return
+    if await _owner_command(message):
+        return
+    kind = ("סרטון / קובץ" if localbot.media_of(message)[0]
+            else "קישור" if fetch.find_url(message.get("text") or "")
+            else "הודעה")
+    if not await _permitted(message, kind):
         return
     # תמונה לתצוגה מקדימה קודמת לכל זיהוי אחר: היא מגיעה כ-photo,
     # ש-media_of מתעלם ממנו לגמרי, ואז ההודעה הייתה נופלת לענף

@@ -61,3 +61,29 @@ def listing() -> list[tuple[int, str]]:
         except ValueError:
             continue
     return sorted(out)
+
+
+def owner() -> int:
+    """המנהל הראשי, או 0 כשלא הוגדר."""
+    return int(config.BOT_OWNER or 0)
+
+
+def permitted(user_id: int) -> bool:
+    """האם המשתמש הזה רשאי להפעיל את הבוט.
+
+    שלושה מקורות, ובכוונה: המנהל הראשי, רשימה קבועה ב-.env שאפשר
+    לזרוע בה את המורשים מראש, והקובץ שנערך מתוך טלגרם ב-/approve.
+
+    השער הזה חסר לגמרי במסלול ה-Bot API: ‏allowlist נבדק רק
+    ב-bot.py, כלומר במסלול החשבון, וכשכל העבודה עברה ל-@zooigrmbot
+    הבוט נשאר פתוח לכל מי שמצא אותו. נמדד אצל המשתמש: אנשים זרים
+    השתמשו בו עד שכיבה של השרת
+    """
+    who = int(user_id)
+    if not who:
+        return False
+    if who == owner():
+        return True
+    if who in config.ALLOW_IDS:
+        return True
+    return is_allowed(who)

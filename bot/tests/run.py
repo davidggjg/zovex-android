@@ -2889,6 +2889,66 @@ def _quality_profile_uncapped():
     assert '"איכותי": "quality"' in body, "הכפתור עוד מצביע על fast265"
 
 
+@check("מסלול הבוט סגור ללא מורשים, והמנהל מקבל התראה")
+def _bot_path_gated():
+    import asyncio
+    import inspect
+    from zovexsub import allowlist, botmenu, config, localbot
+
+    sent: list = []
+
+    async def fake_say(chat, text, **_kw):
+        sent.append((int(chat), text))
+        return {"message_id": 1}
+
+    saved_say, saved_owner, saved_ids = (
+        localbot.say, config.BOT_OWNER, config.ALLOW_IDS)
+    saved_file = allowlist.PATH
+    localbot.say = fake_say
+    config.BOT_OWNER = 8658294616
+    config.ALLOW_IDS = (1179463907, 850190626)
+    allowlist.PATH = allowlist.Path("/nonexistent/allowlist.json")
+    try:
+        # המנהל ושני המורשים עוברים
+        assert allowlist.permitted(8658294616)
+        assert allowlist.permitted(1179463907)
+        assert allowlist.permitted(850190626)
+        # וזר לא
+        assert not allowlist.permitted(123456789)
+        assert not allowlist.permitted(0)
+
+        stranger = {"from": {"id": 123456789, "first_name": "ישראל",
+                             "last_name": "ישראלי", "username": "someone"},
+                    "chat": {"id": 123456789}}
+        allowed = asyncio.run(botmenu._permitted(stranger, "סרטון / קובץ"))
+        assert allowed is False
+
+        # התראה למנהל, עם המזהה ועם פקודת האישור
+        alert = next((t for who, t in sent if who == 8658294616), "")
+        assert "לא מורשה" in alert, alert
+        assert "123456789" in alert and "/approve 123456789" in alert, alert
+        assert "@someone" in alert, alert
+
+        # והמשתמש עצמו מקבל תשובה ולא שתיקה
+        reply = next((t for who, t in sent if who == 123456789), "")
+        assert "פרטי" in reply, reply
+
+        # ניסיון שני באותו חלון זמן אינו מציף את המנהל
+        before = len([1 for who, _ in sent if who == 8658294616])
+        asyncio.run(botmenu._permitted(stranger, "קישור"))
+        after = len([1 for who, _ in sent if who == 8658294616])
+        assert after == before, "התראה כפולה על אותו משתמש"
+    finally:
+        localbot.say, config.BOT_OWNER, config.ALLOW_IDS = (
+            saved_say, saved_owner, saved_ids)
+        allowlist.PATH = saved_file
+
+    # והשער נמצא לפני העבודה בשני השערים של מסלול הבוט
+    for fn in (botmenu._incoming, botmenu._press):
+        body = inspect.getsource(fn)
+        assert "_permitted(" in body, f"{fn.__name__} אינו מגודר"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
