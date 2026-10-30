@@ -2857,6 +2857,38 @@ def _stop_button_survives():
     assert "release(chat_id)" in inspect.getsource(botjob)
 
 
+@check("הצריבה האיכותית היא CRF טהור בלי תקרת ביטרייט")
+def _quality_profile_uncapped():
+    import inspect
+    from zovexsub import botjob, config, media
+
+    want = config.PROFILES["quality"]
+    assert want["codec"] == "libx265", want
+    assert want["preset"] == "medium", want
+    assert want["crf"] == 20, want
+
+    saved = config.UPLOAD_LIMIT_MB
+    config.UPLOAD_LIMIT_MB = 1900          # מה שהיה אצל המשתמש
+    try:
+        # סרט של 98 דקות. התקרה שיצאה שם הייתה 2439kbps, ו-1080p
+        # ב-HEVC בתנועה רוצה 4000 ומעלה — כלומר הרעבה
+        args = media._encoder_args(want, 4, 98 * 60)
+        assert "-maxrate" not in args, args
+        assert "-bufsize" not in args, args
+        assert "-crf" in args and "20" in args, args
+        assert "libx265" in args, args
+
+        # ובפרופיל רגיל התקרה נשארת: היא המגן מפני קובץ שלא ייעלה
+        other = media._encoder_args(config.PROFILES["balanced"], 4, 98 * 60)
+        assert "-maxrate" in other, other
+    finally:
+        config.UPLOAD_LIMIT_MB = saved
+
+    # ו"איכותי" בתפריט מצביע על הפרופיל הזה, ולא על fast265
+    body = inspect.getsource(botjob)
+    assert '"איכותי": "quality"' in body, "הכפתור עוד מצביע על fast265"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

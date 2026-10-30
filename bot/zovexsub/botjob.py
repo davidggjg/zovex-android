@@ -731,7 +731,9 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         # 1.06x — שליש מהמהירות תמורת הפרש איכות שאינו נראה לעין.
         # ה-preset הוא מנוף גדול יותר מה-CRF, ש-30 מול 23 עולה 14%
         # בלבד, ולכן אפשר להחזיק גם איכות וגם מהירות
-        profile = {"מהיר": "fast", "איכותי": "fast265"}.get(choice.speed, "")
+        # "איכותי" הצביע על fast265, כלומר x265 ב-superfast ו-CRF 22.
+        # זה היה הפרופיל המהיר שבין ה-HEVC, לא האיכותי שבהם
+        profile = {"מהיר": "fast", "איכותי": "quality"}.get(choice.speed, "")
         await media.burn(source, srt_path, dst, on_progress=on_burn,
                          style=style, profile=profile,
                          track=getattr(choice, "track", 0) or 0)

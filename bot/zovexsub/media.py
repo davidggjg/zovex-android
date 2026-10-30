@@ -761,7 +761,14 @@ def _encoder_args(settings: dict, threads: int, duration: float) -> list[str]:
 
     # CRF בלבד לא מבטיח גודל. תקרת bitrate עם חוצץ ("capped CRF") שומרת
     # על האיכות המשתנה ובכל זאת מבטיחה שהקובץ ייכנס במגבלת ההעלאה.
-    cap = _bitrate_cap(duration) if config.UPLOAD_LIMIT_MB else 0
+    # פרופיל שמסומן cap=False הוא CRF טהור, ואין עליו תקרה. ‏CRF הוא
+    # יעד איכות, ו-maxrate על גביו מרעיב את סצנות התנועה — כלומר
+    # האיכות צונחת היכן שזה נראה הכי רע
+    allow_cap = settings.get("cap", True)
+    cap = (_bitrate_cap(duration)
+           if config.UPLOAD_LIMIT_MB and allow_cap else 0)
+    if not allow_cap:
+        log.info("פרופיל CRF טהור — בלי תקרת ביטרייט")
     if cap:
         args += ["-maxrate", f"{cap}k", "-bufsize", f"{cap * 2}k"]
         log.info("תקרת bitrate: %dkbps כדי להישאר מתחת ל-%dMB",
