@@ -2908,6 +2908,7 @@ def _bot_path_gated():
     config.BOT_OWNER = 8658294616
     config.ALLOW_IDS = (1179463907, 850190626)
     allowlist.PATH = allowlist.Path("/nonexistent/allowlist.json")
+    botmenu._alerted.clear()
     try:
         # המנהל ושני המורשים עוברים
         assert allowlist.permitted(8658294616)

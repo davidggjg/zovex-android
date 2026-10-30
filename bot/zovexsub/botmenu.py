@@ -477,7 +477,12 @@ async def _permitted(payload: dict, kind: str) -> bool:
     log.warning("נדחה במסלול הבוט: %s (%s) — %s", who, name or "ללא שם", kind)
     boss = allowlist.owner()
     now = time.monotonic()
-    if boss and now - _alerted.get(who, 0.0) > ALERT_EVERY:
+    # "מעולם לא הותרע" הוא לא אפס. ‏time.monotonic() נמדד מרגע עליית
+    # המכונה, ולכן ההשוואה now - 0.0 > ALERT_EVERY יוצאת שקרית בעשר
+    # הדקות הראשונות אחרי אתחול — בדיוק הזמן שבו ההתראה הכי נחוצה.
+    # נתפס בבדיקה אחרי הפעלה מחדש של המכונה
+    quiet = _alerted.get(who)
+    if boss and (quiet is None or now - quiet > ALERT_EVERY):
         _alerted[who] = now
         when = time.strftime("%d/%m/%Y %H:%M:%S")
         await localbot.say(boss,
