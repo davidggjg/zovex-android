@@ -3251,6 +3251,27 @@ def _failed_window_not_serial():
     assert "out[idx] = segments[idx].text" in body
 
 
+@check("מעבר המגדר מקבל תקרה נדיבה וניסיון שני, ולא מדולג בשקט")
+def _addressee_not_skipped():
+    import inspect
+    from zovexsub import config, hebrew
+
+    # נמדד מול תרגום אולפן על אותו סרט, לפני ואחרי שהתקרה האחידה
+    # הוחלה גם כאן: צורות זכר קפצו מ-14 ל-51 בעוד שתי הדמויות
+    # נשים. חלון שדולג פשוט נשאר בלי תיקון מגדר, וזה התיקון
+    # הנראה ביותר בעברית
+    assert config.ADDRESSEE_TIMEOUT > config.GEMINI_WINDOW_TIMEOUT, \
+        (config.ADDRESSEE_TIMEOUT, config.GEMINI_WINDOW_TIMEOUT)
+
+    body = inspect.getsource(hebrew)
+    start = body.index("ADDRESSEE_SYSTEM, prompt")
+    chunk = body[start:start + 1400]
+    assert chunk.count("ADDRESSEE_TIMEOUT") >= 2, "אין ניסיון שני"
+    assert "ניסיון שני" in chunk, chunk[:120]
+    # והדילוג נשאר אפשרות אחרונה, אחרי שני כשלונות
+    assert "פעמיים" in chunk
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

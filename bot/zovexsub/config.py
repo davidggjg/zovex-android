@@ -742,6 +742,10 @@ ALIGN_THREADS = _int("ALIGN_THREADS", 2)
 # ולכן חלון שלם שנפל היה הופך לחמישים קריאות רצופות
 TRANSLATE_RETRY_MAX = _int("TRANSLATE_RETRY_MAX", 8)
 GEMINI_WINDOW_TIMEOUT = float(os.getenv("GEMINI_WINDOW_TIMEOUT") or 240)
+# התאמת המגדר מקבלת תקרה נדיבה משלה. היא התיקון הנראה ביותר
+# בעברית, וחלון שמדולג בה משאיר "אתה" לדמות אישה — נמדד מול
+# תרגום אולפן: צורות זכר קפצו מ-14 ל-51 כשהתקרה כאן הושוותה לשאר
+ADDRESSEE_TIMEOUT = float(os.getenv("ADDRESSEE_TIMEOUT") or 600)
 # תקרת חיבורים בלקוח המשותף של ג'מיני. שווה למקביליות המקסימלית
 # (PARALLEL_CEILING) ועוד מרווח, כדי שחיבור לא יהיה הצוואר
 # רמת החשיבה של המודל בקריאות JSON. ריק = לא שולחים את השדה כלל,

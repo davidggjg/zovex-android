@@ -272,13 +272,23 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
                 result = await asyncio.wait_for(
                     gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
                                     schema=schema, temperature=0.0),
-                    timeout=config.GEMINI_WINDOW_TIMEOUT)
-            except gemini.GeminiError as exc:
-                await skip(str(exc))
-                return
-            except asyncio.TimeoutError:
-                await skip(f"עבר {config.GEMINI_WINDOW_TIMEOUT:.0f} שניות")
-                return
+                    timeout=config.ADDRESSEE_TIMEOUT)
+            except (gemini.GeminiError, asyncio.TimeoutError) as first:
+                # מעבר המגדר הוא התיקון הנראה ביותר בעברית, ולכן הוא
+                # מקבל ניסיון שני ותקרה משלו. נמדד על אותו סרט לפני
+                # ואחרי שהוספתי כאן תקרה אחידה: צורות זכר קפצו מ-14
+                # ל-51 בעוד שתי הדמויות נשים — חלונות שדולגו פשוט
+                # נשארו בלי תיקון מגדר
+                log.warning("חלון התאמת מגדר נכשל (%s) — ניסיון שני",
+                            type(first).__name__)
+                try:
+                    result = await asyncio.wait_for(
+                        gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
+                                        schema=schema, temperature=0.0),
+                        timeout=config.ADDRESSEE_TIMEOUT)
+                except (gemini.GeminiError, asyncio.TimeoutError) as again:
+                    await skip(f"{type(again).__name__} פעמיים")
+                    return
 
         items = result.get("fixes") if isinstance(result, dict) else result
         async with lock:
