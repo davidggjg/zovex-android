@@ -156,15 +156,33 @@ async def stop() -> None:
     _bot, _lite, _premium = None, None, None
 
 
+# כמה העלאות "חולקות" כבר נעשו. רק קבצים שאפשר לחלק בהם נספרים,
+# ולכן קובץ ענק שחייב Premium אינו גוזל תור מהחשבון הרגיל
+_turn = 0
+
+
 def uploader(size: int, premium: TelegramClient):
     """מי מעלה קובץ בגודל הזה.
 
-    ההחלטה לפי הגודל בפועל, כי זו המגבלה שתפיל את ההעלאה. חשבון רגיל
-    מעלה עד 2GB; מעבר לכך נדרש Premium.
+    קודם כל קובץ מתחת לתקרה הלך לחשבון הרגיל, ולכן הוא נשא את כל
+    העומס בעוד ה-Premium לא העלה דבר. בפועל רוב הקבצים הם כג'יגה,
+    כלומר הכול נפל על חשבון אחד — והוא נשחק עד שבקושי העלה.
+
+    עכשיו הם מתחלפים בתורות: UPLOAD_TURN העלאות כאן, UPLOAD_TURN
+    שם. קובץ שעובר את תקרת החשבון הרגיל הולך ל-Premium בכל מקרה
+    ואינו מקדם את התור — אחרת שלושה סרטים גדולים ברצף היו "חייבים"
+    לחשבון הרגיל שלוש העלאות שהוא לא יכול לבצע
     """
-    if _lite is not None and size <= config.LITE_UPLOAD_MAX:
-        return _lite, "רגיל"
-    return premium, "Premium"
+    global _turn
+    if _lite is None or size > config.LITE_UPLOAD_MAX:
+        return premium, "Premium"
+
+    block = max(1, config.UPLOAD_TURN)
+    mine = (_turn // block) % 2 == 0
+    _turn += 1
+    if mine:
+        return premium, "Premium"
+    return _lite, "רגיל"
 
 
 def downloader(size: int, premium: TelegramClient):
