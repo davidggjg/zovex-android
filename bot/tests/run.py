@@ -3042,6 +3042,38 @@ def _drive_skips_quality_and_burn_eta():
     assert "נותרו" in stage._render(), stage._render()
 
 
+@check("כתובית שחוזרת על קודמתה נמחקת, ודיאלוג חוזר נשמר")
+def _drop_echoes():
+    from zovexsub import srt
+
+    def cue(start, end, text):
+        return srt.Cue(index=0, start=start, end=end, text=text)
+
+    # אותו דיבור שתומלל פעמיים: שתי כתוביות בהפרש שנייה.
+    # נמדד בקובץ של המשתמש, 26 כאלה מתוך 648
+    cues = [cue(5.0, 6.0, "שים את המזוודות. שתינו נסתדר מכאן."),
+            cue(6.1, 7.0, "שים את המזוודות.")]
+    assert srt.drop_echoes(cues) == 1
+    assert len(cues) == 1
+    # הארוכה נשמרת, והטווח מאוחד
+    assert cues[0].text.startswith("שים את המזוודות. שתינו")
+    assert cues[0].start == 5.0 and cues[0].end == 7.0
+
+    # דיאלוג חוזר על מילים כדרך שגרה — שתי "כן." רחוקות זו מזו
+    # הן שתי כתוביות נכונות ולא כפילות
+    far = [cue(10.0, 11.0, "כן."), cue(40.0, 41.0, "כן.")]
+    assert srt.drop_echoes(far) == 0, "נמחק דיאלוג תקין"
+
+    # והכלה נבדקת רק בטקסט ממשי: "כן." בתוך "כן, בסדר" אינה כפילות
+    short = [cue(1.0, 2.0, "כן."), cue(2.1, 3.0, "כן, בסדר.")]
+    assert srt.drop_echoes(short) == 0, short
+
+    # והשער האחרון סופר אותן
+    report = srt.finalize([cue(5.0, 6.0, "שלום לך חבר טוב"),
+                           cue(6.1, 7.0, "שלום לך חבר טוב")], 24.0)
+    assert report["כפולות"] == 1, report
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -570,6 +570,50 @@ def stamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+def drop_echoes(cues: list["Cue"], window: float = 3.0) -> int:
+    """מוחק כתובית שחוזרת על קודמתה. מחזיר כמה נמחקו.
+
+    אותו דיבור שתומלל פעמיים מגיע לכאן כשתי כתוביות סמוכות עם אותו
+    טקסט, בהפרש של כשנייה. נמדד בקובץ שנמסר למשתמש: 26 כאלה מתוך
+    648. הוא ראה את זה כ"מילים שחוזרות על עצמן".
+
+    השוואה רק לשכנה הקרובה ובחלון זמן קצר, בכוונה: דיאלוג חוזר על
+    מילים לגמרי כדרך שגרה — "כן." של דמות אחת ו"כן." של אחרת,
+    דקות זו מזו, הן שתי כתוביות נכונות
+    """
+    def bare(text: str) -> str:
+        return " ".join((text or "").replace("\n", " ").split()).strip(" -—")
+
+    gone = 0
+    index = 1
+    while index < len(cues):
+        before, now = cues[index - 1], cues[index]
+        if now.start - before.end > window:
+            index += 1
+            continue
+        first, second = bare(before.text), bare(now.text)
+        if not first or not second:
+            index += 1
+            continue
+        same = first == second
+        # הכלה נחשבת רק בטקסט ממשי. "כן." בתוך "כן, בסדר" הוא
+        # צירוף מקרים נפוץ ולא כפילות
+        inside = (len(min(first, second, key=len)) >= 10
+                  and (first in second or second in first))
+        if not (same or inside):
+            index += 1
+            continue
+        # נשמרת הארוכה מבין השתיים, עם טווח הזמן המאוחד
+        keep, drop = ((before, now) if len(first) >= len(second)
+                      else (now, before))
+        keep.start = min(before.start, now.start)
+        keep.end = max(before.end, now.end)
+        cues[index - 1] = keep
+        cues.pop(index)
+        gone += 1
+    return gone
+
+
 def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     """מעבר אחרון לפני הכתיבה לקובץ. מחזיר מה תוקן.
 
@@ -587,7 +631,10 @@ def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     """
     frame = 1.0 / max(1.0, fps)
     gap = max(config.SRT_GAP, 2 * frame)
-    fixed = {"ריקות": 0, "שורות": 0, "קצרות": 0, "ארוכות": 0, "הפוכות": 0}
+    fixed = {"ריקות": 0, "שורות": 0, "קצרות": 0, "ארוכות": 0, "הפוכות": 0,
+             "כפולות": 0}
+
+    fixed["כפולות"] = drop_echoes(cues)
 
     # כתובית שאינה נכנסת בשתי שורות מפוצלת, ולא נדחסת לשלוש. ‏wrap
     # לבדו נופל כאן ל-_hard_wrap ומייצר שורה שלישית

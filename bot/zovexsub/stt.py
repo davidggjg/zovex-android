@@ -224,6 +224,22 @@ def speech_gaps(segments: list[Segment], speech: list[tuple[float, float]],
     return found
 
 
+def _already_there(found: Segment, settled: list[tuple[float, float]],
+                   share: float = 0.5) -> bool:
+    """האם הקטע שהוצל חופף למה שכבר תומלל.
+
+    חפיפה של חצי ומעלה פירושה שזה אותו דיבור, ולהוסיף אותו שוב זה
+    להכפיל שורה שכבר נמצאת בכתוביות
+    """
+    width = found.end - found.start
+    if width <= 0:
+        return True
+    covered = sum(min(found.end, stop) - max(found.start, start)
+                  for start, stop in settled
+                  if start < found.end and stop > found.start)
+    return covered >= width * share
+
+
 def pick_gaps(gaps: list[tuple[float, float]],
               most: int) -> list[tuple[float, float]]:
     """החורים הארוכים ביותר, מוחזרים בסדר הזמנים.
@@ -268,6 +284,9 @@ async def recover_gaps(segments: list[Segment],
     pool = KeyPool("groq", config.GROQ_API_KEYS)
     pad = config.RECOVER_PAD
     added = 0
+    # תצלום של מה שהיה לפני ההצלה. ההשוואה היא מולו ולא מול הרשימה
+    # החיה, שאליה מתווספים קטעים תוך כדי
+    settled = sorted(((seg.start, seg.end) for seg in segments))
     # הטור היה חונק: חיתוך ffmpeg וקריאת Groq לכל חור, אחד-אחד. עם
     # תקרה של 160 חורים זה שעה. הם בלתי תלויים לחלוטין, ולכן רצים יחד
     gate = asyncio.Semaphore(max(1, config.RECOVER_WORKERS))
@@ -296,9 +315,16 @@ async def recover_gaps(segments: list[Segment],
             if not payload:
                 return []
             # רק מה שנופל בתוך החור עצמו. הריפוד נועד להקשר,
-            # והטקסט שבו כבר קיים בכתוביות השכנות
+            # והטקסט שבו כבר קיים בכתוביות השכנות.
+            #
+            # ומה שכבר תומלל נזרק. כשהחור הוגדר כאפס חפיפה זה היה
+            # מיותר, כי חור היה בהכרח ריק. מאז ש-RECOVER_COVER מכיר
+            # גם בכיסוי חלקי, קטע שכבר תומלל למחצה מתומלל שוב —
+            # והטקסט נכנס פעמיים. נמדד בקובץ של המשתמש: 26 כתוביות
+            # כפולות, בהפרש של כשנייה זו מזו
             return [f for f in _segments_from(payload, start)
-                    if f.end > begin and f.start < end]
+                    if f.end > begin and f.start < end
+                    and not _already_there(f, settled)]
 
         rescued = await asyncio.gather(
             *(one(i, b, e) for i, (b, e) in enumerate(gaps, 1)),
