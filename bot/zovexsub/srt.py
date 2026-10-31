@@ -570,6 +570,59 @@ def stamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
+# קולות שאינם מילים. האולפן אינו מכניס אותם לכתוביות כלל, ואצלנו
+# הם הגיעו לקובץ — נמדד מול תרגום אולפן של אותו סרט: "Mm-mm" ו-
+# "The" הופיעו אצלנו ובמקצועי אין שם כלום
+FILLER = frozenset({
+    "mm", "mmm", "hmm", "hmmm", "mhm", "uh", "uhh", "um", "umm",
+    "ah", "ahh", "oh", "ohh", "er", "err", "huh", "hm",
+    "אה", "אהה", "הא", "הו", "הוו", "ממ", "מממ", "הממ", "ההמ",
+    "אהמ", "אמ", "אוו", "הם-הם", "ממ-ממ", "אה-הא",
+})
+
+
+def is_filler(text: str) -> bool:
+    """האם כל הכתובית היא קולות בלבד, בלי אף מילה.
+
+    שמרני בכוונה: נדרש שכל האסימונים יהיו ברשימה. "אה, מאיה?" הוא
+    דיבור אמיתי ונשאר, ורק "אה." לבדו יורד
+    """
+    bare = re.sub(r"[.,!?…\-־:;\"'\u201c\u201d()\[\]]+", " ", (text or "").replace("\n", " "))
+    words = [w for w in bare.lower().split() if w]
+    if not words:
+        return True
+    return all(w in FILLER for w in words)
+
+
+# מילות תפקוד אנגליות שנשארו לבדן. "The" לבדו אינו שורת דיאלוג
+# אלא שבר שהתמלול תפס — נמדד מול תרגום אולפן, שבאותו רגע ריק
+STRAY = frozenset({
+    "the", "a", "an", "and", "of", "to", "is", "it", "so", "but",
+    "or", "in", "on", "at", "for", "that", "this", "i", "you",
+})
+
+
+def is_stray(text: str) -> bool:
+    """מילת תפקוד אנגלית בודדה, בלי שום עברית סביבה."""
+    bare = re.sub(r"[.,!?…\-־:;\"'()\[\]]+", " ", (text or "").replace("\n", " "))
+    words = [w for w in bare.lower().split() if w]
+    if not words or len(words) > 1:
+        return False
+    if re.search(r"[א-ת]", text or ""):
+        return False
+    return words[0] in STRAY
+
+
+def drop_filler(cues: list["Cue"]) -> int:
+    """מוחק כתוביות שהן קולות בלבד או שבר מילה. מחזיר כמה נמחקו."""
+    gone = 0
+    for cue in list(cues):
+        if is_filler(cue.text) or is_stray(cue.text):
+            gone += 1
+            cues.remove(cue)
+    return gone
+
+
 def drop_echoes(cues: list["Cue"], window: float = 3.0) -> int:
     """מוחק כתובית שחוזרת על קודמתה. מחזיר כמה נמחקו.
 
@@ -632,9 +685,10 @@ def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     frame = 1.0 / max(1.0, fps)
     gap = max(config.SRT_GAP, 2 * frame)
     fixed = {"ריקות": 0, "שורות": 0, "קצרות": 0, "ארוכות": 0, "הפוכות": 0,
-             "כפולות": 0}
+             "כפולות": 0, "קולות": 0}
 
     fixed["כפולות"] = drop_echoes(cues)
+    fixed["קולות"] = drop_filler(cues)
 
     # כתובית שאינה נכנסת בשתי שורות מפוצלת, ולא נדחסת לשלוש. ‏wrap
     # לבדו נופל כאן ל-_hard_wrap ומייצר שורה שלישית

@@ -3272,6 +3272,41 @@ def _addressee_not_skipped():
     assert "פעמיים" in chunk
 
 
+@check("קולות ושברי מילים נמחקים, ודיבור אמיתי נשאר")
+def _drop_filler():
+    from zovexsub import srt
+
+    # נמדד מול תרגום אולפן של אותו סרט: במקומות האלה הכתוביות
+    # המקצועיות ריקות לגמרי, ואצלנו הופיעו שורות
+    for junk in ("Mm-mm. Mm-mm. Mm-mm. Mm-mm.", "Mm-mm.", "אה.",
+                 "הממ.", "הו.", "ההמ?", "Hmm", "uh"):
+        assert srt.is_filler(junk), junk
+    for stray in ("The", "I", "and"):
+        assert srt.is_stray(stray), stray
+
+    # דיבור אמיתי נשאר, גם כשהוא מתחיל בקול
+    for real in ("אה, מאיה?", "אה, סליחה.", "האורות.", "ממש כאן?",
+                 "לא.", "כן.", "שלום"):
+        assert not srt.is_filler(real), real
+        assert not srt.is_stray(real), real
+
+    # ומילה לועזית ממשית אינה שבר: שם או מונח נשמרים
+    for keep in ("Radioactivity", "OK", "The Dog Stars"):
+        assert not srt.is_stray(keep), keep
+
+    def cue(start, end, text):
+        return srt.Cue(index=0, start=start, end=end, text=text)
+
+    cues = [cue(1.0, 2.0, "שלום לך"), cue(3.0, 4.0, "הממ."),
+            cue(5.0, 6.0, "The"), cue(7.0, 8.0, "מה קרה?")]
+    assert srt.drop_filler(cues) == 2
+    assert [c.text for c in cues] == ["שלום לך", "מה קרה?"]
+
+    # והשער האחרון סופר אותן
+    report = srt.finalize([cue(1.0, 2.0, "שלום לך"), cue(3.0, 4.0, "אה.")], 24.0)
+    assert report["קולות"] == 1, report
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
