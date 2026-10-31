@@ -3116,6 +3116,37 @@ def _hallucinations():
     assert stt.drop_nonspeech(keep, []) == 0
 
 
+@check("אות ערבית מוחזרת לעברית בלי קריאה למודל, וערבית אמיתית נשמרת")
+def _mend_arabic():
+    import inspect
+    from zovexsub import cleanup, hebrew
+
+    # שלוש השורות שנמדדו בקובץ של המשתמש. ערבית ועברית הן אותן
+    # אותיות שמיות: lam הוא למד, ha הוא חית, mim הוא מם
+    assert cleanup.mend_arabic("איירי, עדיף שתבلي זמן עם החיים,") == \
+        "איירי, עדיף שתבלי זמן עם החיים,"
+    assert cleanup.mend_arabic("איירי, תברحي.") == "איירי, תברחי."
+    # אות סופית: "הם" ולא "המ"
+    assert cleanup.mend_arabic("הم, הבנתי.") == "הם, הבנתי."
+
+    # שורה שכולה ערבית היא טקסט ערבי אמיתי ולא שיבוש, ואסור
+    # להפוך אותה לג'יבריש עברי
+    arabic = "مرحبا بك في العالم"
+    assert cleanup.mend_arabic(arabic) == arabic
+    assert cleanup.mend_arabic("שלום עולם") == "שלום עולם"
+
+    # והתיקון רץ בתוך clean, לפני שמחליטים שהשורה "זרה"
+    fixed, foreign = cleanup.clean(["איירי, תברحي."])
+    assert fixed == ["איירי, תברחי."], fixed
+    assert foreign == [], foreign
+
+    # תקרה אפסית אינה "בלי הגבלה" אלא ביטול. נמדד אצל המשתמש:
+    # REPAIR_TIMEOUT=0 ב-.env, wait_for נכשל מיד, והלוג אמר
+    # "עבר 0 שניות" כאילו ניסה
+    body = inspect.getsource(hebrew.repair_foreign)
+    assert "REPAIR_TIMEOUT <= 0" in body, "מלכודת האפס נשארה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -31,6 +31,53 @@ FOREIGN = re.compile(
 )
 HEBREW = re.compile(r"[א-ת]")
 
+# ערבית ועברית הן שתי אלפבתות שמיות עם אותן אותיות כמעט: lam הוא
+# למד, ha הוא חית, mim הוא מם. המודל מחליף ביניהן בתוך מילה עברית,
+# ולכן אפשר להחזיר את האות למקומה בלי לשאול אף מודל — מיידי, חינם
+# וודאי. נמדד אצל המשתמש: "שתבلي" הוא "שתבלי", "תברحي" הוא
+# "תברחי", "הم" הוא "הם"
+ARABIC_TO_HEBREW = {
+    "ا": "א", "أ": "א", "إ": "א", "آ": "א", "ء": "א", "ب": "ב",
+    "ج": "ג", "د": "ד", "ذ": "ד", "ه": "ה", "ة": "ה", "و": "ו",
+    "ز": "ז", "ح": "ח", "خ": "ח", "ط": "ט", "ظ": "צ", "ي": "י",
+    "ى": "י", "ئ": "י", "ك": "כ", "ل": "ל", "م": "מ", "ن": "נ",
+    "س": "ס", "ش": "ש", "ع": "ע", "غ": "ע", "ف": "פ", "ص": "צ",
+    "ض": "צ", "ق": "ק", "ر": "ר", "ت": "ת", "ث": "ת",
+    "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+    "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+}
+# אותיות סופיות: "הم" הוא "הם" ולא "המ"
+FINALS = {"כ": "ך", "מ": "ם", "נ": "ן", "פ": "ף", "צ": "ץ"}
+_ARABIC_MARKS = re.compile(r"[\u064b-\u0652\u0640]")
+
+
+def mend_arabic(text: str) -> str:
+    """מחזיר אות ערבית שהשתרבבה לאות העברית המקבילה לה.
+
+    פועל רק במילה שיש בה גם עברית. שורה שכולה ערבית היא טקסט ערבי
+    אמיתי ולא שיבוש, ואין להפוך אותה לג'יבריש עברי
+    """
+    if not FOREIGN.search(text):
+        return text
+    out = []
+    for word in re.split(r"(\s+)", text):
+        bare = _ARABIC_MARKS.sub("", word)
+        letters = [c for c in bare if c in ARABIC_TO_HEBREW]
+        if not letters or not HEBREW.search(bare):
+            out.append(word)
+            continue
+        swapped = "".join(ARABIC_TO_HEBREW.get(c, c) for c in bare)
+        # האות האחרונה של המילה עוברת לצורה הסופית
+        trimmed = swapped.rstrip(".,!?:;\"')]}")
+        tail = swapped[len(trimmed):]
+        if trimmed and trimmed[-1] in FINALS:
+            trimmed = trimmed[:-1] + FINALS[trimmed[-1]]
+        out.append(trimmed + tail)
+    mended = "".join(out)
+    if mended != text:
+        log.info("אות ערבית הוחזרה לעברית: %s ⇐ %s", mended[:50], text[:50])
+    return mended
+
 
 def strip_niqqud(text: str) -> str:
     """מסיר ניקוד וטעמים, ומשאיר את האותיות עצמן."""
@@ -62,5 +109,8 @@ def clean(lines: list[str]) -> tuple[list[str], list[int]]:
         cleaned = strip_niqqud(line or "")
         if cleaned != line:
             log.info("הוסר ניקוד: %s", cleaned[:40])
-        out.append(cleaned)
+        # האות הערבית מוחזרת כאן, לפני שמחליטים שהשורה "זרה". רוב
+        # המקרים נפתרים כך בלי שום קריאה למודל, ומה שנשאר לתיקון
+        # הוא באמת מה שאין לו מיפוי
+        out.append(mend_arabic(cleaned))
     return out, foreign_lines(out)

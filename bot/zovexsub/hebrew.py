@@ -319,6 +319,14 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
     """
     if not indices:
         return lines
+    # תקרה אפסית אינה "בלי הגבלה" אלא ביטול מוחלט: wait_for נכשל
+    # מיד, והשלב נרשם בלוג כאילו ניסה. נמדד אצל המשתמש, שב-.env
+    # שלו REPAIR_TIMEOUT=0 — ולכן אותיות ערביות שרדו לקובץ הסופי
+    # בעוד הלוג אמר "עבר 0 שניות, ממשיכים בלעדיו"
+    if config.REPAIR_TIMEOUT <= 0:
+        log.warning("תיקון האותיות הזרות מבוטל (REPAIR_TIMEOUT=0) — "
+                    "%d שורות נשארות כמו שהן", len(indices))
+        return lines
 
     log.warning("נמצאו %d שורות עם אותיות זרות — שולח לתיקון", len(indices))
     listing = "\n".join(
