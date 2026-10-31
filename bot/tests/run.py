@@ -3346,6 +3346,39 @@ def _addressee_own_model():
         gemini._call, config.GEMINI_THINKING = saved_call, saved_level
 
 
+@check("טבלת מגדר לפי שם דמות, שעובדת גם בלי זיהוי דוברים")
+def _cast_table():
+    import inspect
+    from zovexsub import hebrew
+
+    notes = ("טקסט חופשי\n"
+             "@מגדר: A=נקבה, B=זכר\n"
+             "@דמויות: איירי=נקבה, מיקו=נקבה, גונג'י=זכר")
+    assert hebrew.cast_table(notes).startswith("איירי=נקבה")
+    assert hebrew.gender_table(notes) == "A=נקבה, B=זכר"
+
+    pinned = hebrew.pinned_genders(notes)
+    # הדמויות קודם: היא לפי שם, ולכן עובדת גם בלי זיהוי דוברים,
+    # והיא זו שעונה על "אל מי פונים" — 12 השגיאות שנמדדו מול
+    # תרגום אולפן היו כולן על הנמען ולא על הדובר
+    assert pinned.index("הדמויות") < pinned.index("הדוברים"), pinned
+    assert "אל תסיק מגדר מצורת הפנייה" in pinned
+
+    # בלי זיהוי דוברים הטבלה השנייה נופלת, והראשונה ממשיכה לעבוד
+    only_cast = "@דמויות: איירי=נקבה\n@מגדר: אין"
+    out = hebrew.pinned_genders(only_cast)
+    assert "איירי=נקבה" in out and "הדוברים" not in out, out
+
+    # ובלי שום טבלה לא נעוץ כלום — ונרשמת אזהרה
+    assert hebrew.pinned_genders("שום דבר") == ""
+
+    # והחקר באמת מתבקש לשתי השורות
+    body = inspect.getsource(hebrew)
+    assert "@דמויות: שם=מגדר" in body, "הפרומפט אינו מבקש את הטבלה"
+    assert "רשימת\nהדמויות והשחקנים שחיפשת ברשת" in body or \
+        "הדמויות והשחקנים שחיפשת ברשת" in body
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

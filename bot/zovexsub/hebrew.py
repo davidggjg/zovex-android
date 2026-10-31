@@ -50,11 +50,19 @@ PEOPLE_USER = """להלן תמליל גולמי (שפת מקור: {language}).
 3. נמענים: אל מי כל דובר פונה בכל חלק — יחיד זכר, יחידה נקבה, רבים מעורב, קהל. זה הסעיף הקריטי ביותר: ציין במפורש את מספרי השורות שבהם הפנייה מתחלפת (למשל "משורה 412 ואילך הוא פונה לאישה — צריך לשון נקבה").
 4. אזהרות: כל דבר נוסף שמתרגם חייב לדעת.
 
-בסוף המסמך, בשורה נפרדת ואחרונה, כתוב טבלת מגדר קומפקטית בפורמט הזה
-בדיוק, בלי שום טקסט נוסף באותה שורה:
+בסוף המסמך כתוב **שתי שורות** נפרדות, בפורמט הזה בדיוק ובלי שום
+טקסט נוסף בשורה. שתיהן יוצמדו לכל קטע תרגום.
+
 @מגדר: A=זכר, B=נקבה, C=לא ידוע
-השתמש באותן אותיות דובר שמופיעות בתמליל. זו השורה שתוצמד לכל קטע
-תרגום, ולכן היא חייבת להיות מדויקת וקצרה.
+לפי אותיות הדובר שבתמליל. אם אין בתמליל אותיות דובר — כתוב
+"@מגדר: אין".
+
+@דמויות: שם=מגדר, שם=מגדר
+מגדר של כל דמות **לפי שמה**, ולא לפי אות דובר. זו השורה החשובה
+ביותר: היא עובדת גם כשאין זיהוי דוברים, והיא מה שקובע אם פונים
+לדמות ב"את" או ב"אתה". אם ידוע לך שם הסרטון — בסס אותה על רשימת
+הדמויות והשחקנים שחיפשת ברשת, ולא על ניחוש מהתמליל. כלול כל
+דמות שמדברת או שפונים אליה, גם כשהשם נזכר פעם אחת.
 
 התמליל:
 {transcript}
@@ -223,7 +231,7 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
         after = indexed[start + ADDRESSEE_WINDOW:start + ADDRESSEE_WINDOW + ADDRESSEE_CONTEXT]
 
         genders = gender_table(notes)
-        prompt = (f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else "") + f"""מסמך הנחיות:
+        prompt = pinned_genders(notes) + f"""מסמך הנחיות:
 ---
 {_cap(notes, 12_000)}
 ---
@@ -701,7 +709,7 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         before = segments[max(0, start - CONTEXT):start]
         after = segments[start + WINDOW:start + WINDOW + CONTEXT]
 
-        pinned = f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else ""
+        pinned = pinned_genders(notes)
 
         prompt = f"""{pinned}מסמך הנחיות לסרטון הזה:
 ---
@@ -915,7 +923,7 @@ def _quality_prompt(notes: str, paired: str) -> str:
     if not paired.strip():
         return ""
     genders = gender_table(notes)
-    pinned = f"מגדר הדוברים (מחייב): {genders}\n\n" if genders else ""
+    pinned = pinned_genders(notes)
     return pinned + f"""מסמך הנחיות:
 ---
 {_cap(notes, 20_000)}
@@ -1058,6 +1066,7 @@ def _window_text(segments: list[Segment], idx: int) -> str:
 
 
 _GENDER_LINE = re.compile(r"^@מגדר:\s*(.+)$", re.MULTILINE)
+_CAST_LINE = re.compile(r"^@דמויות:\s*(.+)$", re.MULTILINE)
 
 
 SPEAKER_SYSTEM = (
@@ -1149,9 +1158,53 @@ def gender_table(notes: str) -> str:
     """
     found = _GENDER_LINE.search(notes or "")
     if not found:
+        log.warning("אין שורת @מגדר במסמך החקר — התרגום ירוץ בלי "
+                    "טבלת מגדר דוברים")
         return ""
     row = " ".join(found.group(1).split())[:300]
+    if row.strip() in ("אין", "-", "—"):
+        return ""
     return row
+
+
+def pinned_genders(notes: str) -> str:
+    """שתי שורות המגדר שנעוצות בראש כל קטע תרגום.
+
+    טבלת הדמויות קודמת בכוונה: היא לפי שם, ולכן עובדת גם בלי זיהוי
+    דוברים, והיא זו שעונה על "אל מי פונים"
+    """
+    rows = []
+    cast = cast_table(notes)
+    if cast:
+        rows.append("מגדר הדמויות (מחייב, לפי שם): " + cast)
+    speakers = gender_table(notes)
+    if speakers:
+        rows.append("מגדר הדוברים (מחייב): " + speakers)
+    if not rows:
+        return ""
+    rows.append("אל תסיק מגדר מצורת הפנייה בתמליל המקור — באנגלית "
+                "אין הבחנה, ובעברית זו בדיוק השגיאה.")
+    return "\n".join(rows) + "\n\n"
+
+
+def cast_table(notes: str) -> str:
+    """מגדר לכל דמות, לפי שמה.
+
+    זו הטבלה העמידה מבין השתיים. טבלת הדוברים ממופתחת לאותיות
+    שמגיעות מזיהוי דוברים, וכשהוא חסר היא חסרת ערך לגמרי. שם של
+    דמות מופיע בדיאלוג עצמו, ולכן הטבלה הזאת עובדת תמיד.
+
+    והיא גם עונה על השאלה הנכונה. טבלת הדוברים אומרת מי **מדבר**,
+    ו-12 השגיאות שנמדדו מול תרגום אולפן היו כולן על מי שפונים
+    **אליו**: "את משוגעת?", "את הבעלים החדשה?" — לדעת מי מדבר אינו
+    מספיק כדי לדעת למי
+    """
+    found = _CAST_LINE.search(notes or "")
+    if not found:
+        log.warning("אין שורת @דמויות במסמך החקר — המגדר יישען על "
+                    "הקשר בלבד, וזו הנקודה שבה הוא נשבר")
+        return ""
+    return " ".join(found.group(1).split())[:400]
 
 
 def _cap(text: str, limit: int) -> str:
