@@ -3074,6 +3074,48 @@ def _drop_echoes():
     assert report["כפולות"] == 1, report
 
 
+@check("הזיות על שקט נמחקות בשני המסלולים, ודיבור אמיתי נשאר")
+def _hallucinations():
+    from zovexsub import config, stt
+
+    # קרדיט מתרגם בכל שפה. נמדד אצל המשתמש: שורה בשוודית באמצע
+    # סרט יפני, בתוך חור של שתי דקות. הרשימה שהייתה כללה אנגלית
+    # ועברית בלבד ולכן פספסה אותה
+    for junk in ("Undertexter av Nicolai Winther",
+                 "Subtitles by the Amara.org community",
+                 "Sous-titres par Jean Dupont",
+                 "Untertitel von Hans Meier",
+                 "תרגום: דוד לוי"):
+        assert stt._CREDIT.search(junk.lower()), junk
+
+    # ודיבור אמיתי על כתוביות אינו נתפס
+    for real in ("אני קורא את הכתוביות",
+                 "the subtitles are wrong",
+                 "תודה רבה לך"):
+        assert not stt._CREDIT.search(real.lower()), real
+
+    # סינון לפי VAD: קטע שיושב בשקט נמחק, קטע על דיבור נשאר.
+    # זה מה שמגן גם על מסלול ג'מיני, שאינו מחזיר no_speech_prob
+    speech = [(10.0, 20.0), (40.0, 50.0)]
+    segments = [
+        stt.Segment(0, 11.0, 13.0, "דיבור אמיתי"),
+        stt.Segment(1, 25.0, 28.0, "Undertexter av Nicolai Winther"),
+        stt.Segment(2, 41.0, 44.0, "עוד דיבור"),
+    ]
+    gone = stt.drop_nonspeech(segments, speech)
+    assert gone == 1, gone
+    assert [s.text for s in segments] == ["דיבור אמיתי", "עוד דיבור"]
+
+    # שורה ארוכה אינה נמחקת גם בשקט: VAD מפספס לחישה ודיבור מעל
+    # מוזיקה, ושורה אמיתית שנמחקה גרועה משורה מומצאת שנשארה
+    long_one = [stt.Segment(0, 25.0, 30.0, "א" * (config.NONSPEECH_MAX_CHARS + 5))]
+    assert stt.drop_nonspeech(long_one, speech) == 0
+
+    # ובלי VAD לא נוגעים בכלום
+    keep = [stt.Segment(0, 25.0, 28.0, "משהו")]
+    assert stt.drop_nonspeech(keep, []) == 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

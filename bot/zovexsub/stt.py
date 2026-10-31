@@ -224,6 +224,44 @@ def speech_gaps(segments: list[Segment], speech: list[tuple[float, float]],
     return found
 
 
+def drop_nonspeech(segments: list[Segment],
+                   speech: list[tuple[float, float]]) -> int:
+    """מוחק קטעים שיושבים היכן שה-VAD לא שמע דיבור. מחזיר כמה נמחקו.
+
+    זה התיקון שהמחקר מצביע עליו כחזק ביותר להזיות: המודל אומן על
+    קורפוס כתוביות, ולכן על שקט הוא פולט קרדיט של מתרגם או "תודה
+    שצפיתם". הדרך לעצור את זה היא לא לנחש לפי מילים אלא לבדוק אם
+    בכלל נשמע שם דיבור.
+
+    זה עובד גם למסלול ג'מיני, שאינו מחזיר no_speech_prob בכלל —
+    ולכן היה חשוף לגמרי. הסינון שהיה קיים רץ רק במסלול Groq.
+
+    שמרני בכוונה: נמחק רק קטע שכמעט כולו מחוץ לדיבור, ורק כשהוא
+    קצר. ‏VAD מפספס לחישה ודיבור מעל מוזיקה, ושורה אמיתית שנמחקה
+    גרועה משורה מומצאת שנשארה
+    """
+    if not speech:
+        return 0
+    edge = config.NONSPEECH_COVER
+    gone = 0
+    for seg in list(segments):
+        width = seg.end - seg.start
+        if width <= 0 or len(seg.text.strip()) > config.NONSPEECH_MAX_CHARS:
+            continue
+        heard = sum(min(seg.end, stop) - max(seg.start, start)
+                    for start, stop in speech
+                    if start < seg.end and stop > seg.start)
+        if heard <= width * edge:
+            log.info("נמחק קטע ללא דיבור ב-%.0f שניות: %s",
+                     seg.start, seg.text[:60])
+            segments.remove(seg)
+            gone += 1
+    if gone:
+        for position, segment in enumerate(segments):
+            segment.index = position
+    return gone
+
+
 def _already_there(found: Segment, settled: list[tuple[float, float]],
                    share: float = 0.5) -> bool:
     """האם הקטע שהוצל חופף למה שכבר תומלל.
@@ -510,6 +548,17 @@ _JUNK = {
     "subtitles by", "amara.org", "please subscribe", "משנה הבאה",
 }
 
+# קרדיט של מתרגם, בכל שפה. המודל אומן על קורפוס כתוביות, ולכן על
+# קטע שקט הוא פולט בדיוק את השורות האלה — נמדד אצל המשתמש:
+# "Undertexter av Nicolai Winther" הופיע באמצע סרט יפני, בתוך חור
+# של שתי דקות. רשימה באנגלית בלבד לא תפסה אותה
+_CREDIT = re.compile(
+    r"(?i)\b(sub(title)?s?|undertext(er|ning)?|sous-titres|untertitel"
+    r"|subt[ií]tulos|sottotitoli|legendas|napisy|titulky|subtitrare"
+    r"|altyaz[ıi]|แปลโดย|字幕|자막|перевод|субтитры|תרגום|כתוביות)\b"
+    r".{0,24}(?:\b(?:by|av|de|par|von|por|di|przez|od|av/by)\b|[:\-\u2013])"
+    r"|\bamara\.org\b")
+
 
 def _drop_hallucinations(segments: list[Segment]) -> list[Segment]:
     """Whisper נוטה להמציא טקסט על קטעי שקט. מסננים את החשודים."""
@@ -519,6 +568,11 @@ def _drop_hallucinations(segments: list[Segment]) -> list[Segment]:
         if seg.no_speech > 0.75 and len(low) < 40:
             continue
         if any(j in low for j in _JUNK) and len(low) < 45:
+            continue
+        # קרדיט מתרגם נמחק גם כשהוא ארוך יותר ובלי קשר ל-no_speech:
+        # זו אינה שורה שנאמרה אי פעם בסרט, בשום שפה
+        if _CREDIT.search(low) and len(low) < 70:
+            log.info("נמחק קרדיט מתרגם שהמודל המציא: %s", seg.text[:60])
             continue
         # כתובת אתר או סימן מים — כמעט תמיד המצאה של המודל, לא דיבור
         if _URL.search(low) and len(low) < 60:

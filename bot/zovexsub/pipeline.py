@@ -10,7 +10,8 @@ from typing import Awaitable, Callable
 
 from . import (align, config, gemini_stt, hebrew, media,
                progress as prog, realign, srt, vad)
-from .stt import recover_gaps, title_hint as stt_title_hint, transcribe
+from .stt import (drop_nonspeech, recover_gaps,
+                  title_hint as stt_title_hint, transcribe)
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +126,18 @@ async def run(source: Path, work: Path, *, progress: Progress,
     speech = await vad.speech_spans(audio)
     if speech is None:
         speech = await media.speech_spans(audio)
+
+    # הזיות על שקט: המודל אומן על קורפוס כתוביות, ולכן בקטע שקט הוא
+    # פולט קרדיט של מתרגם או "תודה שצפיתם". נמדד אצל המשתמש —
+    # "Undertexter av Nicolai Winther" באמצע סרט יפני.
+    #
+    # הסינון הישן רץ רק במסלול Groq, ואילו המסלול הראשי הוא ג'מיני:
+    # הוא גם אינו מחזיר no_speech_prob, ולכן היה חשוף לגמרי. בדיקה
+    # מול ה-VAD עובדת לשניהם, ואינה תלויה במה שהספק מדווח
+    if speech:
+        faked = drop_nonspeech(transcript.segments, speech)
+        if faked:
+            log.warning("נמחקו %d שורות שנאמרו היכן שלא נשמע דיבור", faked)
 
     # הצלת דיבור שהתמלול פספס. נמדד בשטח: 19 עד 45 שניות בכל פרק
     # נשמעו ל-VAD וחזרו ריקות מהתמלול, וזה נרשם ללוג בלבד. חור אינו

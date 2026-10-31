@@ -620,6 +620,11 @@ SRT_TAIL_GAP = float(os.getenv("SRT_TAIL_GAP") or 60.0)
 # שני החצאים הוא רעש מדידה ולא סחיפה אמיתית
 # הצלת קטעי דיבור שהתמלול פספס: אורך מינימלי שראוי לנסות שוב,
 # תקרה למספר הניסיונות, וריפוד להקשר משני צידי החור
+# סינון הזיות לפי VAD: איזה חלק מהקטע חייב להיות מכוסה בדיבור כדי
+# שלא ייחשב המצאה, ועד כמה הוא יכול להיות ארוך. שמרני בכוונה —
+# שורה אמיתית שנמחקה גרועה משורה מומצאת שנשארה
+NONSPEECH_COVER = float(os.getenv("NONSPEECH_COVER") or 0.10)
+NONSPEECH_MAX_CHARS = _int("NONSPEECH_MAX_CHARS", 80)
 RECOVER_GAPS = _int("RECOVER_GAPS", 1)
 RECOVER_MIN = float(os.getenv("RECOVER_MIN") or 1.2)
 RECOVER_MAX = _int("RECOVER_MAX", 160)
