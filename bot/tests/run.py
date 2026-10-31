@@ -3016,6 +3016,32 @@ def _title_hint():
     assert "pool, chunk, hint," in body, body[:0] or "הרמז אינו מועבר"
 
 
+@check("דרייב מדלג על שאלת האיכות, והצריבה מדווחת זמן משוער")
+def _drive_skips_quality_and_burn_eta():
+    import inspect
+    from zovexsub import botjob, botmenu, progress
+
+    # לקובץ בדרייב יש איכות אחת, ואנחנו ממילא כופים את תבנית source.
+    # השאלה שם היא לחיצה על שאלה שאין לה תשובה
+    body = inspect.getsource(botmenu.greet_link)
+    assert "_is_drive(url)" in body, "דרייב עוד נשאל על איכות"
+    assert body.index("_is_drive") < body.index("QUALITY"), \
+        "הבדיקה חייבת לקרות לפני מסך האיכות"
+
+    # הצריבה עוברת דרך מנוע ההתקדמות המשותף ולא בונה טקסט ביד,
+    # ולכן היא מקבלת שעון וזמן משוער כמו שאר השלבים
+    burn = inspect.getsource(botjob._burn)
+    assert "prog.Stage(" in burn, "הצריבה עוד כותבת טקסט ישירות"
+    assert 'f"🔥 צורב · {fraction' not in burn, "הטקסט הידני נשאר"
+
+    # ו-Stage באמת מוציא "נותרו" כשיש מספיק מידע להעריך
+    stage = progress.Stage(lambda _text: None, "🔥 צורב")
+    stage.fraction = 0.5
+    stage.started -= 600          # חצי שעבדה עשר דקות
+    assert stage.eta() > 1, stage.eta()
+    assert "נותרו" in stage._render(), stage._render()
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

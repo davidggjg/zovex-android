@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import (botapi, botmenu, config, fastio, fetch, fileid,
                localbot, media, pipeline)
+from . import progress as prog
 from . import srt as srt_tools
 
 log = logging.getLogger(__name__)
@@ -705,6 +706,12 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
     dst = work / f"{source.stem}.he.mp4"
     try:
         said_fallback = False
+        # אותו מנוע התקדמות של שאר הצינור, ולא טקסט שנבנה כאן ביד.
+        # ‏Stage כבר נותן פס, אחוזים, שעון, זמן משוער והתראת תקיעה —
+        # הצריבה כתבה "צורב · 45% · 2.3x" ישירות למסך, ולכן דווקא
+        # השלב הארוך ביותר היה היחיד בלי "נותרו ~"
+        burning = prog.Stage(
+            lambda text: screen.show(text, force=True), "🔥 צורב")
 
         async def on_burn(fraction: float, speed: str) -> None:
             # סיבת הנפילה למסלול האיטי מגיעה דרך אותו ערוץ של ההתקדמות,
@@ -719,7 +726,7 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
                     "⚠️ הצריבה המקבילית נפלה, ממשיך בתהליך יחיד "
                     "(איטי יותר).\n"
                     + localbot.code(speed.split(":", 1)[-1].strip()))
-            await screen.show(f"🔥 צורב · {fraction * 100:.0f}% · {speed}")
+            await burning.show(fraction, note=speed)
 
         style = media.Style(size=choice.size, font=choice.font,
                             look=choice.look)

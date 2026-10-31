@@ -273,8 +273,13 @@ async def greet_link(chat_id, url: str) -> None:
     ההודעה "שלח סרטון ואתחיל" — גם כשהיה בו קישור תקין שההורדה
     יודעת להוריד
     """
-    # הודעת ביניים: בדיקת הקישור לוקחת שניות, ובלעדיה נראה שלא קרה כלום
-    sent = await localbot.say(chat_id, "🔎 בודק אילו איכויות זמינות…")
+    # בדרייב אין מה לבחור: הקובץ הוא אחד, ואנחנו ממילא כופים את
+    # תבנית source. שאלת האיכות שם היא לחיצה מיותרת על שאלה שאין לה
+    # תשובה, ו"בודק אילו איכויות זמינות" הוא גם משפט לא נכון
+    single = fetch._is_drive(url)
+    sent = await localbot.say(
+        chat_id, "🔎 קורא את הקישור…" if single
+        else "🔎 בודק אילו איכויות זמינות…")
     message_id = sent.get("message_id")
     if not message_id:
         return
@@ -282,6 +287,13 @@ async def greet_link(chat_id, url: str) -> None:
     choice.url, choice.name = url, "link.mp4"
     _open[message_id] = choice
     log.info("קישור התקבל בבוט: %s", url[:120])
+
+    if single:
+        # ישר למסך הבחירה. אין איכויות ואין שפות לבחור מהן
+        text, keys = source_screen(chat_id)
+        await localbot.edit(chat_id, message_id, text,
+                            buttons=localbot.keyboard(keys))
+        return
 
     tall, voices = await asyncio.gather(fetch.heights(url),
                                         fetch.audio_options(url))
