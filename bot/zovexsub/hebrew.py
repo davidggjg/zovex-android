@@ -271,7 +271,9 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
                 # היו הצוואר ולא המכסות (429 היה אפס), אלא הגרורים
                 result = await asyncio.wait_for(
                     gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
-                                    schema=schema, temperature=0.0),
+                                    schema=schema, temperature=0.0,
+                                    model=config.ADDRESSEE_MODEL or None,
+                                    thinking=config.ADDRESSEE_THINKING),
                     timeout=config.ADDRESSEE_TIMEOUT)
             except (gemini.GeminiError, asyncio.TimeoutError) as first:
                 # מעבר המגדר הוא התיקון הנראה ביותר בעברית, ולכן הוא
@@ -284,7 +286,9 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
                 try:
                     result = await asyncio.wait_for(
                         gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
-                                        schema=schema, temperature=0.0),
+                                        schema=schema, temperature=0.0,
+                                        model=config.ADDRESSEE_MODEL or None,
+                                        thinking=config.ADDRESSEE_THINKING),
                         timeout=config.ADDRESSEE_TIMEOUT)
                 except (gemini.GeminiError, asyncio.TimeoutError) as again:
                     await skip(f"{type(again).__name__} פעמיים")

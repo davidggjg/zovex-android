@@ -372,7 +372,8 @@ def _drop_thinking(body: dict) -> bool:
 
 
 async def ask_json(system: str, user: str, *, schema: dict | None = None,
-                   model: str | None = None, temperature: float = 0.2) -> object:
+                   model: str | None = None, temperature: float = 0.2,
+                   thinking: str | None = None) -> object:
     """שאלה שהתשובה שלה חייבת להיות JSON תקין."""
     gen: dict = {"temperature": temperature, "response_mime_type": "application/json",
                  "maxOutputTokens": 65536}
@@ -389,8 +390,13 @@ async def ask_json(system: str, user: str, *, schema: dict | None = None,
     #   GenerateContentConfig.thinking_config -> thinkingConfig
     #   ThinkingConfig.thinking_level         -> thinkingLevel
     #   ThinkingLevel: MINIMAL / LOW / MEDIUM / HIGH
-    if config.GEMINI_THINKING:
-        gen["thinkingConfig"] = {"thinkingLevel": config.GEMINI_THINKING}
+    # רמת חשיבה לכל קריאה, ולא רק גלובלית: מעבר המגדר דורש הסקה
+    # (מי מדבר אל מי) ונפגע קשות מחשיבה נמוכה, בעוד שאר הקריאות
+    # לא. נמדד על אותו סרט: במעבר ל-3.8-flash עם LOW צורות הזכר
+    # עלו מ-52 ל-76 בעוד שתי הדמויות נשים
+    level = config.GEMINI_THINKING if thinking is None else thinking
+    if level:
+        gen["thinkingConfig"] = {"thinkingLevel": level}
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],

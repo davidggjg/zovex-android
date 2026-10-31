@@ -3307,6 +3307,45 @@ def _drop_filler():
     assert report["קולות"] == 1, report
 
 
+@check("מעבר המגדר מקבל מודל ורמת חשיבה משלו")
+def _addressee_own_model():
+    import asyncio
+    import inspect
+    from zovexsub import config, gemini, hebrew
+
+    # נמדד על אותו סרט מול תרגום אולפן, אחרי המעבר ל-3.8-flash
+    # עם חשיבה LOW: צורות הזכר עלו מ-52 ל-76 בעוד שתי הדמויות
+    # נשים. קביעת הנמען דורשת הסקה, וזה בדיוק מה שחשיבה נמוכה
+    # מורידה — בעוד שאר הצינור לא נפגע
+    assert config.ADDRESSEE_THINKING == "HIGH", config.ADDRESSEE_THINKING
+
+    body = inspect.getsource(hebrew)
+    start = body.index("ADDRESSEE_SYSTEM, prompt")
+    chunk = body[start:start + 1600]
+    assert chunk.count("ADDRESSEE_THINKING") >= 2, "גם הניסיון השני צריך אותה"
+    assert chunk.count("ADDRESSEE_MODEL") >= 2, chunk[:200]
+
+    # ו-ask_json באמת מכבד עקיפה לכל קריאה
+    seen: dict = {}
+
+    async def fake_call(model, body_, **_kw):
+        seen["gen"] = body_["generationConfig"]
+        return {"candidates": [{"content": {"parts": [{"text": "{}"}]}}]}
+
+    saved_call, saved_level = gemini._call, config.GEMINI_THINKING
+    gemini._call, config.GEMINI_THINKING = fake_call, "LOW"
+    try:
+        asyncio.run(gemini.ask_json("sys", "user", thinking="HIGH"))
+        assert seen["gen"]["thinkingConfig"] == {"thinkingLevel": "HIGH"}, seen
+        asyncio.run(gemini.ask_json("sys", "user"))
+        assert seen["gen"]["thinkingConfig"] == {"thinkingLevel": "LOW"}, seen
+        # ועקיפה ריקה מכבה את השדה לגמרי
+        asyncio.run(gemini.ask_json("sys", "user", thinking=""))
+        assert "thinkingConfig" not in seen["gen"], seen
+    finally:
+        gemini._call, config.GEMINI_THINKING = saved_call, saved_level
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
