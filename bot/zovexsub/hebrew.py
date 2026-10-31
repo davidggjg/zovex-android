@@ -684,7 +684,20 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
 חובה להחזיר בדיוק {len(window)} פריטים, אינדקס לכל שורה שביקשתי."""
 
         async with gate:
-            result = await gemini.ask_json(TRANSLATE_SYSTEM, prompt, schema=schema)
+            try:
+                # התקרה חסרה כאן והייתה רק בהתאמת המגדר ובבקרת האיכות.
+                # נמדד אצל המשתמש: "מתרגם 609/659 · 1 חלונות בעבודה ·
+                # ממתין למודל · אין תזוזה 6:25". חלון אחד תקוע מחזיק
+                # את כל התרגום, ושבע מכסות ג'מיני אינן עוזרות לו —
+                # בקשה בודדת רצה על מפתח אחד
+                result = await asyncio.wait_for(
+                    gemini.ask_json(TRANSLATE_SYSTEM, prompt, schema=schema),
+                    timeout=config.GEMINI_WINDOW_TIMEOUT)
+            except asyncio.TimeoutError:
+                log.warning("חלון תרגום עבר %.0f שניות — השורות שלו "
+                            "יטופלו אחת-אחת",
+                            config.GEMINI_WINDOW_TIMEOUT)
+                result = {}
         got = _collect(result)
         for seg in window:
             out[seg.index] = (got.get(seg.index) or "").strip()
@@ -706,7 +719,9 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
                           "אלה קודים או מספרי זיהוי, לא מידות — אין "
                           "לפרש אותם ואין להמיר אותם למילים.\n")
             async with gate:
-                retry = await gemini.ask_json(
+                # גם הניסיון החוזר חסום בזמן: בלעדיו חלון שנחתך
+                # בתקרה היה חוזר כאן כשורות בודדות בלי שום גבול
+                retry = await _bounded(gemini.ask_json(
                     TRANSLATE_SYSTEM,
                     f"מסמך הנחיות:\n{_cap(notes, 8000)}\n\n"
                     f"{demand}"
@@ -715,7 +730,7 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
                     f'השורה לתרגום: "{seg.text}"\n'
                     'החזר JSON: {"lines":[{"i":%d,"he":"..."}]}' % idx,
                     schema=schema, temperature=0.3,
-                )
+                ))
             fixed = (_collect(retry).get(idx) or "").strip()
             if nums:
                 # שומרים את הניסיון החוזר רק אם הוא באמת החזיר את
@@ -858,6 +873,24 @@ def _quality_prompt(notes: str, paired: str) -> str:
 לכל שגיאה החזר את השורה המתוקנת במלואה.
 אם אין שגיאות החזר מערך ריק. אל תשנה שורות תקינות ואל תשפר סגנון.
 החזר JSON: {{"fixes": [{{"i": <אינדקס>, "he": "<עברית מתוקנת>", "why": "<הסיבה>"}}]}}"""
+
+
+async def _bounded(coro, default: dict | None = None) -> dict:
+    """מריץ קריאה עם תקרת זמן, ומחזיר ריק כשהיא עברה.
+
+    שורה בודדת שנתקעת אינה שווה את העבודה כולה: בלי התקרה היא
+    מחזיקה את הגייט, ואחריה את כל שאר השורות שממתינות לו
+    """
+    try:
+        return await asyncio.wait_for(coro,
+                                      timeout=config.GEMINI_WINDOW_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.warning("קריאה בודדת עברה %.0f שניות ונזנחה",
+                    config.GEMINI_WINDOW_TIMEOUT)
+        return default if default is not None else {}
+    except gemini.GeminiError as exc:
+        log.warning("קריאה בודדת נכשלה: %s", exc)
+        return default if default is not None else {}
 
 
 async def _quality_pass(segments: list[Segment], lines: list[str], notes: str,

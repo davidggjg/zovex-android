@@ -2950,6 +2950,45 @@ def _bot_path_gated():
         assert "_permitted(" in body, f"{fn.__name__} אינו מגודר"
 
 
+@check("גם חלון התרגום עצמו חסום בזמן, ולא רק המעברים שאחריו")
+def _translate_window_bounded():
+    import asyncio
+    import inspect
+    from zovexsub import config, hebrew
+
+    # נמדד אצל המשתמש: "מתרגם 609/659 · 1 חלונות בעבודה · ממתין
+    # למודל · אין תזוזה 6:25". התקרה הייתה רק בהתאמת המגדר ובבקרת
+    # האיכות, ומעבר התרגום עצמו נשאר בלי גבול
+    body = inspect.getsource(hebrew.translate_segments) if hasattr(
+        hebrew, "translate_segments") else inspect.getsource(hebrew)
+    assert body.count("GEMINI_WINDOW_TIMEOUT") >= 3, \
+        "מעבר אחד לפחות נשאר בלי תקרת זמן"
+
+    saved = config.GEMINI_WINDOW_TIMEOUT
+    config.GEMINI_WINDOW_TIMEOUT = 0.05
+    try:
+        async def slow():
+            await asyncio.sleep(5)
+            return {"lines": [{"i": 0, "he": "לא אמור להגיע"}]}
+
+        # קריאה שנתקעת מוחזרת ריקה, ולא מחזיקה את העבודה
+        assert asyncio.run(hebrew._bounded(slow())) == {}
+
+        # וקריאה שמחזירה בזמן עוברת כמו שהיא
+        async def quick():
+            return {"lines": [{"i": 0, "he": "שלום"}]}
+
+        assert asyncio.run(hebrew._bounded(quick()))["lines"][0]["he"] == "שלום"
+
+        # וכשל של ג'מיני אינו מתפשט אלא חוזר ריק
+        async def broken():
+            raise hebrew.gemini.GeminiError("נפל")
+
+        assert asyncio.run(hebrew._bounded(broken())) == {}
+    finally:
+        config.GEMINI_WINDOW_TIMEOUT = saved
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
