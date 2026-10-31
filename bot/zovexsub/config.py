@@ -590,8 +590,11 @@ EDIT_FLOOD_MAX = float(os.getenv("EDIT_FLOOD_MAX") or 20)
 SUB_LOOK = (os.getenv("SUB_LOOK") or "קו").strip()
 SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
 SRT_MAX_LINES = 2
-SRT_MIN_DURATION = 1.0
-SRT_MAX_DURATION = 7.0
+# כמה זמן כתובית נשארת על המסך. המשתמש השווה מול תרגום אולפן
+# וראה ששם השורות נשארות ארוך יותר. אלה היו קשיחים בקוד, ולכן
+# כל כוונון דרש שינוי קוד ופריסה — עכשיו הם ב-.env
+SRT_MIN_DURATION = float(os.getenv("SRT_MIN_DURATION") or 1.0)
+SRT_MAX_DURATION = float(os.getenv("SRT_MAX_DURATION") or 7.0)
 # מהירות קריאה בתווים לשנייה, ורווח מינימלי בין כתוביות. היו מוטבעים
 # בקוד כ-17 ו-0.08, ושלב מניעת החפיפה השתמש ב-0.04 — שלושה מספרים
 # שונים לאותו רעיון
