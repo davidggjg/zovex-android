@@ -236,9 +236,10 @@ def drop_nonspeech(segments: list[Segment],
     זה עובד גם למסלול ג'מיני, שאינו מחזיר no_speech_prob בכלל —
     ולכן היה חשוף לגמרי. הסינון שהיה קיים רץ רק במסלול Groq.
 
-    שמרני בכוונה: נמחק רק קטע שכמעט כולו מחוץ לדיבור, ורק כשהוא
-    קצר. ‏VAD מפספס לחישה ודיבור מעל מוזיקה, ושורה אמיתית שנמחקה
-    גרועה משורה מומצאת שנשארה
+    שתי ראיות נדרשות, ולא אחת: גם שהקטע יושב מחוץ לדיבור, וגם
+    שהטקסט עצמו נראה כמו הזיה. הגרסה שדרשה VAD בלבד מחקה בקובץ
+    אמיתי שלוש דקות דיבור וחמישה חורים חדשים — VAD מפספס לחישה
+    ודיבור מעל מוזיקה, ובדרמה זה חלק גדול מהסרט
     """
     if not speech:
         return 0
@@ -246,7 +247,22 @@ def drop_nonspeech(segments: list[Segment],
     gone = 0
     for seg in list(segments):
         width = seg.end - seg.start
-        if width <= 0 or len(seg.text.strip()) > config.NONSPEECH_MAX_CHARS:
+        body = seg.text.strip()
+        if width <= 0 or len(body) > config.NONSPEECH_MAX_CHARS:
+            continue
+        # ‏VAD לבדו אינו עילה למחיקה, וזה נמדד ביוקר: הגרסה הראשונה
+        # מחקה כל קטע שישב מחוץ לדיבור, ובקובץ של המשתמש נעלמו
+        # שלוש דקות דיבור ונפתחו חמישה חורים חדשים — מול שלוש
+        # שורות הזיה שנחסכו. ‏VAD מפספס לחישה ודיבור מעל מוזיקה,
+        # ובדרמה זה חלק גדול מהסרט.
+        #
+        # לכן נדרשת ראיה שנייה: הטקסט עצמו חייב להיראות כמו הזיה —
+        # קרדיט מתרגם, ביטוי מוכר, או שורה בלי שום תוכן
+        low = body.lower().strip(".!?,- ")
+        suspect = (_CREDIT.search(low)
+                   or any(j in low for j in _JUNK)
+                   or not any(ch.isalnum() for ch in body))
+        if not suspect:
             continue
         heard = sum(min(seg.end, stop) - max(seg.start, start)
                     for start, stop in speech
