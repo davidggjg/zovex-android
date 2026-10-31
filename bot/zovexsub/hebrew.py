@@ -728,6 +728,39 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
             out[seg.index] = (got.get(seg.index) or "").strip()
 
         missing = [s.index for s in window if not out[s.index]]
+        # חלון שנפל כולו אינו מטופל שורה-שורה. המסלול הזה נבנה
+        # לכמה שורות שהמודל השמיט, והוא רץ בטור: חלון של חמישים
+        # שורות שנחתך בתקרה הפך לחמישים קריאות רצופות, כל אחת עד
+        # GEMINI_WINDOW_TIMEOUT, בעוד הן מחזיקות מקום בגייט.
+        # נמדד אצל המשתמש: "2 חלונות בעבודה · אין תזוזה 13:35".
+        #
+        # במקום זה ניסיון שני אחד על החלון כולו, ואם גם הוא נפל —
+        # טקסט המקור. שורה באנגלית גרועה פחות משעה של המתנה
+        if missing and len(missing) == len(window):
+            log.warning("חלון %d-%d חזר ריק — ניסיון שני על החלון כולו",
+                        window[0].index, window[-1].index)
+            async with gate:
+                again = await _bounded(gemini.ask_json(
+                    TRANSLATE_SYSTEM, prompt, schema=schema))
+            got = _collect(again)
+            for seg in window:
+                out[seg.index] = (got.get(seg.index) or "").strip()
+            missing = [s.index for s in window if not out[s.index]]
+            if missing:
+                log.warning("חלון %d-%d נכשל פעמיים — %d שורות נשארות "
+                            "בשפת המקור", window[0].index, window[-1].index,
+                            len(missing))
+                for idx in missing:
+                    out[idx] = segments[idx].text
+                missing = []
+        elif len(missing) > config.TRANSLATE_RETRY_MAX:
+            # גם כשרק חלק חסר, יש גבול. מעבר לו עדיף המקור
+            log.warning("%d שורות חסרות בחלון — מתקנים %d ומשאירים "
+                        "את השאר במקור", len(missing),
+                        config.TRANSLATE_RETRY_MAX)
+            for idx in missing[config.TRANSLATE_RETRY_MAX:]:
+                out[idx] = segments[idx].text
+            missing = missing[:config.TRANSLATE_RETRY_MAX]
         # שורה שאיבדה מספר מטופלת כמו שורה חסרה: אותו מסלול, עם הוראה
         # מפורשת. בלי זה "Not so fast, 511" ממשיך להגיע למשתמש כ"לא כל
         # כך מהר, מטר עשרים" — שגיאת תוכן שהצופה מבחין בה

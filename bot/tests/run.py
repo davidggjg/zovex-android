@@ -3227,6 +3227,30 @@ def _research_gets_title():
     assert "title=stt_title_hint(source)" in inspect.getsource(pipeline.run)
 
 
+@check("חלון תרגום שנפל כולו אינו מטופל שורה-שורה")
+def _failed_window_not_serial():
+    import inspect
+    from zovexsub import config, hebrew
+
+    # מסלול השורות הבודדות נבנה לכמה שורות שהמודל השמיט, והוא רץ
+    # בטור. חלון של חמישים שורות שנחתך בתקרה הפך לחמישים קריאות
+    # רצופות, כל אחת עד GEMINI_WINDOW_TIMEOUT, והן מחזיקות מקום
+    # בגייט כל הזמן הזה. נמדד אצל המשתמש: "2 חלונות בעבודה ·
+    # אין תזוזה 13:35" על שלב שתוקצב בהרבה פחות
+    body = inspect.getsource(hebrew)
+    assert "len(missing) == len(window)" in body, \
+        "חלון שנפל כולו עדיין נכנס למסלול השורות הבודדות"
+    assert "TRANSLATE_RETRY_MAX" in body, "אין גבול למספר התיקונים"
+
+    # הגבול קיים והוא קטן מחלון שלם
+    assert 1 <= config.TRANSLATE_RETRY_MAX < hebrew.WINDOW, \
+        (config.TRANSLATE_RETRY_MAX, hebrew.WINDOW)
+
+    # וכשגם הניסיון השני נופל, השורות נשארות בשפת המקור ולא
+    # נעלמות: שורה באנגלית גרועה פחות משורה חסרה
+    assert "out[idx] = segments[idx].text" in body
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
