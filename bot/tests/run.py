@@ -3197,6 +3197,36 @@ def _upload_turns():
     assert config.UPLOAD_TURN >= 1
 
 
+@check("שם הסרטון מגיע לחקר, והחיפוש נדלק רק כשיש מה לחפש")
+def _research_gets_title():
+    import inspect
+    from zovexsub import hebrew, pipeline
+
+    # החקר חילץ שמות מהתמליל וחיפש אותם ברשת — כלומר אימת את מה
+    # שהתמלול כבר שגה בו. נמדד אצל המשתמש: הגיבורה Airi יצאה
+    # "היידי" בשישה מתוך תשעה אזכורים, והאימות לא יכול היה לעזור
+    # כי הוא חיפש "היידי". שם הסרטון הוא הנתון היחיד שאינו מגיע
+    # מהתמליל, ולכן היחיד שיכול לתקן אותו
+    assert "title" in inspect.signature(hebrew.research_notes).parameters
+    assert "title" in inspect.signature(hebrew.build_hebrew).parameters
+
+    body = inspect.getsource(hebrew.research_notes)
+    assert "grounded=bool(title)" in body, "החיפוש אינו תלוי בשם הסרטון"
+    assert "FACTS_TITLE" in body, "השם אינו נכנס לפרומפט"
+
+    filled = hebrew.FACTS_TITLE.format(title="Never After Dark")
+    assert "Never After Dark" in filled
+    assert "השם הרשמי" in filled, filled
+
+    # ובלי שם, הפרומפט נשאר בדיוק כפי שהיה
+    plain = hebrew.FACTS_USER.format(titled="", part=1, total=1,
+                                     language="יפנית", transcript="שלום")
+    assert plain.startswith("להלן קטע"), plain[:40]
+
+    # והצינור מעביר את שם הקובץ, אחרי ניקוי תגיות ההפצה
+    assert "title=stt_title_hint(source)" in inspect.getsource(pipeline.run)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

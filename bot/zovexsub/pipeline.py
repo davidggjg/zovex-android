@@ -189,9 +189,9 @@ async def run(source: Path, work: Path, *, progress: Progress,
         await stage.show(fraction, note=note)
 
     try:
-        lines, notes = await hebrew.build_hebrew(transcript.segments,
-                                                 transcript.language,
-                                                 on_step=on_translate)
+        lines, notes = await hebrew.build_hebrew(
+            transcript.segments, transcript.language,
+            on_step=on_translate, title=stt_title_hint(source).rstrip("."))
     finally:
         stage.stop()
     await stage.finish()

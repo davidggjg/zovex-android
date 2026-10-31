@@ -68,7 +68,18 @@ FACTS_SYSTEM = """אתה עורך לשוני באולפן כתוביות. לפנ
 באינטרנט. דיוק עובדתי קודם לכל. אתה מקבל קטע אחד מתוך סרטון ארוך —
 התייחס רק למה שמופיע בו, ואל תנסה לסכם את הסרטון כולו."""
 
-FACTS_USER = """להלן קטע {part} מתוך {total} בתמליל (שפת מקור: {language}).
+# שם הסרטון הוא הנתון היחיד שאינו מגיע מהתמלול עצמו, ולכן הוא
+# היחיד שיכול לתקן אותו. בלעדיו החקר מחלץ שם מהתמליל, מחפש אותו
+# ברשת ומאמת אותו — גם כשהתמלול שגה בו מלכתחילה. נמדד אצל
+# המשתמש: הגיבורה Airi יצאה "היידי" בשישה מתוך תשעה אזכורים,
+# והאימות ברשת לא יכול היה לעזור כי הוא חיפש "היידי"
+FACTS_TITLE = """שם הסרטון: {title}
+חפש ברשת את רשימת הדמויות והשחקנים של הסרטון הזה, וקבע לפיה את
+איות השמות. שם שנשמע בתמליל אחרת מהשם ברשימה הרשמית — השם הרשמי
+גובר, והתמלול שגה בו. ציין במפורש "בתמליל נשמע X, השם הנכון Y".
+"""
+
+FACTS_USER = """{titled}להלן קטע {part} מתוך {total} בתמליל (שפת מקור: {language}).
 חלץ וכתוב בעברית, בסעיפים האלה בדיוק. סעיף בלי ממצאים — כתוב "אין".
 
 שמות פרטיים: כל שם של אדם/מקום/חברה/מוצר שמופיע בקטע, והאיות הסביר בעברית. סמן ב-(?) שם שאינך בטוח באיותו.
@@ -387,7 +398,8 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
     return lines
 
 
-async def research_notes(numbered: str, language: str, on_step=None) -> str:
+async def research_notes(numbered: str, language: str, on_step=None,
+                         title: str = "") -> str:
     """בונה את מסמך ההנחיות בכמה קריאות מקבילות במקום אחת סדרתית.
 
     קודם זו הייתה קריאה אחת על כל הפרק, עם חיפוש גוגל, ובלי שום דיווח
@@ -465,9 +477,13 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
         # בלי רשת: זו קריאה וחילוץ בלבד, והחיפוש הוא מה שהאט אותה
         return await gemini.research(
             FACTS_SYSTEM,
-            FACTS_USER.format(part=index + 1, total=len(chunks),
-                              language=language, transcript=chunk),
-            grounded=False,
+            FACTS_USER.format(
+                titled=(FACTS_TITLE.format(title=title) if title else ""),
+                part=index + 1, total=len(chunks),
+                language=language, transcript=chunk),
+            # עם רשת כשיש שם סרט: רק אז יש מה לחפש שאינו מגיע
+            # מהתמליל עצמו. בלי שם, חיפוש כאן רק מאט
+            grounded=bool(title),
         )
 
     async def verify(items: str) -> str:
@@ -545,7 +561,7 @@ async def research_notes(numbered: str, language: str, on_step=None) -> str:
 
 
 async def build_hebrew(segments: list[Segment], language: str,
-                       on_step=None) -> tuple[list[str], str]:
+                       on_step=None, title: str = "") -> tuple[list[str], str]:
     """מחזיר את שורות העברית (באורך ובסדר של הסגמנטים) ואת מסמך ההנחיות."""
     numbered = "\n".join(f"[{s.index}] {s.text}" for s in segments)
 
@@ -563,7 +579,8 @@ async def build_hebrew(segments: list[Segment], language: str,
                  time.monotonic() - started, gemini.tally.report(label))
         return result
 
-    notes = await staged("חקר", research_notes(numbered, language, on_step))
+    notes = await staged("חקר",
+                         research_notes(numbered, language, on_step, title))
     if not notes:
         notes = "לא התקבל מסמך הנחיות. הסק מגדרים ונמענים מתוך הקונטקסט עצמו, בזהירות."
 
