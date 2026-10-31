@@ -2989,6 +2989,33 @@ def _translate_window_bounded():
         config.GEMINI_WINDOW_TIMEOUT = saved
 
 
+@check("רמז התמלול נבנה משם הקובץ, נשלח לכל קטע, ושם כללי נדחה")
+def _title_hint():
+    import inspect
+    from pathlib import Path
+    from zovexsub import stt
+
+    # שם אמיתי נותן רמז: prompt של Whisper הוא המנגנון להטיית
+    # הפענוח לשמות פרטיים, ושם הקובץ הוא המקור היחיד שיש לפני
+    # התמלול — מילון מהתמלול עצמו הוא מעגל
+    assert stt.title_hint(Path(
+        "Avatar.Seven.Havens.S01E13.1080p.WEB.h264-GROUP.mkv")) == \
+        "Avatar Seven Havens."
+    assert stt.title_hint(Path(
+        "The.Dog.Stars.2026.1080p.AMZN.WEB-DL.DDP5.1.H.264-KyoGo.srt")) == \
+        "The Dog Stars."
+
+    # הורדה מקישור נקראת תמיד source.mp4, ורמז כזה מטה את המודל
+    # למילה "source" במקום לשמות שבסרט
+    for junk in ("source.mp4", "video.mkv", "download.mp4", "a.mp4"):
+        assert stt.title_hint(Path(junk)) == "", junk
+
+    # והרמז נשלח לכל קטע ולא רק לראשון
+    body = inspect.getsource(stt.transcribe)
+    assert "hint if index == 0" not in body, "הרמז חזר להיות רק לקטע הראשון"
+    assert "pool, chunk, hint," in body, body[:0] or "הרמז אינו מועבר"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

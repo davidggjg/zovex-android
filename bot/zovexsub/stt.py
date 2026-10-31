@@ -321,6 +321,47 @@ async def recover_gaps(segments: list[Segment],
     return added
 
 
+# שמות קבצים שאינם אומרים דבר על התוכן
+GENERIC_NAMES = frozenset({
+    "source", "video", "movie", "film", "file", "output", "input",
+    "untitled", "temp", "tmp", "download", "clip", "media", "audio",
+    "sample", "new", "test", "final", "episode", "vid",
+})
+
+
+def title_hint(source: "Path") -> str:
+    """רמז לתמלול מתוך שם הקובץ.
+
+    ‏prompt של Whisper הוא המנגנון הרשמי להטיית הפענוח לשמות פרטיים,
+    ושם הקובץ הוא המקור היחיד שיש לנו **לפני** התמלול: מילון שמות
+    אמיתי אפשר לבנות רק מהתמלול עצמו, וזה מעגל.
+
+    שם כמו "Avatar.Seven.Havens.S01E13.1080p.WEB.h264-GROUP" מכיל את
+    שם הסדרה, וזה בדיוק מה שמטה את המודל לאיית את השמות נכון במקום
+    לנחש אותם לפי צליל
+    """
+    stem = source.stem if hasattr(source, "stem") else str(source)
+    words: list[str] = []
+    for part in re.split(r"[.\s_\-]+", stem):
+        if not part:
+            continue
+        # מכאן והלאה זה תגיות הפצה ולא שם: עונה/פרק, רזולוציה, קודק
+        if re.fullmatch(r"(?i)s\d{1,2}(e\d{1,3})?|\d{3,4}p|x26[45]|h\.?26[45]"
+                        r"|web|webrip|web-?dl|bluray|hdtv|aac\d?|ddp?5|atmos"
+                        r"|hevc|dv|hdr|\d{4}|amzn|atvp|netflix|nf", part):
+            break
+        words.append(part)
+    name = " ".join(words).strip()
+    if len(name) < 3:
+        return ""
+    # שם כללי אינו רמז אלא רעש. הורדה מקישור יוצרת תמיד source.mp4
+    # (התבנית ב-fetch), ורמז "source" היה מטה את המודל למילה הזאת
+    # במקום לשמות שבסרט — כלומר מזיק יותר מלא לשלוח כלום
+    if name.lower().replace(" ", "") in GENERIC_NAMES:
+        return ""
+    return f"{name}."
+
+
 async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
                      on_chunk=None, work: Path | None = None) -> Transcript:
     """מתמלל את כל הקטעים במקביל, קטע לכל מפתח.
@@ -340,7 +381,7 @@ async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
             nonlocal done
             async with gate:
                 payload = await _transcribe_chunk(
-                    client, pool, chunk, hint if index == 0 else None,
+                    client, pool, chunk, hint,
                     work or chunk.path.parent)
             done += 1
             log.info("הושלם קטע %d/%d", done, len(chunks))

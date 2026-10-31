@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 
 from . import (align, config, gemini_stt, hebrew, media,
                progress as prog, realign, srt, vad)
-from .stt import recover_gaps, transcribe
+from .stt import recover_gaps, title_hint as stt_title_hint, transcribe
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +88,13 @@ async def run(source: Path, work: Path, *, progress: Progress,
         workers = config.parallel(config.STT_PARALLEL, config.GROQ_API_KEYS)
         chunks = await media.split_audio(audio, work, duration, workers=workers)
         try:
-            transcript = await transcribe(chunks, on_chunk=on_chunk, work=work)
+            # הרמז נשלח לכל קטע ולא רק לראשון: prompt מכוון לבקשה
+            # אחת, ולכן קטע שני והלאה תמלל את אותם שמות מאפס
+            hint = stt_title_hint(source)
+            if hint:
+                log.info("רמז לתמלול: %s", hint)
+            transcript = await transcribe(chunks, hint=hint or None,
+                                          on_chunk=on_chunk, work=work)
         finally:
             stage.stop()
     stage.stop()
