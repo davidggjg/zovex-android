@@ -1,0 +1,860 @@
+"""הורדה והעלאה מהירות מול טלגרם.
+
+שני צווארי בקבוק היו כאן. הראשון הוא ההצפנה: כל בייט שעובר מול טלגרם
+מוצפן ב-AES, ובלי החבילה cryptg זה נעשה בפייתון טהור — סדר גודל של
+0.4MB לשנייה, לעומת כ-70MB לשנייה בקוד C. די להתקין אותה.
+
+השני הוא הסדרתיות: טלתון מבקש חלק, ממתין לתשובה, מבקש את הבא. על חיבור
+עם השהיה זה מבזבז את רוב הזמן בהמתנה. כאן מריצים כמה בקשות במקביל, מה
+שממלא את רוחב הפס גם כשכל בקשה בנפרד איטית.
+
+כל מסלול מהיר נופל חזרה למימוש של טלתון אם משהו משתבש.
+"""
+from __future__ import annotations
+
+import asyncio
+import copy
+import importlib.util
+import math
+import time
+import logging
+import os
+from pathlib import Path
+
+from telethon import utils
+from telethon.network import MTProtoSender
+from telethon.errors import FloodWaitError
+from telethon.tl import functions, types
+from telethon.tl.alltlobjects import LAYER
+
+from . import config
+
+log = logging.getLogger(__name__)
+
+PART = 512 * 1024      # גודל חלק שטלגרם מאפשר להעלאה
+MAX_PARTS = 4000       # תקרת החלקים שטלגרם מקבל
+
+
+def crypto_ready() -> bool:
+    """האם ההצפנה רצה בקוד C ולא בפייתון."""
+    return importlib.util.find_spec("cryptg") is not None
+
+
+async def download(client, message, dst: Path, on_progress=None) -> Path:
+    """מוריד, וממשיך מאיפה שנעצר אם ההורדה נקטעה.
+
+    הלקח מהלילה הזה: קוד העברה שכתבתי בעצמי נשבר שוב ושוב, בעוד
+    download_media של הספרייה פשוט עובד. לכן המסלול הרגיל הוא של טלתון,
+    והמסלול המקבילי שלי נכנס רק אם ביקשו אותו במפורש.
+
+    והחידוש האמיתי: הורדה שנקטעה ב-82% כבר לא מתחילה מאפס. הבייטים
+    שעל הדיסק נשמרים, והניסיון הבא ממשיך בדיוק משם.
+    """
+    size = int(getattr(getattr(message, "file", None), "size", 0) or 0)
+    workers = _connections(size, max(1, config.TG_CONNECTIONS))
+
+    if size and workers > 1 and size >= 8 * 1024 * 1024:
+        # ניסיון אחד בלבד היה הבאג: קובץ של ג'יגה שנקטע ב-56% נזרק
+        # כולו, והמסלול האיטי התחיל מאפס. עכשיו יש יומן חלקים, ולכן
+        # ניסיון נוסף ממשיך מאיפה שנעצר. עוברים למסלול האיטי רק
+        # כשניסיון שלם לא הוסיף אפילו חלק אחד
+        landed = -1
+        for attempt in range(1, max(1, config.TG_FAST_ATTEMPTS) + 1):
+            try:
+                return await asyncio.wait_for(
+                    _parallel_download(client, message, dst, size, workers,
+                                       on_progress),
+                    timeout=config.TG_FAST_TIMEOUT or None)
+            except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
+                have = sum(1 for m in _ledger_load(
+                    dst, size, _parts(size), -(-size // _parts(size))) if m)
+                log.warning("ההורדה המקבילה נכשלה (%s: %s) — %d חלקים על "
+                            "הדיסק, ניסיון %d מתוך %d",
+                            type(exc).__name__, exc, have, attempt,
+                            config.TG_FAST_ATTEMPTS)
+                if have <= landed:
+                    log.warning("הניסיון לא הוסיף שום חלק — עוברים למסלול הרגיל")
+                    break
+                landed = have
+        # המסלול האיטי קורא את הגודל שעל הדיסק, והקובץ הוקצה מראש
+        # במלואו — ולכן קובץ חלקי נראה לו שלם. הוא מתחיל נקי
+        dst.unlink(missing_ok=True)
+        _ledger_clear(dst)
+
+    last = 0
+    for attempt in range(1, config.TG_READ_RETRIES + 1):
+        have = dst.stat().st_size if dst.exists() else 0
+        if size and have >= size:
+            return dst
+        if have and have == last:
+            log.warning("הניסיון לא התקדם מעבר ל-%.0fMB", have / 1048576)
+        last = have
+        try:
+            await _resume_download(client, message, dst, size, have, on_progress)
+            if not size or dst.stat().st_size >= size:
+                return dst
+            log.warning("ההורדה נקטעה על %.0f%% — ממשיכים מאותה נקודה",
+                        dst.stat().st_size * 100 / size)
+        except Exception as exc:  # noqa: BLE001
+            got = dst.stat().st_size if dst.exists() else 0
+            log.warning("ההורדה נכשלה ב-%.0fMB (%s: %s), ניסיון %d/%d",
+                        got / 1048576, type(exc).__name__, exc,
+                        attempt, config.TG_READ_RETRIES)
+            if attempt == config.TG_READ_RETRIES:
+                raise
+        await asyncio.sleep(min(10, 2 ** attempt))
+
+    return dst
+
+
+async def _resume_download(client, message, dst: Path, size: int, have: int,
+                           on_progress) -> None:
+    """מוריד מהנקודה שבה נעצרנו, עם זיהוי תקיעה.
+
+    iter_download עם offset הוא מה שמאפשר את ההמשכיות — download_media
+    תמיד מתחיל מאפס, ולכן הפסקה ב-82% הייתה מוחקת שעה של הורדה.
+    """
+    if have:
+        log.info("ממשיך הורדה מ-%.0fMB מתוך %.0fMB",
+                 have / 1048576, size / 1048576)
+    done = have
+    stalled = time.monotonic()
+
+    async def guard() -> None:
+        while True:
+            await asyncio.sleep(10)
+            if time.monotonic() - stalled > config.TG_STALL_TIMEOUT:
+                raise TimeoutError(
+                    f"לא ירד אף בייט {config.TG_STALL_TIMEOUT:.0f} שניות")
+
+    async def pull() -> None:
+        nonlocal done, stalled
+        with dst.open("ab" if have else "wb") as fh:
+            async for block in client.iter_download(message, offset=have):
+                fh.write(block)
+                done += len(block)
+                stalled = time.monotonic()
+                if on_progress:
+                    await on_progress(done, size or done, "")
+
+    watch = asyncio.create_task(guard())
+    try:
+        puller = asyncio.ensure_future(pull())
+        finished, _ = await asyncio.wait([puller, watch],
+                                         return_when=asyncio.FIRST_COMPLETED)
+        if watch in finished:
+            puller.cancel()
+            raise watch.exception() or TimeoutError("ההורדה תקועה")
+        await puller
+    finally:
+        watch.cancel()
+
+
+def _flush_cache(handle: int, start: int, length: int) -> None:
+    """דוחף לדיסק טווח אחד ומשחרר את המטמון שלו בלבד.
+
+    הגרסה הראשונה קראה ל-fdatasync ואז ל-posix_fadvise עם (0, 0) —
+    כלומר על כל הקובץ, בכל פעם. על קובץ שנכתב בהיסטים אקראיים זה כפה
+    כתיבה של כל הדפים המלוכלכים ומחק את המטמון כולו, שוב ושוב. זה לא
+    הקל על הלחץ אלא הוסיף עליו.
+
+    sync_file_range דוחף טווח מוגדר בלבד ואינו ממתין לסיום, ולכן הוא
+    מרסן את הצטברות הדפים בלי לעצור את ההורדה. כשאינו קיים פשוט
+    מוותרים: עדיף בלי מאשר fdatasync גורף.
+    """
+    try:
+        if hasattr(os, "sync_file_range"):
+            os.sync_file_range(handle, start, length,
+                               os.SYNC_FILE_RANGE_WRITE)
+            if hasattr(os, "posix_fadvise"):
+                os.posix_fadvise(handle, start, length,
+                                 os.POSIX_FADV_DONTNEED)
+    except OSError as exc:
+        log.debug("סנכרון טווח נכשל: %s", exc)
+
+
+def _note(state: dict) -> str:
+    """טקסט קצר שמסביר למה אין התקדמות ברגע זה."""
+    got, asked = state.get("senders", 0), state.get("asked", 0)
+    if got and asked and got < asked:
+        # פער בין המבוקש לקיים הוא ההסבר הנפוץ ביותר לקצב נמוך
+        return f"רק {got} מתוך {asked} חיבורים"
+    left = state["until"] - time.monotonic()
+    if left <= 1:
+        return ""
+    clock = f"{int(left) // 60}:{int(left) % 60:02d}"
+    if state.get("premium"):
+        return f"טלגרם מגביל מהירות לחשבון ללא Premium · ממתינים {clock}"
+    return f"טלגרם מגביל קצב · ממתינים {clock}"
+
+
+def _parts(size: int) -> int:
+    """גודל חלק שטלגרם מקבל, לפי גודל הקובץ.
+
+    טלתון בוחר 512KB לקובץ גדול, אבל התיעוד הרשמי מתיר עד 1MB לבקשה.
+    מכיוון שההורדה חסומה בהשהיה ולא ברוחב פס, מספר הבקשות הוא בדיוק מה
+    שקובע את הזמן — וחלק כפול הוא חצי מזמני ההלוך-חזור. על קובץ של
+    2 ג'יגה זה 2000 בקשות במקום 4000.
+
+    אילוצי upload.getFile מהתיעוד, שכולם מתקיימים כאן: limit מתחלק
+    ב-4096, 1MB מתחלק ב-limit, וכל בקשה נופלת בתוך מקטע 1MB יחיד —
+    מה שמובטח כש-offset מיושר ל-1MB ו-limit הוא בדיוק 1MB.
+
+    קובץ קטן נשאר עם הבחירה של טלתון: שם מספר הבקשות ממילא זניח, ואין
+    טעם לבקש מקטע גדול מהקובץ עצמו.
+    """
+    default = utils.get_appropriated_part_size(size) * 1024
+    cap = min(config.TG_PART_MAX, 1024 * 1024)
+    if size < config.TG_BIG_PART_FROM:
+        return min(default, cap)
+    # הקוד המאומת של הלקוח הרשמי מבקש 128KB לכל חלק
+    # (kDownloadPartSize ב-storage/download_manager_mtproto.h), והקוד כאן
+    # מבקש 1MB. אין דרך להכריע בין השניים בלי מדידה, ולכן TG_PART_MAX
+    # הוא תקרה אמיתית ולא רק רצפה: אפשר לרדת ממנו מה-.env בלי לגעת בקוד
+    return max(cap, 4096) if cap < default else max(default, cap)
+
+
+def _connections(size: int, ceiling: int) -> int:
+    """כמה חיבורים לפתוח. קובץ קטן לא מצדיק עשרים חיבורים.
+
+    הסולם היה לינארי עד 100MB, וזה נתן לקובץ של 87MB רק ארבעה חיבורים
+    כשהמכונה מושכת 80MB/s. טלגרם מגביל קצב לכל חיבור בנפרד, ולכן
+    מספר החיבורים הוא המכפיל הישיר של הקצב — וכל קובץ שמצדיק בכלל
+    הורדה מקבילית מצדיק את מלוא התקרה.
+    """
+    if size >= 32 * 1024 * 1024:
+        return max(1, ceiling)
+    scaled = math.ceil(size / (32 * 1024 * 1024) * ceiling)
+    return max(1, min(ceiling, scaled))
+
+
+def _media_option(client, dc_id: int):
+    """כתובת ה-DC המיועדת לקבצים, אם טלגרם פרסם כזו.
+
+    התיעוד הרשמי (core.telegram.org/api/files, General Considerations)
+    אומר במפורש: אם יש dcOption עם הדגל media_only ל-DC המבוקש, חייבים
+    לשלוח את השאילתות לשם. טלתון אינו מיישם את זה — ‏_get_dc מסנן לפי
+    id, ipv6 ו-cdn בלבד ולוקח את הראשון שמתאים, כלומר אולי את הכתובת
+    הכללית. אותו DC ואותו מפתח הרשאה, רק נקודת קצה אחרת
+
+    מחזיר None כשאין כתובת כזו, וכך הקוד נשאר על ההתנהגות של טלתון
+    """
+    if not config.TG_MEDIA_DC:
+        return None
+    options = getattr(type(client), "_config", None)
+    for dc in getattr(options, "dc_options", None) or ():
+        if (dc.id == dc_id and getattr(dc, "media_only", False)
+                and not getattr(dc, "cdn", False)
+                and bool(getattr(dc, "ipv6", False)) == client._use_ipv6):
+            return dc
+    return None
+
+
+async def _open_senders(client, dc_id: int, count: int) -> list:
+    """פותח count חיבורים נפרדים ל-DC של טלגרם.
+
+    טלתון מחזיק חיבור אחד לכל DC — קובץ ב-DC הביתי עובר דרך
+    self._sender, וקובץ מרוחק דרך חיבור מושאל יחיד שנשמר במטמון לפי
+    מספר ה-DC. טלגרם מגביל קצב לכל חיבור בנפרד, ולכן חיבור נפרד לכל
+    עובד הוא מה שבאמת מכפיל את הקצב.
+
+    הפתיחה מקבילית, וזה הכרחי ולא שיפור: בטור כל חיבור דורש לחיצת יד
+    משלו, ועשרים מהם לקחו מעל שבעים שניות — יותר מהתקרה שמפילה את
+    המסלול כולו לגיבוי. הראשון עדיין נפתח לבדו, כי הוא זה שמייצא את
+    ההרשאה ויוצר את המפתח שכל השאר חולקים.
+    """
+    dc = await client._get_dc(dc_id)
+    # נקרא רק אחרי _get_dc, שהוא זה שממלא את help.getConfig
+    media = _media_option(client, dc_id)
+    if media is not None:
+        log.info("כתובת קבצים נפרדת ל-DC %d: %s", dc_id, media.ip_address)
+
+    home = client.session.dc_id == dc_id
+    key = client.session.auth_key if home else None
+
+    async def one(auth_key, delay: float = 0.0, where=None):
+        # פיזור קל: עשרים לחיצות יד באותו אלפית שנייה נראות לטלגרם
+        # כהצפה, וחלק מהחיבורים נדחים. חמישים אלפיות ביניהם עולות
+        # שנייה אחת בסך הכל ומשאירות את ההקמה מהירה
+        if delay:
+            await asyncio.sleep(delay)
+        at = where or dc
+        sender = MTProtoSender(auth_key, loggers=client._log)
+        await sender.connect(client._connection(
+            at.ip_address, at.port, at.id,
+            loggers=client._log, proxy=client._proxy,
+        ))
+        return sender
+
+    began = time.monotonic()
+    senders = []
+    try:
+        # החיבור הראשון הוא זה שמייצא את ההרשאה, ולכן הוא נשאר על
+        # הכתובת הכללית. כל השאר, שמבקשים רק חלקי קבצים, הולכים
+        # לכתובת הקבצים כשיש כזו
+        first = await one(key, where=None if key is None else media)
+        senders.append(first)
+        if key is None:
+            # DC אחר מחייב ייצוא הרשאה — אבל רק פעם אחת. המפתח שנוצר
+            # כאן משמש גם את שאר החיבורים, במקום ייצוא נפרד לכל אחד
+            auth = await client(functions.auth.ExportAuthorizationRequest(dc_id))
+            init = copy.copy(client._init_request)
+            init.query = functions.auth.ImportAuthorizationRequest(
+                id=auth.id, bytes=auth.bytes)
+            await first.send(functions.InvokeWithLayerRequest(LAYER, init))
+            key = first.auth_key
+
+        if count > 1 and config.TG_OPEN_PARALLEL:
+            rest = await asyncio.gather(
+                *(one(key, i * config.TG_CONNECT_STAGGER, media)
+                  for i in range(count - 1)),
+                return_exceptions=True)
+            for item in rest:
+                if isinstance(item, BaseException):
+                    # חיבור בודד שנכשל אינו מפיל את ההורדה: ממשיכים
+                    # עם מה שנפתח, ורק אם אף אחד לא קם זו שגיאה
+                    log.warning("חיבור נוסף נכשל: %s", item)
+                else:
+                    senders.append(item)
+        else:
+            # סדרתי, וזו ברירת המחדל. הפתיחה המקבילית נראתה נכונה
+            # אבל נמדדה גרועה: אותו קובץ ירד ב-7.5MB/s כשהחיבורים
+            # נפתחו בזה אחר זה, וב-0.9 כשנפתחו יחד. ההשערה שהצפה של
+            # לחיצות יד גורמת לטלגרם להגביל, והפיזור לא הספיק
+            for _ in range(count - 1):
+                senders.append(await one(key, where=media))
+    except Exception:
+        await _close_senders(senders)
+        raise
+
+    log.info("נפתחו %d/%d חיבורים ל-DC %d תוך %.1f שניות%s",
+             len(senders), count, dc_id, time.monotonic() - began,
+             "" if home else " (עם ייצוא הרשאה)")
+    return senders
+
+
+async def _close_senders(senders: list) -> None:
+    for sender in senders:
+        try:
+            await sender.disconnect()
+        except Exception as exc:  # noqa: BLE001 — סגירה לא מפילה כלום
+            log.debug("סגירת חיבור נכשלה: %s", exc)
+
+
+def _ledger_path(dst: Path) -> Path:
+    return dst.with_name(dst.name + ".parts")
+
+
+def _ledger_load(dst: Path, size: int, part: int, total: int) -> bytearray:
+    """אילו חלקים כבר ירדו בניסיון קודם.
+
+    ‏_parallel_download מקצה את כל הקובץ מראש ב-truncate, ולכן קובץ
+    חלקי נראה שלם לפי גודל — ולכן הכשלון טיפל בזה במחיקה. נמדד אצל
+    המשתמש: ירדו 584 מתוך 1035 מגה־בייט, הכל נמחק, והמסלול האיטי
+    התחיל מאפס וקיבל 3 מגה־בייט. החלקים בלתי תלויים ונכתבים לפי
+    היסט, ולכן די לזכור מי מהם הושלם כדי להמשיך בדיוק משם
+    """
+    empty = bytearray(total)
+    book = _ledger_path(dst)
+    try:
+        raw = book.read_bytes()
+    except OSError:
+        return empty
+    head, _, bits = raw.partition(b"\n")
+    try:
+        was_size, was_part, was_total = (int(x) for x in head.split())
+    except ValueError:
+        return empty
+    # תוכנית חיתוך אחרת פירושה שההיסטים אחרים, והחלקים הישנים
+    # יושבים במקומות הלא נכונים
+    if (was_size, was_part, was_total) != (size, part, total):
+        log.info("יומן ההורדה שייך לחיתוך אחר — מתחילים נקי")
+        return empty
+    if len(bits) != total:
+        return empty
+    return bytearray(bits)
+
+
+def _ledger_save(dst: Path, size: int, part: int, marks: bytearray) -> None:
+    try:
+        _ledger_path(dst).write_bytes(
+            f"{size} {part} {len(marks)}\n".encode() + bytes(marks))
+    except OSError as exc:
+        log.debug("שמירת יומן ההורדה נכשלה: %s", exc)
+
+
+def _ledger_clear(dst: Path) -> None:
+    _ledger_path(dst).unlink(missing_ok=True)
+
+
+async def _parallel_download(client, message, dst: Path, size: int,
+                             workers: int, on_progress) -> Path:
+    asked = workers
+    dc_id, location = utils.get_input_location(message.media)
+    dc_id = dc_id or client.session.dc_id
+
+    part = _parts(size)
+    workers = min(workers, -(-size // part))
+    total_parts = -(-size // part)
+    marks = _ledger_load(dst, size, part, total_parts)
+    if not dst.exists() or dst.stat().st_size != size:
+        marks = bytearray(total_parts)
+    if not any(marks):
+        with dst.open("wb") as fh:
+            fh.truncate(size)
+
+    # הבייטים שכבר על הדיסק נספרים בפתיחה, אחרת בדיקת הסיום הייתה
+    # מכריזה על קובץ חסר דווקא כשההמשכה הצליחה
+    done = sum(min(part, size - index * part)
+               for index in range(total_parts) if marks[index])
+    if done:
+        log.warning("ממשיכים הורדה: %d מתוך %d חלקים כבר על הדיסק (%.0fMB)",
+                    sum(1 for m in marks if m), total_parts, done / 1048576)
+    lock = asyncio.Lock()
+    handle = os.open(dst, os.O_WRONLY)
+    senders = await asyncio.wait_for(
+        _open_senders(client, dc_id, workers), timeout=config.TG_CONNECT_TIMEOUT)
+    # מספר החיבורים שקמו בפועל, לא זה שביקשנו. כשחלקם נכשלים
+    # התקרה שמחושבת מהמספר המבוקש גדולה מדי, והמסך מציג מספר שאינו
+    # נכון — ואז קצב נמוך נראה בלתי מוסבר
+    if len(senders) != workers:
+        log.warning("רק %d מתוך %d חיבורים קמו — הקצב ייפגע בהתאם",
+                    len(senders), workers)
+    workers = max(1, len(senders))
+
+    # כמה בקשות מותר להחזיק באוויר בו-זמנית, על פני כל החיבורים. זה
+    # ולא מספר החיבורים הוא מה שקובע את הקצב, ואי אפשר לדעת מראש כמה
+    # החשבון והקו מרשים — לכן מתחילים גבוה ומצטמצמים רק אם טלגרם מתלונן
+    base = workers * max(1, config.TG_PIPELINE)
+    ceiling = max(base, config.TG_INFLIGHT_MAX)
+    inflight = asyncio.Semaphore(base)
+    shrunk = 0
+    grown = 0
+    flooded = False
+    since_grow = 0
+
+    async def shrink() -> None:
+        """מוריד את התקרה אחרי FLOOD_WAIT, ולא מעלה אותה בחזרה.
+
+        הפחתה כפלית: טלגרם כבר העניש אותנו, וניסיון לטפס חזרה מיד
+        מחזיר אותנו לאותו מקום. מי שמחזיק את ההיתרים האלה לא משחרר
+        אותם עד סוף ההורדה.
+        """
+        nonlocal shrunk, flooded
+        flooded = True
+        room = base + grown - shrunk
+        drop = max(1, room // 2)
+        for _ in range(drop):
+            await inflight.acquire()
+        shrunk += drop
+        log.warning("התקרה ירדה ל-%d בקשות באוויר", room - drop)
+
+    async def grow() -> None:
+        """מרחיב את התקרה כל עוד טלגרם לא התלונן אף פעם.
+
+        התקרה ההתחלתית היא ניחוש זהיר, וכשהרשת פנויה היא פשוט מבזבזת
+        את הקו. כאן היא מטפסת בהדרגה — תוספת אחת לכל חבילת חלקים
+        שעברה נקי — ונעצרת לצמיתות ברגע הראשון שמתקבל FLOOD_WAIT.
+        עלייה איטית וירידה חדה: הדרך היחידה למצוא את הגבול בלי לחצות
+        אותו שוב ושוב
+        """
+        nonlocal grown, since_grow
+        if flooded or base + grown >= ceiling:
+            return
+        since_grow += 1
+        if since_grow < config.TG_GROW_EVERY:
+            return
+        since_grow = 0
+        grown += 1
+        inflight.release()
+        log.info("התקרה עלתה ל-%d בקשות באוויר", base + grown - shrunk)
+
+    started = time.monotonic()
+    # מה להציג למשתמש כשההורדה לא מתקדמת. בלי זה הבוט נראה מת בזמן
+    # שהוא פשוט ממתין בציות להוראת FLOOD_WAIT של טלגרם — וזו בדיוק
+    # ה"תקיעה של עשרים דקות" שדווחה
+    state = {"note": "", "until": 0.0, "premium": False,
+             "senders": len(senders), "asked": asked}
+    # בייטים שנכתבו מאז הסנכרון האחרון. בלי סנכרון תקופתי מצטברים
+    # מאות מגה־בייטים של דפים מלוכלכים בזיכרון, והקרנל נכנס לכתיבה
+    # כפויה שמקפיאה את כל המכונה — כולל SSH. זה בדיוק מה שנראה כמו
+    # "השרת קורס בזמן הורדה"
+    since_sync = 0
+    sync_from = 0
+    write_lock = asyncio.Lock()
+    pending: asyncio.Queue[int] = asyncio.Queue()
+    for index in range(total_parts):
+        if not marks[index]:
+            pending.put_nowait(index)
+    last_progress = time.monotonic()
+    # השגיאה הראשונה מטלגרם. בלעדיה הודעת הסיום אומרת רק "ירדו 0
+    # בייט", וזה מסתיר את הסיבה האמיתית מאחורי סיכום חשבונאי
+    first_error: list = []
+    # מונה חלקים מאז השמירה האחרונה של היומן. רשימה ולא מספר, כדי
+    # שהעובדים יוכלו לעדכן אותו בלי nonlocal בכל אחד מהם
+    since_ledger = [0]
+
+    async def fetch(sender, offset: int):
+        """בקשה אחת, עם תקרת זמן וניסיונות חוזרים.
+
+        בלי התקרה, חיבור שמפסיק לענות באמצע משאיר את העובד ממתין לנצח
+        וההורדה נתקעת באחוז אקראי — בלי שגיאה, בלי לוג, בלי נפילה חזרה.
+        """
+        for attempt in range(1, config.TG_READ_RETRIES + 1):
+            try:
+                async with inflight:
+                    return await asyncio.wait_for(
+                        client._call(sender, functions.upload.GetFileRequest(
+                            location, offset=offset, limit=part)),
+                        timeout=config.TG_READ_TIMEOUT)
+            except FloodWaitError as flood:
+                # FLOOD_PREMIUM_WAIT הוא דבר אחר לגמרי מהגבלת קצב רגילה.
+                # התיעוד הרשמי של טלגרם אומר עליו במפורש: "מהירות
+                # ההורדה מוגבלת מכיוון שלחשבון אין מנוי Premium", והוא
+                # מופיע רק אחרי העברה של עשרות ג'יגה-בייט. זו תקרה
+                # שנקבעה בצד של טלגרם — שום שינוי בקוד לא יעקוף אותה,
+                # ולכן חשוב שהמשתמש יראה את זה ולא יחפש באג אצלנו
+                if "PREMIUM" in str(getattr(flood, "message", "") or
+                                    type(flood).__name__).upper():
+                    state["premium"] = True
+                # טלגרם אומר במפורש כמה להמתין. השהיה קצרה משלנו רק
+                # מאריכה את העונש, ולכן ממתינים בדיוק כמה שנדרש. זה
+                # נעשה קריטי ברגע שיש הרבה בקשות באוויר
+                wait = min(float(flood.seconds) + 1, config.TG_FLOOD_MAX)
+                if float(flood.seconds) > config.TG_FLOOD_MAX:
+                    log.error("טלגרם ביקש להמתין %ds — יותר מהתקרה, "
+                              "כדאי להוריד TG_PIPELINE", flood.seconds)
+                    raise
+                log.warning("טלגרם מגביל קצב, ממתינים %.0f שניות", wait)
+                await shrink()
+                state["until"] = max(state["until"], time.monotonic() + wait)
+                if on_progress:
+                    await on_progress(done, size, _note(state))
+                await asyncio.sleep(wait)
+                state["note"] = ""
+                continue
+            except asyncio.TimeoutError:
+                log.warning("חלק ב-%d לא נענה תוך %.0f שניות (ניסיון %d/%d)",
+                            offset, config.TG_READ_TIMEOUT, attempt,
+                            config.TG_READ_RETRIES)
+            except Exception as exc:  # noqa: BLE001
+                if not first_error:
+                    first_error.append(f"{type(exc).__name__}: {exc}")
+                log.warning("חלק ב-%d נכשל: %s (ניסיון %d/%d)",
+                            offset, exc, attempt, config.TG_READ_RETRIES)
+            if attempt == config.TG_READ_RETRIES:
+                raise
+            await asyncio.sleep(min(8, 2 ** attempt))
+
+    async def pull(sender) -> None:
+        """מושך חלקים מתור משותף, בקשה אחת בכל רגע.
+
+        תור ולא טווח קבוע: חיבור שמת לא משאיר את החלקים שלו יתומים —
+        מי שעדיין חי לוקח אותם.
+        """
+        nonlocal done, last_progress
+        while True:
+            try:
+                index = pending.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            offset = index * part
+            try:
+                result = await fetch(sender, offset)
+            except Exception:  # noqa: BLE001 — שיקח אותו עובד אחר
+                pending.put_nowait(index)
+                raise
+            if isinstance(result, types.upload.FileCdnRedirect):
+                raise RuntimeError("טלגרם הפנה ל-CDN, אין תמיכה במסלול המהיר")
+            block = bytes(result.bytes)[: max(0, size - offset)]
+            if not block:
+                continue
+            await write_block(block, offset)
+            await grow()
+            async with lock:
+                done += len(block)
+                marks[index] = 1
+                # היומן נשמר תוך כדי ולא בסוף: הכשלון הוא בדיוק מה
+                # שמונע הגעה לסוף, וביומן שנשמר רק שם אין שום תועלת
+                since_ledger[0] += 1
+                if since_ledger[0] >= config.TG_LEDGER_EVERY:
+                    since_ledger[0] = 0
+                    _ledger_save(dst, size, part, marks)
+                last_progress = time.monotonic()
+                if on_progress:
+                    await on_progress(done, size, _note(state))
+
+    async def worker(sender) -> None:
+        """כמה בקשות באוויר על אותו חיבור, ולא אחת בכל רגע.
+
+        זה היה הצוואר האמיתי. בקשה אחת בכל רגע אומרת שהקצב נקבע בהשהיה
+        ולא ברוחב הפס: חלק של 512KB חלקי זמן הלוך-חזור לטלגרם (כ-380
+        אלפיות) נותן 1.35MB/s, וזה בדיוק מה שנמדד. הקו לא היה עמוס —
+        הוא עמד ריק רוב הזמן וחיכה לתשובה.
+
+        חיבור MTProto יחיד מסוגל להחזיק כמה שאילתות במקביל, ולכן ההכפלה
+        כאן אינה דורשת עוד חיבורים — מה שגם מקטין את הסיכון ש-טלגרם
+        יגביל קצב. בקשות באוויר = חיבורים × TG_PIPELINE.
+
+        כשאחת מהבקשות נכשלת ה-gather מפיץ את החריגה החוצה, והחיבור
+        מסומן כמת בדיוק כמו קודם — לוגיקת הסבבים שלמטה לא משתנה
+        """
+        await asyncio.gather(*(pull(sender)
+                               for _ in range(max(1, config.TG_PIPELINE))))
+
+    async def write_block(block: bytes, offset: int) -> None:
+        """כותב לדיסק בלי לחסום את לולאת האירועים.
+
+        os.pwrite הוא קריאת מערכת חוסמת. כשהיא רצה על חוט הלולאה, כל
+        הבוט עוצר עד שהדיסק מסיים — ועם עשרות כתיבות של מגה־בייט
+        בו-זמנית זה הופך לעצירה מורגשת. החוט הנפרד משחרר את הלולאה.
+
+        אחת לכמה עשרות מגה־בייט הנתונים מסונכרנים ומשוחררים ממטמון
+        העמודים. אנחנו לא נקרא אותם שוב בקרוב, והחזקתם בזיכרון רק
+        דוחפת את הקרנל לכתיבה כפויה בהמשך
+        """
+        nonlocal since_sync, sync_from
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, os.pwrite, handle, block, offset)
+        if not config.TG_SYNC_EVERY:
+            return
+        async with write_lock:
+            since_sync += len(block)
+            if since_sync < config.TG_SYNC_EVERY:
+                return
+            start, length, since_sync = sync_from, since_sync, 0
+            sync_from += length
+        # לא ממתינים לסנכרון: הוא נועד לרסן הצטברות דפים, לא לחסום
+        # את ההורדה. המתנה לו הפכה אותו לצוואר במקום לשסתום
+        loop.run_in_executor(None, _flush_cache, handle, start, length)
+
+    async def watchdog() -> None:
+        """מכריז על תקיעה אם אף בייט לא ירד זמן רב."""
+        while True:
+            await asyncio.sleep(10)
+            now = time.monotonic()
+            if now < state["until"]:
+                # המתנה שטלגרם ביקש אינה תקיעה. מדווחים אותה כדי
+                # שהמסך יזוז, ולא מתחילים לספור לקראת כישלון
+                if on_progress:
+                    await on_progress(done, size, _note(state))
+                continue
+            idle = now - last_progress
+            if idle > config.TG_STALL_TIMEOUT:
+                raise RuntimeError(
+                    f"ההורדה תקועה {idle:.0f} שניות על {done * 100 // max(1, size)}%")
+
+    try:
+        log.info("מוריד ב-%d חיבורים × %d בקשות = %d באוויר, "
+                 "חלק %dKB, %d חלקים (%.0fMB)",
+                 workers, config.TG_PIPELINE, workers * config.TG_PIPELINE,
+                 part // 1024, total_parts, size / 1048576)
+        guard = asyncio.create_task(watchdog())
+        healthy = list(senders)
+        revivals = 0
+        # נכתב בתוך לולאת ההחייאה שלמטה, ולכן חייב להיות מוצהר כאן
+        try:
+            # סבבים: חיבור שמת מחזיר את החלק שלו לתור, ואם העובדים האחרים
+            # כבר סיימו — סבב נוסף עם מי שנשאר חי לוקח אותו. בלי זה חיבור
+            # אחד שנופל היה מכשיל את כל ההורדה
+            while not pending.empty():
+                if not healthy:
+                    # כל החיבורים מתו אבל נשארו חלקים. קודם זה סיים את
+                    # ההורדה בשגיאה, והבייטים שכבר ירדו נזרקו — על קובץ
+                    # של שני ג'יגה זה אובדן של למעלה מגיגה־בייט וחצי.
+                    # הקובץ כתוב לפי היסטים בתוך שטח שהוקצה מראש, ולכן
+                    # חיבורים חדשים פשוט ממשיכים מאיפה שנעצרנו
+                    if revivals >= config.TG_REVIVALS:
+                        break
+                    revivals += 1
+                    left = pending.qsize() * part
+                    log.warning("כל החיבורים מתו ונשארו %.0fMB — פותחים "
+                                "מחדש (סבב %d/%d)", left / 1048576,
+                                revivals, config.TG_REVIVALS)
+                    if on_progress:
+                        await on_progress(done, size, "מתחבר מחדש")
+                    # ההתאוששות היא המתנה לגיטימית, בדיוק כמו המתנה
+                    # שטלגרם ביקש: בזמנה לא יורד אף בייט מעצם טבעה.
+                    # בלי לסמן אותה השומר ספר אותה כתקיעה והרג את
+                    # ההתאוששות בדיוק כשהיא עבדה — נמדד בשרת כ"ההורדה
+                    # תקועה 184 שניות על 36%" על קובץ של 2.7GB, כלומר
+                    # קרוב לג'יגה־בייט שנזרק. השומר כבר יודע לכבד את
+                    # state["until"]; כאן הוא פשוט לא עודכן
+                    rest = min(30, 5 * revivals)
+                    state["until"] = max(
+                        state["until"],
+                        time.monotonic() + rest + config.TG_CONNECT_TIMEOUT + 5)
+                    await asyncio.sleep(rest)
+                    # פחות חיבורים בכל סבב, ולא שוב אותם שש-עשרה.
+                    # כשכולם מתו יחד זה לא מקרה — זה טלגרם שסגר את
+                    # כל הסט, ולפתוח מיד אותו מספר זה לחזור בדיוק
+                    # לתנאים שהרגו אותו. הלקוח הרשמי עושה את ההפוך:
+                    # kRemoveSessionAfterTimeouts=4 מוריד סשנים אחרי
+                    # כשלונות, ו-kRetryAddSessionSuccesses=3 מחזיר
+                    # אותם רק אחרי הצלחות. חצי בכל סבב, ולא פחות
+                    # משניים — כי חיבור אחד הוא כבר המסלול האיטי
+                    room = max(2, workers >> revivals)
+                    fresh = min(room, pending.qsize() or 1)
+                    log.warning("פותחים %d חיבורים בלבד (מתוך %d) — "
+                                "סט שלם שמת חוזר ומת", fresh, workers)
+                    healthy = await asyncio.wait_for(
+                        _open_senders(client, dc_id, fresh),
+                        timeout=config.TG_CONNECT_TIMEOUT)
+                    senders.extend(healthy)
+                    # החיבורים קמו — השעון מתחיל מכאן, ולא מהבייט האחרון
+                    # שירד לפני הנפילה
+                    last_progress = time.monotonic()
+                    state["until"] = 0.0
+
+                outcomes = asyncio.gather(
+                    *(worker(sender) for sender in healthy), return_exceptions=True)
+                finished, _ = await asyncio.wait(
+                    [asyncio.ensure_future(outcomes), guard],
+                    return_when=asyncio.FIRST_COMPLETED)
+                if guard in finished:
+                    raise guard.exception() or RuntimeError("ההורדה תקועה")
+                healthy = [sender for sender, result
+                           in zip(healthy, await outcomes)
+                           if not isinstance(result, BaseException)]
+                if not pending.empty():
+                    log.warning("%d חלקים חוזרים לסבב נוסף, %d חיבורים חיים",
+                                pending.qsize(), len(healthy))
+        finally:
+            guard.cancel()
+    finally:
+        os.close(handle)
+        await _close_senders(senders)
+
+    # הגודל נקבע מראש ב-truncate, ולכן השוואת גודל לא בודקת כלום: חור
+    # באמצע הקובץ היה עובר בשקט ומגיע למשתמש כווידאו פגום. נספרים
+    # הבייטים שבאמת נכתבו
+    if done != size:
+        # היומן נשאר על הדיסק בכוונה: הוא מה שמאפשר לניסיון הבא
+        # להמשיך מכאן במקום להתחיל מאפס
+        _ledger_save(dst, size, part, marks)
+        why = f" · {first_error[0]}" if first_error else ""
+        raise RuntimeError(f"ירדו {done} בייט מתוך {size} — הקובץ חסר{why}")
+    _ledger_clear(dst)
+    # המספר שאי אפשר לנחש במקומו: כמה באמת יצא מהקו הזה
+    spent = max(0.001, time.monotonic() - started)
+    log.info("ההורדה הסתיימה: %.0fMB ב-%.0f שניות = %.1f MB/s · "
+             "תקרה סופית %d בקשות באוויר%s",
+             size / 1048576, spent, size / 1048576 / spent,
+             base + grown - shrunk,
+             " (תקרת מהירות של חשבון ללא Premium)" if state.get("premium")
+             else " (טלגרם הגביל קצב)" if flooded else "")
+    return dst
+
+
+async def upload(client, path: Path, on_progress=None):
+    """מעלה בכמה בקשות במקביל ומחזיר קלט מוכן לשליחה, או None לנפילה חזרה."""
+    size = path.stat().st_size
+    workers = _connections(size, max(1, config.TG_CONNECTIONS))
+    parts = -(-size // PART)
+
+    if size < 8 * 1024 * 1024 or workers == 1 or parts > MAX_PARTS:
+        return None
+
+    try:
+        return await asyncio.wait_for(
+            _parallel_upload(client, path, size, parts, workers, on_progress),
+            timeout=config.TG_FAST_TIMEOUT or None)
+    except (Exception, asyncio.TimeoutError) as exc:  # noqa: BLE001
+        log.warning("ההעלאה המקבילה נכשלה (%s: %s), עוברים להעלאה רגילה",
+                    type(exc).__name__, exc)
+        return None
+
+
+async def _parallel_upload(client, path: Path, size: int, parts: int,
+                           workers: int, on_progress):
+    file_id = int.from_bytes(os.urandom(8), "big", signed=True)
+    queue: asyncio.Queue[int] = asyncio.Queue()
+    for index in range(parts):
+        queue.put_nowait(index)
+
+    done = 0
+    lock = asyncio.Lock()
+    handle = os.open(path, os.O_RDONLY)
+    # אותה בעיה בדיוק כמו בהורדה: client(...) שולח דרך החיבור הראשי
+    # היחיד, ולכן כל החלקים הסתדרו בתור על חיבור אחד
+    senders = await asyncio.wait_for(
+        _open_senders(client, client.session.dc_id, workers),
+        timeout=config.TG_CONNECT_TIMEOUT)
+
+    async def worker(sender) -> None:
+        nonlocal done
+        while True:
+            try:
+                index = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            block = os.pread(handle, PART, index * PART)
+            # תקרת זמן וניסיונות חוזרים, בדיוק כמו בהורדה: בלעדיהם חיבור
+            # שמפסיק לענות היה תוקע את ההעלאה לנצח
+            for attempt in range(1, config.TG_READ_RETRIES + 1):
+                try:
+                    await asyncio.wait_for(client._call(
+                        sender, functions.upload.SaveBigFilePartRequest(
+                            file_id=file_id, file_part=index,
+                            file_total_parts=parts, bytes=block)),
+                        timeout=config.TG_READ_TIMEOUT)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("חלק %d בהעלאה נכשל: %s (ניסיון %d/%d)",
+                                index, type(exc).__name__, attempt,
+                                config.TG_READ_RETRIES)
+                    if attempt == config.TG_READ_RETRIES:
+                        queue.put_nowait(index)
+                        raise
+                    await asyncio.sleep(min(8, 2 ** attempt))
+            async with lock:
+                done += len(block)
+                if on_progress:
+                    await on_progress(done, size, "")
+
+    try:
+        log.info("מעלה ב-%d חיבורים במקביל (%.0fMB, %d חלקים)",
+                 workers, size / 1048576, parts)
+        # חלק בודד שנכשל לא מפיל את ההעלאה כולה. קודם gather הרים את
+        # החריגה הראשונה, כל העובדים ננטשו, והמסלול חזר None — כלומר
+        # טלתון העלה את הקובץ מאפס. נמדד בשרת: 80 אחוז שנזרקו בגלל
+        # שלושה חלקים שלא נענו.
+        #
+        # כאן ממשיכים באותה העלאה: אותו file_id, החלקים שנכשלו חזרו
+        # לתור, וחיבורים חדשים לוקחים אותם. פחות חיבורים בכל סבב, כי
+        # סט שלם שמת פעם אחת ימות שוב באותו גודל
+        healthy = list(senders)
+        for revival in range(config.TG_REVIVALS + 1):
+            outcome = await asyncio.gather(
+                *(worker(sender) for sender in healthy),
+                return_exceptions=True)
+            if queue.empty():
+                break
+            broken = [item for item in outcome
+                      if isinstance(item, BaseException)]
+            if revival == config.TG_REVIVALS:
+                log.warning("נותרו %d חלקים אחרי %d סבבים — נופלים חזרה",
+                            queue.qsize(), revival)
+                raise broken[0] if broken else RuntimeError("ההעלאה לא הושלמה")
+            room = max(2, workers >> (revival + 1))
+            log.warning("נותרו %d חלקים (%d עובדים נפלו) — %d חיבורים חדשים",
+                        queue.qsize(), len(broken), room)
+            await _close_senders(healthy)
+            healthy = await asyncio.wait_for(
+                _open_senders(client, client.session.dc_id, room),
+                timeout=config.TG_CONNECT_TIMEOUT)
+            senders.extend(healthy)
+    finally:
+        os.close(handle)
+        await _close_senders(senders)
+
+    return types.InputFileBig(id=file_id, parts=parts, name=path.name)
+
+
+def video_attributes(path: Path, duration: float = 0.0,
+                     width: int = 0, height: int = 0) -> list:
+    """תכונות וידאו, כדי שההעלאה הידנית תיראה בטלגרם כמו סרטון רגיל."""
+    return [types.DocumentAttributeVideo(
+        duration=int(duration), w=int(width) or 1280, h=int(height) or 720,
+        supports_streaming=True,
+    ), types.DocumentAttributeFilename(file_name=path.name)]

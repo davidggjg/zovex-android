@@ -1,0 +1,805 @@
+"""הגדרות שנטענות מ-.env. מפתחות אמיתיים לא נכנסים לקוד ולא לגיט."""
+import os
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
+
+def _int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _keys(name: str) -> list[str]:
+    raw = os.getenv(name, "") or ""
+    return [k.strip() for k in raw.replace("\n", ",").split(",") if k.strip()]
+
+
+TG_API_ID = _int("TG_API_ID", 0)
+TG_API_HASH = os.getenv("TG_API_HASH", "")
+TG_SESSION = os.getenv("TG_SESSION", "zovexsub")
+# מחרוזת סשן לחשבון הראשי, במקום קובץ. קובץ סשן מתבטל ברגע שמנתקים
+# את ההתחברות מהאפליקציה, ואז טלתון מבקש מספר טלפון — אין מסוף,
+# נזרק EOFError, והשירות נכנס ללולאת קריסה כל 11 שניות. מחרוזת
+# משוחזרת בפקודה אחת בלי התחברות אינטראקטיבית. ראו tests/mksession.py
+TG_STRING = os.getenv("TG_STRING", "").strip()
+
+# כותרות דפדפן לקישורים שאינם יוטיוב. רשתות הפצה חוסמות בקשה בלי
+# User-Agent מוכר ובלי Referer — נמדד כ-HTTP Error 403 על קישור m3u8
+# שעבד בדפדפן. ביוטיוב לא נוגעים: שינוי ה-UA שובר את זרימת ה-PO token
+FETCH_UA = os.getenv(
+    "FETCH_UA",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36").strip()
+# ריק = נגזר מהקישור עצמו (סכימה + דומיין). רוב ה-CDN בודקים דומיין
+FETCH_REFERER = os.getenv("FETCH_REFERER", "").strip()
+
+# פרוקסי לקישורים בלבד. רשתות הפצה חוסמות טווחי אחסון (ASN של חברות
+# שרתים) בלי קשר למדינה — נמדד: curl חשוף מהשרת בתל אביב מקבל 403,
+# ואותו קישור בדיוק עובר מטלפון סלולרי באותה עיר. אין דגל שמתקן את
+# זה, כי המסנן פועל לפני שהבקשה נקראת.
+#
+# ריק = בלי פרוקסי, וההתנהגות זהה לקודם. הערך הוא כתובת מלאה, למשל
+# socks5://user:pass@host:1080 או http://host:3128
+FETCH_PROXY = os.getenv("FETCH_PROXY", "").strip()
+# טוקן בוט מ-BotFather. ריק = עובדים עם חשבון המשתמש בלבד, כמו קודם.
+# הבוט מתחבר דרך MTProto ולא דרך ה-Bot API, ולכן תקרת ההעלאה שלו 2GB
+# ולא 50MB. קובץ גדול יותר עובר לחשבון המשתמש, שהוא Premium
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# שרת Bot API מקומי. ריק = אין, והכל עובר דרך חשבון המשתמש כמו קודם.
+# השרת הזה הוא מה שמעלה את תקרת הבוט מ-50MB ל-2GB
+BOT_API_URL = os.getenv("BOT_API_URL", "").strip()
+# לאן הבוט מוסר את הפלט. בוט אינו יכול לפתוח שיחה, ולכן צריך מזהה של
+# מי שכבר לחץ /start אצלו. ריק = מוסרים כמו קודם, מחשבון המשתמש
+BOT_CHAT = os.getenv("BOT_CHAT", "").strip()
+# כל כמה שניות לעדכן הודעת התקדמות בבוט. טלגרם חוסם עריכות תכופות
+BOT_EDIT_EVERY = float(os.getenv("BOT_EDIT_EVERY") or 5)
+# השרת המקומי רץ בדוקר ומדווח נתיבים כפי שהוא רואה אותם בתוכו.
+# BOT_API_DATA הוא אותה תיקייה כפי שהמארח רואה אותה, ו-BOT_API_INSIDE
+# היא כפי שהקונטיינר רואה אותה. ראו localbot._translate
+BOT_API_DATA = os.getenv("BOT_API_DATA", "").strip()
+BOT_API_INSIDE = os.getenv("BOT_API_INSIDE", "/var/lib/telegram-bot-api").strip()
+# סשן של חשבון משתמש רגיל (לא Premium). ריק = הכל דרך ה-Premium
+TG_SESSION_LITE = os.getenv("TG_SESSION_LITE", "").strip()
+# מחרוזת סשן של החשבון הרגיל. עדיפה על קובץ — ראו botapi.start.
+# זהירות: המחרוזת נותנת גישה מלאה לחשבון. ב-.env בלבד, לעולם לא בגיט
+TG_STRING_LITE = os.getenv("TG_STRING_LITE", "").strip()
+# תקרת ההעלאה של חשבון רגיל. מעליה נדרש Premium
+LITE_UPLOAD_MAX = _int("LITE_UPLOAD_MAX", 2000 * 1024 * 1024)
+# כמה העלאות ברצף לכל חשבון לפני שמתחלפים. קודם כל קובץ מתחת
+# לתקרה הלך לחשבון הרגיל והוא נשא את כל העומס לבדו
+UPLOAD_TURN = _int("UPLOAD_TURN", 2)
+# ערוץ אחסון פרטי שבו נמצאים הבוט ושני החשבונות. החשבון מעלה לשם
+# והבוט מעביר משם למשתמש — העברה אינה העלאה, ולכן מגבלת הגודל של
+# הבוט אינה חלה עליה כלל
+STORAGE_CHAT = os.getenv("STORAGE_CHAT", "").strip()
+
+TRIGGER = os.getenv("TRIGGER", ".srt")
+# האם חשבון המשתמש מגיב בעצמו למילת ההפעלה, בכל מקום. כבוי: החשבון
+# הפרטי אינו קורא הודעות ואינו עונה לאיש — לא בשיחות, לא בקבוצות
+# ולא בהודעות השמורות. כל העבודה הזאת עוברת ב-@zooigrmbot.
+#
+# הסיבה מעשית: החשבון הזה הוא חשבון אישי, והמסלול הזה גרם לו להתפרץ
+# לשיחות עם חברים. שאר המסלולים אינם משתנים — החשבון ממשיך לשמש את
+# הבוט להורדות ולמסירת קבצים גדולים.
+# ‏USERBOT_TRIGGER=1 מחזיר את ההתנהגות. ראו bot.on_message
+USERBOT_TRIGGER = _int("USERBOT_TRIGGER", 0)
+
+# רשימת המורשים נשמרת כאן ומנוהלת מתוך טלגרם (.allow / .deny / .users)
+# הגדרות הצריבה שנשמרות לכל צ'אט, כדי לא לשאול את אותן שאלות בכל פרק
+PREFS_FILE = os.getenv(
+    "PREFS_FILE", str(Path(__file__).resolve().parent.parent / "prefs.json"))
+ALLOWLIST_FILE = os.getenv(
+    "ALLOWLIST_FILE", str(Path(__file__).resolve().parent.parent / "allowlist.json"))
+# המנהל הראשי: מקבל התראה על כל ניסיון שימוש לא מורשה, ויכול לאשר
+# משתמשים מתוך הצ'אט. בלעדיו אין למי לשלוח, והשער נסגר על כולם
+BOT_OWNER = _int("BOT_OWNER", 0)
+# מורשים קבועים מה-.env, בנוסף לקובץ שנערך מתוך טלגרם. רשימה מופרדת
+# בפסיקים. זה מה שמאפשר לזרוע את הרשימה בלי להקליד פקודות
+ALLOW_IDS = tuple(
+    int(part) for part in (os.getenv("ALLOW_IDS") or "").replace(" ", "").split(",")
+    if part.lstrip("-").isdigit()
+)
+
+GROQ_API_KEYS = _keys("GROQ_API_KEYS")
+GEMINI_API_KEYS = _keys("GEMINI_API_KEYS")
+
+GROQ_STT_MODEL = os.getenv("GROQ_STT_MODEL", "whisper-large-v3")
+# מודל גיבוי לתמלול. turbo זול ומהיר יותר, מדויק מעט פחות, ולרוב פחות
+# עמוס — שווה לנסות אותו כששרתי המודל הראשי מחזירים 502
+GROQ_STT_FALLBACK = os.getenv("GROQ_STT_FALLBACK", "whisper-large-v3-turbo")
+# כמה סבלנות לתת לתקלה זמנית אצל הספק לפני שמנסים דרך אחרת
+STT_ATTEMPTS = _int("STT_ATTEMPTS", 10)
+# כמה קטעים לתמלל במקביל. 0 = לפי מספר המפתחות. כל קטע תופס מפתח אחר,
+# ולכן זה מנצל את כולם במקום להשאיר ארבעה בטלים
+STT_PARALLEL = _int("STT_PARALLEL", 0)
+# כש-Groq נכשל על קטע, לתת ל-Gemini לתמלל אותו. התזמונים שלו פחות
+# מדויקים, אבל ההקשבה החוזרת וההצמדה לדיבור מתקנות אותם
+GEMINI_FALLBACK_STT = (os.getenv("GEMINI_FALLBACK_STT", "1") or "1") not in ("0", "false", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-pro-latest")
+GEMINI_FALLBACK_MODEL = os.getenv("GEMINI_FALLBACK_MODEL", "gemini-flash-latest")
+GEMINI_LAST_RESORT_MODEL = os.getenv("GEMINI_LAST_RESORT_MODEL", "gemini-flash-lite-latest")
+# כמה חלונות תרגום במקביל. כל חלון עומד בפני עצמו — ההקשר שלו נלקח
+# מהמקור ולא מתרגום קודם — ולכן אפשר להריץ אותם במקביל
+TRANSLATE_PARALLEL = _int("TRANSLATE_PARALLEL", 0)
+# מעבר "מגדר פנייה" הוא סריקה שלמה נוספת של כל התמלול, והוא נבנה
+# כשהמגדר נשרף ממסמך החקר ולא היה אמין. כשטבלת הדוברים הכריעה את
+# כל הדוברים הוא מתקן מה שכבר נכון, ועולה רבע מזמן התרגום.
+# 1 מכריח אותו תמיד, 0 מדלג כשהטבלה ודאית
+ADDRESSEE_ALWAYS = _int("ADDRESSEE_ALWAYS", 0)
+# מעבר החקר לא קריטי — אחריו ממשיכים בלעדיו במקום להחזיק את התור
+# B6: שלב החקר הוא ארבע קריאות LLM של כ-46 שניות כל אחת, והן רצות
+# במקביל. תקרה של 180 שניות פירושה שקריאה תקועה מחזיקה את כל השלב שלוש
+# דקות לפני שמוותרים עליה. 60 נותן מרווח כפול מעל הזמן שנמדד ועדיין
+# חותך תקיעה מהר
+RESEARCH_TIMEOUT = _int("RESEARCH_TIMEOUT", 60)
+# מתחת לכמה תווים בתמליל מדלגים על חילוץ המונחים. הוא נועד לעקביות
+# לאורך פרק ארוך ועושה חיפוש באינטרנט; על קליפ קצר הוא רק מוסיף זמן.
+# 4000 תווים הם בערך שלוש דקות דיבור
+RESEARCH_FACTS_MIN = _int("RESEARCH_FACTS_MIN", 4000)
+# כמה פריטים לא ודאיים נשלחים לאימות ברשת. התקרה שומרת על הקריאה קצרה
+VERIFY_MAX_ITEMS = _int("VERIFY_MAX_ITEMS", 40)
+
+# תקרת זמן לכל שלב החקר. החקר הוא שיפור ולא תנאי: הוא שומר שאותו שם
+# ייכתב אותו דבר בדקה 3 ובדקה 50. חיפוש אחד איטי מחזיק את המשתמש
+# בלי שהוא מקבל דבר, ולכן מה שהספיק נכנס ומה שלא — נזנח
+RESEARCH_BUDGET = float(os.getenv("RESEARCH_BUDGET") or 150)
+# מתחת לזה אין טעם לפתוח חיפוש ברשת — הוא לא יספיק לחזור
+VERIFY_MIN_SECONDS = float(os.getenv("VERIFY_MIN_SECONDS") or 20)
+# לכמה זמן לדלג על חיפוש גוגל אחרי שהוא נכשל. ראו gemini._search_failed
+SEARCH_REST = float(os.getenv("SEARCH_REST") or 900)
+
+MAX_INPUT_MINUTES = _int("MAX_INPUT_MINUTES", 300)
+BURN_MAX_MINUTES = _int("BURN_MAX_MINUTES", 300)
+# פרופילי צריבה. CRF הוא קידוד לפי איכות ולא לפי bitrate — הוא מוציא
+# ביטים בסצנות מורכבות וחוסך בפשוטות, כלומר מקטין בדיוק היכן שהעין
+# לא שמה לב.
+#
+# נמדד על מקור גרעיני 1080p לפלט 720p, 60 שניות, ארבע ליבות:
+#   H.264 veryfast crf28   24s   7564KB
+#   H.265 veryfast crf30   32s   4164KB   (45% פחות)
+#   H.265 medium   crf30   63s   3796KB   (עוד 9% פחות, פי שניים זמן)
+#   H.265 10bit            38s   4216KB   (לא הקטין כאן)
+#   H.265 tune grain       74s   9144KB   (משמר גרעיניות - מגדיל פי 2.4)
+#   AV1 svt preset 8       50s  10580KB   (איטי וגדול יותר)
+# קצב הסיביות של רצועת השמע אחרי המרה. 192k ב-AAC הוא שקוף כמעט
+# לחלוטין לדיבור ולמוזיקה בסטריאו, ושווה בערך לשליש ממה ש-EAC3 תפס
+AUDIO_BITRATE = os.getenv("AUDIO_BITRATE") or "192k"
+
+PROFILES = {
+    # קידוד מהיר ככל האפשר, לסרטונים קצרים בלבד. נמדד על מקור גרעיני:
+    # 1.53x מול 0.98x של H.265 — חיסכון קטן בזמן — אבל 632MB מול 21MB
+    "quick": {"codec": "libx264", "preset": "ultrafast", "crf": 20,
+              "pix_fmt": "yuv420p", "tune": "", "mbps": 9.0},
+    # H.265 מהיר, לקבצים קטנים. מחליף את quick בסולם האוטומטי כדי
+    # שגם קובץ קטן ייצא HEVC ולא יישבר אחידות הפלט של האתר
+    "fast265": {"codec": "libx265", "preset": "superfast", "crf": 22,
+                "pix_fmt": "yuv420p", "tune": "", "mbps": 4.0},
+    # H.264 — נתמך בכל מקום
+    "fast": {"codec": "libx264", "preset": "veryfast", "crf": 19,
+             "pix_fmt": "yuv420p", "tune": "", "mbps": 6.0},
+    # H.265 — כמחצית הגודל, נתמך בטלגרם וברוב המכשירים המודרניים
+    "balanced": {"codec": "libx265", "preset": "veryfast", "crf": 23,
+                 "pix_fmt": "yuv420p", "tune": "", "mbps": 2.6},
+    # H.265 עם preset איטי יותר — אותה איכות, קובץ קטן יותר, פי שניים מעבד
+    "small": {"codec": "libx265", "preset": "medium", "crf": 23,
+              "pix_fmt": "yuv420p", "tune": "", "mbps": 2.2},
+    # הפרופיל שהמשתמש עובד בו, לפי מה שקבע לו מקודד מקצועי:
+    # ‏H.265, ‏CRF 20, ‏preset medium — ובלי שום תקרת ביטרייט.
+    #
+    # ‏cap=False הוא העיקר כאן ולא קוסמטיקה. ‏CRF הוא יעד איכות: הוא
+    # נותן לסצנת תנועה את הביטים שהיא דורשת. ‏maxrate על גביו מרעיב
+    # בדיוק את הסצנות האלה, כלומר האיכות צונחת היכן שזה נראה הכי רע.
+    # נמדד על הסרטים של המשתמש עם UPLOAD_LIMIT_MB=1900: התקרה יצאה
+    # 1867 עד 2439 kbps, בעוד 1080p ב-HEVC בתנועה רוצה 4000 ומעלה
+    "quality": {"codec": "libx265", "preset": "medium", "crf": 20,
+                "pix_fmt": "yuv420p", "tune": "", "mbps": 4.5,
+                "cap": False},
+}
+
+# auto בוחר פרופיל לפי גודל המקור: קובץ קטן לא צריך דחיסה כבדה, כי גם
+# פלט גדול פי כמה נשאר הרחק מתחת למגבלת ההעלאה. קובץ גדול כן צריך.
+BURN_PROFILE = (os.getenv("BURN_PROFILE") or "auto").strip().lower()
+# הסף נמוך בכוונה. נמדד שקידוד מהיר חוסך רק כשליש מזמן הקידוד אבל מנפח
+# את הפלט פי עשרות, וההעלאה של קובץ כזה עולה יותר ממה שנחסך — ובשרת
+# סטרימינג גם גוזלת רוחב פס מהמשתמשים
+QUICK_UNDER_MB = _int("QUICK_UNDER_MB", 300)
+SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
+
+
+# נמדד על מקור 1080p עם כתוביות, שני חוטים לקטע — בדיוק מה שקטע
+# בצריבה המקבילית מריץ:
+#   H.264 veryfast  1.75x לקטע  ->  15.8x על תשעה קטעים
+#   H.265 veryfast  0.78x לקטע  ->   7.0x על תשעה קטעים
+# כלומר H.265 חוסם את הצריבה ב-7x גם על מכונה שלמה, ולא משנה כמה
+# ליבות יש. "fast" (H.264) חסר היה מהסולם לגמרי, וכל קובץ מעל 300MB
+# קפץ ישר ל-H.265. זה ההבדל בין פרק קטן שרץ 18x לסרט שזוחל.
+# סדר יורד של מהירות: הראשון הכי מהיר, האחרון הכי דחוס.
+#
+# הסולם הוא H.265 בלבד, בכוונה. x264 מהיר פי 2.2 (נמדד: 1.75x לקטע מול
+# 0.78x על 1080p בשני חוטים), אבל מוציא קובץ גדול בכ-45%, ו-HEVC הוא מה
+# שהאתר והטלגרם מגישים היום באופן אחיד. פלט מעורב משני קודקים הוא מחיר
+# גבוה יותר מהזמן שנחסך.
+#
+# קוד x264 לא נמחק — הוא נשאר בפרופילים quick ו-fast ונגיש דרך
+# BURN_PROFILE מפורש או ALLOW_X264=1, כדי שאפשר יהיה לחזור אליו בלי
+# לשכתב כלום
+LADDER = ("fast265", "balanced", "small")
+# 1 מחזיר את x264 לסולם האוטומטי. 0 = HEVC בלבד, וגם _verify יאכוף זאת
+ALLOW_X264 = _int("ALLOW_X264", 0)
+
+
+def profile_for(source_bytes: int, duration: float = 0.0,
+                height: int = 0) -> dict:
+    """בוחר הגדרות צריבה: מהירות כשאפשר, דחיסה כשחייבים.
+
+    מקור קטן לא צריך דחיסה כבדה — גם פלט גדול פי כמה נשאר הרחק מתחת
+    למגבלת ההעלאה, וחבל לבזבז עליו זמן מעבד. מקור גדול כן צריך.
+    אחרי הבחירה נבדק שהפלט הצפוי נכנס במגבלה, ואם לא יורדים דרגה.
+    """
+    if BURN_PROFILE != "auto":
+        return PROFILES.get(BURN_PROFILE, PROFILES["balanced"])
+
+    megabytes = source_bytes / 1024 ** 2
+    if megabytes <= QUICK_UNDER_MB:
+        start = 0
+    elif megabytes >= SMALL_OVER_MB:
+        start = 2
+    else:
+        start = 1
+
+    ladder = (("quick", "fast") + LADDER) if ALLOW_X264 else LADDER
+    start = min(start, len(ladder) - 1)
+    for name in ladder[start:]:
+        settings = PROFILES[name]
+        if duration <= 0:
+            return settings
+        # קצב הסיביות גדל בערך עם מספר הפיקסלים. הערכים בטבלה נמדדו
+        # על 1080p, ולכן מקור נמוך יותר מוכפל ביחס השטח
+        scale = (height / 1080.0) ** 2 if height else 1.0
+        scale = max(0.15, min(1.0, scale))
+        predicted = settings["mbps"] * scale * 1_000_000 * duration / 8 / 1024 ** 2
+        if predicted <= UPLOAD_CEILING_MB:
+            return settings
+    return PROFILES["small"]
+
+
+def profile_name(settings: dict) -> str:
+    for name, values in PROFILES.items():
+        if values is settings:
+            return name
+    return BURN_PROFILE
+
+
+_profile = PROFILES.get(BURN_PROFILE, PROFILES["balanced"])
+
+# דריסות נקודתיות. ריק פירושו "לפי הפרופיל שנבחר לקובץ"
+BURN_CODEC = os.getenv("BURN_CODEC", "")
+BURN_PRESET = os.getenv("BURN_PRESET", "")
+BURN_CRF = os.getenv("BURN_CRF", "")
+BURN_PIX_FMT = os.getenv("BURN_PIX_FMT", "")
+BURN_TUNE = os.getenv("BURN_TUNE", "")
+
+# תקרת bitrate קשיחה מעוותת את האיכות: סצנה מורכבת נחנקת בדיוק כשהיא
+# צריכה ביטים. CRF לבדו מחלק את הביטים נכון, ולכן התקרה כבויה כברירת
+# מחדל. ערך גדול מאפס מפעיל אותה, למקרה שחייבים להיכנס בגודל מסוים.
+UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
+# קרדיט שמוצג בפתיחת הסרטון הצרוב. שורות מופרדות בתו |, ריק מבטל
+# גודל הכתוביות: קטן / בינוני / גדול. אפשר לבחור גם לכל צריבה בנפרד
+SUB_SIZE = (os.getenv("SUB_SIZE") or "קטן").strip()
+SUB_FONT = os.getenv("SUB_FONT", "Noto Sans Hebrew")
+CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד על ידי|zovex|ועולם הדרמות הטורקיות")
+CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
+CREDIT_SIZE = _int("CREDIT_SIZE", 34)
+
+# תקרת ההעלאה של טלגרם פרימיום, לבחירת פרופיל בלבד (לא תקרת bitrate)
+UPLOAD_CEILING_MB = _int("UPLOAD_CEILING_MB", 3800)
+# תקרת רזולוציה. המקור אף פעם לא מוגדל — רק 4K וגבוה מזה יורד ל-1080p,
+# כדי שהצריבה לא תימשך נצח. 0 מבטל כל שינוי רזולוציה.
+BURN_MAX_HEIGHT = _int("BURN_MAX_HEIGHT", 1080)
+FFMPEG_THREADS = _int("FFMPEG_THREADS", 1)
+# לצריבה כדאי יותר מ-thread אחד: הצוואר הוא פענוח המקור, ושתי ליבות
+# מכפילות את המהירות פי 2.4 בלי לשנות את גודל הפלט.
+#
+# auto קובע את המספר לפי העומס בפועל ברגע שהצריבה מתחילה: בשעה שקטה
+# הוא לוקח כמעט את כל הליבות, ובשעת עומס מצטמצם. מעבר לזה, nice ו-ionice
+# דואגים שגם כשהצריבה רצה על הרבה ליבות, כל תהליך אחר דוחק אותה מיד.
+BURN_THREADS = os.getenv("BURN_THREADS", "auto").strip().lower()
+# כמה ליבות להשאיר פנויות לשאר השרת גם כשהוא נראה ריק
+RESERVE_CORES = float(os.getenv("RESERVE_CORES") or 1.5)
+# תקרה עליונה ל-threads, 0 = עד כל הליבות
+BURN_THREADS_MAX = _int("BURN_THREADS_MAX", 0)
+# תקרה קשיחה לצריבה. ערך קבוע לא מתאים: חצי שעה מספיקה לסרטון קצר אבל
+# הורגת סרט של שעתיים ממש לפני הסוף. auto גוזר אותה מאורך הווידאו לפי
+# הקצב האיטי ביותר שנמדד, עם רצפה ושוליים
+BURN_TIMEOUT = os.getenv("BURN_TIMEOUT", "auto").strip().lower()
+BURN_TIMEOUT_FACTOR = float(os.getenv("BURN_TIMEOUT_FACTOR") or 4.0)
+BURN_TIMEOUT_FLOOR = _int("BURN_TIMEOUT_FLOOR", 1800)
+
+# צריבה מקבילית. מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד
+# לא מצליח להעסיק מכונה עם הרבה ליבות. חיתוך הווידאו לקטעים והרצת
+# תהליך לכל קטע נותנת צינור רינדור נפרד לכל אחד.
+#
+# כמה חוטים לתת לכל קטע? נמדד על מקור גרעיני 1080p, תהליך אחד, אותן
+# הגדרות קידוד שבפרודקשן:
+#   חוט אחד   0.17x   (0.170 לליבה)
+#   שני חוטים 0.35x   (0.175 לליבה)  ← היעיל ביותר
+#   שלושה     0.47x   (0.157 לליבה)
+#   ארבעה     0.58x   (0.145 לליבה)
+# התשואה לכל ליבה יורדת כבר מהחוט השלישי, ולכן עדיף יותר תהליכים עם
+# פחות חוטים: 9 קטעים של שני חוטים מוציאים כ-12% יותר מ-6 של שלושה.
+# אורך הקטע קובע את צפיפות החלוקה מחדש של הליבות. קטע ארוך מחזיק את
+# המקום שלו עד שהוא נגמר, ואז צריבה שנייה פשוט ממתינה לראשונה במקום
+# להתחלק איתה. קטעים קצרים משחררים מקום כל הזמן, וכך החלוקה אמיתית.
+# שתי דקות: פתיחת ffmpeg (כחצי שנייה) זניחה מול הקידוד עצמו
+BURN_CHUNK_SECONDS = _int("BURN_CHUNK_SECONDS", 120)
+BURN_SEGMENT_THREADS = _int("BURN_SEGMENT_THREADS", 2)
+BURN_CHUNKS_MAX = _int("BURN_CHUNKS_MAX", 200)
+
+
+def burn_chunks(duration: float) -> int:
+    """לכמה קטעים לחתוך וידאו באורך הזה."""
+    return max(1, min(BURN_CHUNKS_MAX,
+                      -(-int(duration) // max(1, BURN_CHUNK_SECONDS))))
+# וידאו קצר לא מרוויח מהפיצול, ורק מסבך
+BURN_PARALLEL_MIN_MINUTES = _int("BURN_PARALLEL_MIN_MINUTES", 3)
+# כמה צריבות מותר להריץ בו-זמנית. מעבר לזה נכנסים לתור
+BURN_JOBS = _int("BURN_JOBS", 2)
+# הקצאת־יתר: פי כמה תהליכים מהחוטים שהמכונה יכולה להריץ.
+# לכל תהליך ffmpeg יש שלבים טוריים שבהם החוטים שלו עומדים — libass
+# מרנדר בחוט אחד, וכך גם פתיחת הקובץ, החיפוש והמיזוג. ברגעים האלה
+# הליבה בטלה, ותהליך נוסף תופס את מקומה.
+#
+# נמדד על 1080p עם כתוביות, תפוקה מצרפית (שני חוטים לקטע):
+#   פי 1 (כמו שהיה)  2.00x
+#   פי 2             2.23x   <- הטוב ביותר
+#   פי 3             2.09x   הידרדרות: התהליכים נלחמים על מטמון וזיכרון
+# כלומר הליבות היו כבר כ-89% רוויות, וזה מוסיף כ-12% ולא יותר.
+BURN_OVERSUBSCRIBE = _int("BURN_OVERSUBSCRIBE", 2)
+# זיכרון שמוקצה לכל קטע צריבה. התקרה הזאת מחלקת את מספר המקומות
+# כש-MemAvailable קטן, ולכן הערכה גבוהה מדי חונקת את הניצולת: על
+# מכונה עם ארבעה ג'יגה פנויים היא נתנה שישה מקומות במקום שמונה־עשרה.
+#
+# נמדד בדגימת VmHWM על 1080p עם כתוביות, שני חוטים לקטע:
+#   x265 superfast   321MB
+#   x265 veryfast    379MB
+#   x264 veryfast    314MB
+# 420 הוא המרב שנמדד בתוספת שוליים. הערך הקודם, 640, היה כפול
+# מהמציאות וחתך את מספר הקטעים המקבילים לשניים
+BURN_SEGMENT_MEMORY = _int("BURN_SEGMENT_MEMORY", 420 * 1024 * 1024)
+
+
+
+def burn_slots(cores: int) -> int:
+    """כמה קטעים מותר להריץ בו-זמנית בכל המכונה, על פני כל הצריבות.
+
+    זה מה שמחלק את הליבות בין צריבות מקבילות, ובלי לשנות שום תהליך
+    שכבר רץ: הקטעים הם שמתחרים על המקומות. צריבה לבדה תופסת את כולם
+    ומקבלת את המכונה כולה; כששנייה מצטרפת הן מתחלקות מאליהן, וכשאחת
+    מסיימת השנייה מתרחבת בחזרה בלי שאיש יתערב.
+    """
+    return max(1, cores * BURN_OVERSUBSCRIBE // max(1, BURN_SEGMENT_THREADS))
+
+
+def burn_timeout(duration: float) -> float:
+    """כמה זמן לתת לצריבה של וידאו באורך הזה."""
+    setting = str(BURN_TIMEOUT)
+    if setting.isdigit():
+        return float(setting)
+    return max(float(BURN_TIMEOUT_FLOOR), duration * BURN_TIMEOUT_FACTOR)
+# בדיקת מקום בדיסק לפני הורדה וצריבה: פי כמה מגודל המקור, ועוד רזרבה
+DISK_FACTOR = float(os.getenv("DISK_FACTOR") or 2.5)
+DISK_RESERVE_GB = float(os.getenv("DISK_RESERVE_GB") or 3.0)
+# nice 15 נתן למקודד כעשירית ממשקל המעבד של כל תהליך רגיל, כולל
+# תהליך הבוט עצמו שמעלה ומדווח התקדמות באותו זמן. 5 עדיין מפנה את
+# הדרך בלי לרסק את הצריבה
+NICE = _int("NICE", 5)
+# עדיפות דיסק: מחלקה 2 (best-effort) ברמה 7 (הנמוכה ביותר). ראה
+# ההסבר ב-media._nice_prefix — מחלקה 3 (idle) חנקה צריבה של קובץ גדול
+IONICE_CLASS = _int("IONICE_CLASS", 2)
+IONICE_LEVEL = _int("IONICE_LEVEL", 7)
+
+WORK_DIR = Path(os.getenv("WORK_DIR") or "/tmp/zovexsub")
+
+# הורדה מקישור. ברירת המחדל מעדיפה 1080p ומטה, כדי לא לגרור 4K מיותר
+FETCH_FORMAT = os.getenv(
+    "FETCH_FORMAT",
+    "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+)
+# מקטעים שיורדים במקביל. יוטיוב מגישה DASH מפוצל למקטעים, וזה המנוף
+# העיקרי על הקצב. ארבעה היה שמרני מדי לקו של עשרות מגה־בייט לשנייה
+# בדרייב לוקחים את הקובץ המקורי (source) ולא את הזרמים שגוגל
+# מקודדת לנגן שלה. ראה _format_for ב-fetch.py
+FETCH_FORMAT_DRIVE = os.getenv("FETCH_FORMAT_DRIVE", "source/best")
+FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 8)
+# יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
+# מחשבון מחובר פותר את זה. ריק = בלי עוגיות
+FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")
+# cobalt — שרת הורדה קטן שרץ אצלנו בקונטיינר. יוטיוב חוסמים את yt-dlp
+# משרתים, ו-cobalt מותקן עצמית עוקף את זה. ריק = משתמשים רק ב-yt-dlp
+COBALT_URL = (os.getenv("COBALT_URL") or "").rstrip("/")
+COBALT_QUALITY = os.getenv("COBALT_QUALITY", "1080")
+# aria2c מוריד בכמה חיבורים מקבילים ומנצל את הקו טוב יותר מההורדה
+# הפנימית של yt-dlp. ריק = לא בשימוש
+FETCH_ARIA2 = (os.getenv("FETCH_ARIA2") or "auto").strip().lower()
+# לקוחות הנגן שיוטיוב מגישה להם. הערכים משתנים מגרסה לגרסה של yt-dlp
+# ולכן אינם מוטבעים בקוד. ברירת המחדל מכסה את מה שעובד בלי PO token
+FETCH_CLIENTS = os.getenv("FETCH_CLIENTS", "default,tv,web_safari")
+# שרת PO token (bgutil-ytdlp-pot-provider). ריק = בלי
+# עדכון אוטומטי של yt-dlp לערוץ nightly כשיוטיוב שוברת את הנגן.
+# גוגל משנה את הנגן כל כמה ימים, התיקון נכנס ל-nightly תוך שעות,
+# ובלי זה כל הורדה נכשלת עד שמישהו מריץ pip ביד
+YTDLP_AUTO_UPDATE = _int("YTDLP_AUTO_UPDATE", 1)
+# מרווח מינימלי בין ניסיונות עדכון. בלעדיו כל הורדה שנכשלת מריצה pip
+YTDLP_UPDATE_EVERY = float(os.getenv("YTDLP_UPDATE_EVERY") or 6 * 3600)
+
+FETCH_POT_URL = os.getenv("FETCH_POT_URL", "")
+# מפסק זרם: כמה כשלונות רצופים עד שעוצרים, ולכמה זמן
+FETCH_BREAKER_FAILS = _int("FETCH_BREAKER_FAILS", 5)
+FETCH_BREAKER_REST = float(os.getenv("FETCH_BREAKER_REST") or 3600)
+ARIA2_CONNECTIONS = _int("ARIA2_CONNECTIONS", 16)
+
+# כל כמה שניות לקרוא את גודל הקבצים בדיסק כשהמוריד עצמו שותק
+FETCH_WATCH_EVERY = float(os.getenv("FETCH_WATCH_EVERY") or 3)
+# כמה שניות בלי גדילה בדיסק נחשבות תקיעה שראוי להציג למשתמש
+FETCH_STALL = float(os.getenv("FETCH_STALL") or 45)
+
+# כמה בקשות במקביל מול טלגרם בהורדה ובהעלאה. יותר מדי יגרור הגבלת קצב
+# מספר החיבורים: פחות הוא יותר, וזה נמדד בדרך הקשה.
+#
+# הלקוח הרשמי של טלגרם מגביל את עצמו לארבעה עובדים ל-DC, וכך כתוב
+# בקוד המקור שלו. התיעוד של Telethon מוסיף שהעברה מקבילית אינה
+# עוזרת לאורך זמן, כי הגורם המגביל הוא FLOOD_WAIT — ומקביליות רק
+# מקרבת אותו.
+#
+# מה שנצפה כאן מאשר את זה בדיוק. עם עשרים חיבורים ההורדה הראשונה
+# נתנה 7.5MB/s, ואחרי שימוש ממושך לחיצת יד אחת ארכה שמונה שניות
+# (עשרים חיבורים = 2:45 להקמה) והקצב צנח ל-0.5MB/s. זו חניקה, לא
+# איטיות: החשבון והכתובת סומנו.
+#
+# שישה הוא פשרה — מעל הארבעה של הלקוח הרשמי, הרחק מתחת לעשרים
+# שהביאו לחניקה. הערך שהיה כאן במקור היה ארבעה, והוא היה נכון
+# שש-עשרה. אין לכך בסיס תיאורטי, ואין לאף מספר אחר: המתחזק של
+# aria2 נשאל למה התקרה שלו היא 16 וענה שאין תיאוריה מאחורי המספר
+# ושהוא "נראה גדול מספיק", וה-20 של FastTelethon הוא ברירת מחדל של
+# פרמטר ולא מגבלה מתועדת של טלגרם. בהיעדר מספר נכון נבחר הנמוך
+# מבין השניים: פחות לחיצות יד ופחות סיכוי ל-FLOOD_WAIT
+TG_CONNECTIONS = _int("TG_CONNECTIONS", 16)
+# בקשה אחת לכל חיבור, כמו במימוש המוכר. ערימת בקשות על חיבור יחיד
+# מנתקת אותו
+TG_PIPELINE = _int("TG_PIPELINE", 1)
+# כמה פעמים לפתוח חיבורים מחדש כשכולם מתו באמצע ההורדה. בלי זה
+# הורדה שהגיעה ל-69 אחוזים הסתיימה בשגיאה וכל הבייטים נזרקו
+TG_REVIVALS = _int("TG_REVIVALS", 4)
+
+TG_FLOOD_MAX = float(os.getenv("TG_FLOOD_MAX") or 120)
+# תקרה עליונה לבקשות באוויר, שווה למספר החיבורים
+TG_INFLIGHT_MAX = _int("TG_INFLIGHT_MAX", 16)
+# כל כמה בייטים לסנכרן לדיסק ולשחרר את מטמון העמודים
+# 0 = בלי סנכרון תקופתי כלל
+TG_SYNC_EVERY = _int("TG_SYNC_EVERY", 64 * 1024 * 1024)
+# מעל הגודל הזה מבקשים חלקים של 1MB — המרב שהתיעוד מתיר — במקום 512KB
+# שטלתון בוחר. ראו fastio._parts
+TG_BIG_PART_FROM = _int("TG_BIG_PART_FROM", 64 * 1024 * 1024)
+TG_PART_MAX = _int("TG_PART_MAX", 1024 * 1024)
+# שליחת בקשות הקבצים לכתובת ה-DC שטלגרם ייעד לקבצים (media_only).
+# כבוי כברירת מחדל: התיעוד אומר שסשן נוסף על אותו auth_key_id נפתח
+# בלי אימות מחדש, אבל הוא אינו אומר זאת על כתובת media_only — זו
+# הייתה הנחה, ובשרת זה נמדד כ"לא התחיל להוריד תוך 240 שניות".
+# TG_MEDIA_DC=1 מדליק בחזרה, למי שרוצה למדוד
+TG_MEDIA_DC = _int("TG_MEDIA_DC", 0)
+
+# תקרה עליונה ל-maxrate, ב-kbps. bufsize הוא פי שתיים ממנה, ו-ffmpeg
+# מקבל אותו כמספר שלם 32 ביט — ראו media._bitrate_cap
+BITRATE_CAP_MAX = _int("BITRATE_CAP_MAX", 100_000)
+
+# מסירת הפלט עוברת בחשבון דרך ערוץ האחסון, ולא בבוט — גם מתחת לתקרת
+# הבוט. מסלול אחד לכל הגדלים במקום שניים. 0 מחזיר את הפיצול לפי גודל
+UPLOAD_VIA_ACCOUNT = _int("UPLOAD_VIA_ACCOUNT", 1)
+
+# תקרת זמן לתיקון האותיות הזרות. פסק הזמן הפנימי של ג'ימיני הוא 300
+# שניות לניסיון, והוא מנסה על פני כמה מפתחות — כלומר רבע שעה חוקית
+# לגמרי על כמה שורות פגומות, בלי שהמסך יזוז. ראו hebrew.repair_foreign
+REPAIR_TIMEOUT = float(os.getenv("REPAIR_TIMEOUT") or 120)
+TG_GROW_EVERY = _int("TG_GROW_EVERY", 8)
+# תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
+# במקום ליפול חזרה למסלול הרגיל של טלתון
+TG_CONNECT_TIMEOUT = float(os.getenv("TG_CONNECT_TIMEOUT") or 45)
+# פיזור בין פתיחת חיבור לחיבור. בלעדיו עשרים לחיצות יד יוצאות באותו
+# רגע, טלגרם רואה בכך הצפה וחלקן נדחות — ואז הקצב נמוך בלי הסבר
+TG_CONNECT_STAGGER = float(os.getenv("TG_CONNECT_STAGGER") or 0.05)
+# פתיחה מקבילית של החיבורים. כבויה כברירת מחדל: היא נראתה נכונה
+# אבל נמדדה גרועה. אותו קובץ ירד ב-7.5MB/s כשהחיבורים נפתחו בזה
+# אחר זה, וב-0.9MB/s כשנפתחו יחד — פי שמונה הפרש
+TG_OPEN_PARALLEL = _int("TG_OPEN_PARALLEL", 0)
+
+# כמה לחכות לבייט הראשון במסלול המקבילי לפני נפילה לגיבוי. בלי תקרה
+# כזו כשל בפתיחת החיבורים משאיר את המסך על ההודעה הראשונה לנצח
+# הקמה סדרתית של עשרים חיבורים אורכת זמן, ופסק זמן קצר מדי הפיל את
+# המסלול כולו לגיבוי בדיוק כשהוא עמד להתחיל. רחב בכוונה: עדיף
+# להמתין דקות מלהוריד בקצב של מסלול הגיבוי
+FAST_START_TIMEOUT = float(os.getenv("FAST_START_TIMEOUT") or 240)
+# תקרת זמן לבקשת חלק בודדת. בלעדיה חיבור שמפסיק לענות באמצע משאיר את
+# העובד שלו ממתין לנצח, וההורדה נתקעת באחוז אקראי בלי שגיאה
+TG_READ_TIMEOUT = float(os.getenv("TG_READ_TIMEOUT") or 60)
+# כמה פעמים לנסות את המסלול המקבילי לפני שעוברים לאיטי. יש יומן
+# חלקים, ולכן כל ניסיון ממשיך מאיפה שקודמו נעצר ולא מתחיל מאפס
+TG_FAST_ATTEMPTS = _int("TG_FAST_ATTEMPTS", 3)
+# כל כמה חלקים לשמור את יומן ההורדה לדיסק
+TG_LEDGER_EVERY = _int("TG_LEDGER_EVERY", 16)
+TG_READ_RETRIES = _int("TG_READ_RETRIES", 3)
+# אם לא ירד אף בייט בפרק הזמן הזה, ההעברה מוכרזת תקועה ונופלת חזרה
+# אחרי FLOOD_PREMIUM_WAIT אין טעם לנסות שוב באותו חשבון: טלגרם
+# הצמידה לו תקרת מהירות, והניסיון הבא ייכשל באותו אופן אחרי עוד
+# רבע שעה. במקום זה נופלים מיד למסלול הבוט לפרק הזמן הזה
+# מי מוריד ראשון. התיעוד הרשמי של טלגרם אומר ש-FLOOD_PREMIUM_WAIT
+# מתקבל "רק כאשר המשתמש העלה עשרות ג'יגה־בייט או יותר" — כלומר
+# ההעלאות של המשתמש מהטלפון הן שממלאות את תקציב החשבון, והשרת
+# שמוריד באותו חשבון חוטף את העונש. טוקן הבוט הוא ישות נפרדת ואינו
+# כפוף לו. "account" מחזיר את הסדר הקודם
+# עודכן: ההורדות עברו ל-Premium בלבד (ראו botapi.downloader), וחשבון
+# Premium אינו יכול לקבל FLOOD_PREMIUM_WAIT כלל — כך שהנימוק להעדפת
+# הבוט אינו תקף יותר. ובפועל נתיב הבוט נמדד כנתקע לפני הבייט הראשון:
+# "פותח 16 חיבורים (בוט) · 0 מתוך 1910MB · 0% · 2:05", כלומר מעבר
+# לפסק הזמן לפתיחת החיבורים — הם קמו והבקשות לא החזירו כלום.
+# "bot" מחזיר את הסדר הקודם
+DOWNLOAD_FIRST = (os.getenv("DOWNLOAD_FIRST") or "account").strip().lower()
+PREMIUM_FLOOD_REST = float(os.getenv("PREMIUM_FLOOD_REST") or 3600)
+TG_STALL_TIMEOUT = float(os.getenv("TG_STALL_TIMEOUT") or 180)
+
+
+def _retry_budget() -> float:
+    """כמה זמן חלק בודד רשאי לנסות, במקרה הגרוע.
+
+    שלושה ניסיונות של 60 שניות ועוד ההמתנות ביניהם הם 186 שניות —
+    יותר מסף התקיעה של 180. כלומר חלק שנזקק למלוא זכות הניסיונות
+    שלו לא יכול לסיים לעולם: השומר הורג את ההורדה לפניו. נמדד
+    בשרת כ"ההורדה תקועה 184 שניות על 36%", בדיוק בחלון שבין
+    180 ל-186.
+    """
+    waits = sum(min(8, 2 ** step) for step in range(1, TG_READ_RETRIES))
+    return TG_READ_TIMEOUT * TG_READ_RETRIES + waits
+
+
+# הסף חייב להיות גדול מתקציב הניסיונות, אחרת הוא חותך ניסיון תקין
+# באמצע. רצפה ולא דריסה: ערך גבוה יותר שנקבע ידנית נשמר
+TG_STALL_FLOOR = _retry_budget() + 60
+if TG_STALL_TIMEOUT < TG_STALL_FLOOR:
+    TG_STALL_TIMEOUT = TG_STALL_FLOOR
+TG_FAST_TIMEOUT = float(os.getenv("TG_FAST_TIMEOUT") or 0)   # 0 = בלי תקרה
+
+# מגבלת גודל לקובץ שנשלח ל-Groq (25MB בתוכנית החינמית). נשאיר שולי ביטחון.
+STT_CHUNK_BYTES = 20 * 1024 * 1024
+# אודיו FLAC 16kHz מונו ~ 100KB לשנייה במקרה הגרוע; נחתוך לפי זמן כגיבוי
+STT_CHUNK_SECONDS = _int("STT_CHUNK_SECONDS", 600)
+# אורך מינימלי לחלק. חלק קצר מדי פוגע בהקשר שהמודל רואה
+STT_CHUNK_MIN_SECONDS = _int("STT_CHUNK_MIN_SECONDS", 150)
+
+# כמה כתוביות חשודות מותר לשמוע שוב בעבודה אחת. כל הקשבה חוזרת היא
+# קריאת API נוספת, קצרה וזולה, אבל בסרט ארוך זה מצטבר
+REALIGN_MAX = _int("REALIGN_MAX", 60)
+
+# עיצוב כתוביות
+# מראה הכתוביות כברירת מחדל: קופסה / לבן / קו
+# מעל כמה שניות של FLOOD_WAIT מוותרים על עדכון התקדמות במקום להמתין
+EDIT_FLOOD_MAX = float(os.getenv("EDIT_FLOOD_MAX") or 20)
+SUB_LOOK = (os.getenv("SUB_LOOK") or "קו").strip()
+SRT_MAX_CHARS_PER_LINE = _int("SRT_MAX_CHARS_PER_LINE", 42)
+SRT_MAX_LINES = 2
+# כמה זמן כתובית נשארת על המסך. המשתמש השווה מול תרגום אולפן
+# וראה ששם השורות נשארות ארוך יותר. אלה היו קשיחים בקוד, ולכן
+# כל כוונון דרש שינוי קוד ופריסה — עכשיו הם ב-.env
+SRT_MIN_DURATION = float(os.getenv("SRT_MIN_DURATION") or 1.0)
+SRT_MAX_DURATION = float(os.getenv("SRT_MAX_DURATION") or 7.0)
+# מהירות קריאה בתווים לשנייה, ורווח מינימלי בין כתוביות. היו מוטבעים
+# בקוד כ-17 ו-0.08, ושלב מניעת החפיפה השתמש ב-0.04 — שלושה מספרים
+# שונים לאותו רעיון
+# נמדד על קובץ כתוביות מקצועי של שירות סטרימינג: 12.3 תווים לשנייה.
+# 17 היה מהיר מדי ויצר כתוביות שנעלמות לפני שסיימת לקרוא
+SRT_READ_SPEED = float(os.getenv("SRT_READ_SPEED") or 13.0)
+SRT_GAP = float(os.getenv("SRT_GAP") or 0.08)
+
+# איחוד כתוביות סמוכות. נמדד מול קובץ מקצועי: שם אין כמעט כתוביות
+# מתחת לשנייה (10 מתוך 1635), ו-13 אחוזים מהן מכילות שני דוברים עם
+# מקף. אצלנו 15 אחוזים ירדו מתחת לשנייה ואף אחת לא איחדה דוברים —
+# ולכן חילופי דברים מהירים הבהבו על המסך במקום להיקרא כיחידה אחת
+SRT_MERGE_GAP = float(os.getenv("SRT_MERGE_GAP") or 0.35)
+# מעל האורך הזה כתובית כבר נקראת בנוחות ואין סיבה לאחד אותה
+SRT_MERGE_UNDER = float(os.getenv("SRT_MERGE_UNDER") or 1.0)
+# הטקסט המאוחד חייב להיכנס בשתי שורות
+SRT_MERGE_MAX_CHARS = _int("SRT_MERGE_MAX_CHARS", 84)
+# משך מרבי לכתובית מאוחדת
+SRT_MERGE_MAX_SPAN = float(os.getenv("SRT_MERGE_MAX_SPAN") or 5.0)
+
+# גיזום זנב: כתובית מבודדת בסוף הקובץ, שלפניה שתיקה ארוכה מזו, נחשבת
+# הזיית תמלול על הקרדיטים ולא תוכן. נמדד על סרט שלם: הפער הגדול ביותר
+# בגוף הסרט היה 25 שניות, והזנב ההזוי התחיל אחרי 87 — הפרדה חדה
+SRT_TAIL_GAP = float(os.getenv("SRT_TAIL_GAP") or 60.0)
+
+# היצמדות לחיתוכי צילום: כתובית שחוצה חיתוך נקראת פעמיים על ידי
+# הצופה. 0 מכבה את הזיהוי (הוא סורק את כל הווידאו ועולה זמן)
+# סחיפה מתקדמת נמדדת רק על קובץ ארוך מספיק: בקליפ קצר ההפרש בין
+# שני החצאים הוא רעש מדידה ולא סחיפה אמיתית
+# הצלת קטעי דיבור שהתמלול פספס: אורך מינימלי שראוי לנסות שוב,
+# תקרה למספר הניסיונות, וריפוד להקשר משני צידי החור
+# סינון הזיות לפי VAD: איזה חלק מהקטע חייב להיות מכוסה בדיבור כדי
+# שלא ייחשב המצאה, ועד כמה הוא יכול להיות ארוך. שמרני בכוונה —
+# שורה אמיתית שנמחקה גרועה משורה מומצאת שנשארה
+NONSPEECH_COVER = float(os.getenv("NONSPEECH_COVER") or 0.10)
+NONSPEECH_MAX_CHARS = _int("NONSPEECH_MAX_CHARS", 80)
+RECOVER_GAPS = _int("RECOVER_GAPS", 1)
+RECOVER_MIN = float(os.getenv("RECOVER_MIN") or 1.2)
+RECOVER_MAX = _int("RECOVER_MAX", 160)
+RECOVER_PAD = float(os.getenv("RECOVER_PAD") or 0.8)
+RECOVER_WORKERS = _int("RECOVER_WORKERS", 6)
+# איזה חלק מקטע דיבור צריך להיות מכוסה בתמלול כדי שלא ייחשב חור.
+# אפס פירושו הדרישה הישנה — אפס חפיפה בדיוק
+RECOVER_COVER = float(os.getenv("RECOVER_COVER") or 0.6)
+DRIFT_MIN_SPAN = float(os.getenv("DRIFT_MIN_SPAN") or 900)
+# הפרש מינימלי בין שני החצאים שנחשב סחיפה ולא רעש
+DRIFT_MIN_CHANGE = float(os.getenv("DRIFT_MIN_CHANGE") or 0.35)
+# קצב סחיפה שמעליו ההנחה שגויה וההתערבות תזיק יותר משתועיל
+DRIFT_MAX_RATE = float(os.getenv("DRIFT_MAX_RATE") or 0.01)
+# הקדמה אחידה לכל הכתוביות. זיהוי הדיבור מכריז "יש דיבור" רק אחרי
+# שהאנרגיה הצטברה, כלומר באיחור קל וקבוע — וכיוון שאנחנו גם מצמידים
+# אליו וגם מודדים את ההיסט מולו, ההטיה הזאת בלתי נראית למדידה שלנו
+# ומופיעה למשתמש כדיליי. בעריכת כתוביות מקצועית מקדימים מעט ממילא
+# תצוגה מקדימה מותאמת. טלגרם חוסמת אותה ב-320 פיקסל וב-200KB בפורמט
+# JPEG — מגבלה שלה, שאי אפשר לעקוף. מה שכן בידינו הוא לא לבזבז את
+# התקרה הזאת: הקטנה עם לנצוש ואיכות גבוהה נראית הרבה יותר טוב
+# מגרב־פריים של הווידאו, גם באותם 320 פיקסל
+THUMB_MAX = _int("THUMB_MAX", 320)
+THUMB_BYTES = _int("THUMB_BYTES", 190_000)
+THUMB_QUALITY = _int("THUMB_QUALITY", 2)
+# כמה זמן כתובית נשארת מעבר למה שנדרש כדי לקרוא אותה. מקטע תמלול
+# ארוך למשפט קצר הוא מצב נפוץ — מוזיקה או שקט סביב הדיבור — ובלי
+# התקרה הזאת "תלכי" נשארה על המסך שבע שניות, 0.7 תווים לשנייה.
+# נמדד מול קובץ רשמי של פלטפורמת סטרימינג: שם אין אף כתובית על
+# תקרת שבע השניות, ואצלנו היו 21
+SRT_LINGER = float(os.getenv("SRT_LINGER") or 1.2)
+SRT_LEAD = float(os.getenv("SRT_LEAD") or 0.18)
+SRT_SNAP_CUTS = _int("SRT_SNAP_CUTS", 1)
+SCENE_THRESHOLD = float(os.getenv("SCENE_THRESHOLD") or 0.35)
+
+
+# תקרה עליונה למקביליות, לא משנה כמה מפתחות יש
+PARALLEL_CEILING = _int("PARALLEL_CEILING", 16)
+
+
+def parallel(setting: int, keys: list[str], ceiling: int = 0) -> int:
+    """כמה בקשות במקביל: לפי ההגדרה, או לפי מספר המפתחות שיש.
+
+    כל מפתח הוא חשבון נפרד עם מכסה משלו, ולכן יותר מפתחות פירושם יותר
+    עבודה בו-זמנית ולא רק גיבוי.
+    """
+    if setting > 0:
+        return setting
+    return max(1, min(len(keys) or 1, ceiling or PARALLEL_CEILING))
+
+
+def validate() -> list[str]:
+    problems = []
+    if not TG_API_ID or not TG_API_HASH:
+        problems.append("חסר TG_API_ID / TG_API_HASH")
+    if not GROQ_API_KEYS:
+        problems.append("חסר GROQ_API_KEYS")
+    if not GEMINI_API_KEYS:
+        problems.append("חסר GEMINI_API_KEYS")
+    return problems
+
+
+# זיהוי דיבור. silencedetect מודד עוצמה ולכן סופר מוזיקת רקע כדיבור;
+# מודל VAD אמיתי מבדיל ביניהם. ריק או קובץ חסר = חוזרים לשיטה הישנה
+VAD_MODEL = os.getenv("VAD_MODEL") or "/opt/zovexsub/models/silero_vad.onnx"
+# סף זיהוי דיבור. 0.5 פספס דיבור שנאמר מעל מוזיקה — בדיוק המקרה שבו
+# כתוביות "צפות" מעל שקט לכאורה. 0.35 תופס אותו, במחיר זיהויי שווא
+# שההצמדה המוגבלת שלמעלה ממילא חוסמת
+VAD_THRESHOLD = float(os.getenv("VAD_THRESHOLD") or 0.35)
+# תקרת ההצמדה לדיבור, בשניות. ראו ההסבר ב-srt.py
+SNAP_RAW = float(os.getenv("SNAP_RAW") or 1.5)
+SNAP_ACCURATE = float(os.getenv("SNAP_ACCURATE") or 0.4)
+# תיקון שעון מוסט: עד כמה לחפש התאמה, מהו היסט שכדאי לתקן, כמה דגימות
+# דרושות, ומהו פיזור שמעליו הנתונים רועשים מדי מכדי להסיק מהם
+OFFSET_SEARCH = float(os.getenv("OFFSET_SEARCH") or 6.0)
+OFFSET_MIN = float(os.getenv("OFFSET_MIN") or 0.35)
+OFFSET_MIN_SAMPLES = _int("OFFSET_MIN_SAMPLES", 12)
+# כמה קרוב נחשב "מיושר", ואיזה חלק מהכתוביות חייב להתיישר כדי שתיקון
+# גלובלי ייחשב אמיתי ולא התאמה מקרית לרעש
+OFFSET_TOLERANCE = float(os.getenv("OFFSET_TOLERANCE") or 0.35)
+OFFSET_MIN_RATIO = float(os.getenv("OFFSET_MIN_RATIO") or 0.45)
+# מאיזה אורך קטע דיבור בלי כתובית נחשב אובדן ולא נשימה בין משפטים
+MISSED_MIN = float(os.getenv("MISSED_MIN") or 1.2)
+# ריפוד סביב כל קטע דיבור, כדי לא לחתוך הברה ראשונה או אחרונה
+VAD_PAD = float(os.getenv("VAD_PAD") or 0.15)
+# פער קצר בין שני קטעים הוא נשימה באמצע משפט, לא סוף דיבור
+VAD_JOIN = float(os.getenv("VAD_JOIN") or 0.35)
+VAD_MIN_SPEECH = float(os.getenv("VAD_MIN_SPEECH") or 0.20)
+
+
+# יישור כפוי: מצמיד כל מילה למקום האמיתי שלה באודיו. התזמונים של
+# Whisper סוטים בסדר גודל של שנייה; היישור מוריד את זה לעשרות
+# מילישניות. ריק או מודל חסר = נשארים בתזמונים של Whisper
+ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
+# אורך החלון נמדד: הקשב של המודל גדל ריבועית עם האורך, ולכן חלון קצר
+# יעיל יותר. תפוקה לליבה בשני חוטים — 15 שניות: 3.7x · 25: 2.75x · 40: 1.85x
+ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 15)   # שניות לחלון
+ALIGN_PAD = float(os.getenv("ALIGN_PAD") or 0.5)        # ריפוד סביב החלון
+# חוטים לכל חלון יישור. שווה ל-BURN_SEGMENT_THREADS בכוונה: שניהם
+# לוקחים מקום אחד מאותה בריכה, ומקום חייב להיות באותו גודל לשניהם
+ALIGN_THREADS = _int("ALIGN_THREADS", 2)
+
+
+# כשכל מודלי ג'מיני במכסה לדקה, ההרצה ממתינה ומנסה שוב במקום להיכשל.
+# מכסה לדקה מתאפסת תוך דקה, וליפול בגללה זה לאבד עבודה שלמה
+# תקרה לחלון תרגום/בדיקה בודד. ask_json עוטף 2 ניסיונות, כל אחד
+# GEMINI_ROUNDS סבבים עם המתנה ביניהם, וכל סבב עובר שרשרת מודלים עם
+# 300 שניות לכל אחד — כלומר קריאה בודדת יכולה להימשך עשרות דקות.
+# asyncio.gather ממתין לאיטי שבהם, ולכן חלון אחד כזה מחזיק שלב שלם.
+# נמדד אצל המשתמש: שלב של 1159 שניות עם 1.2 קריאות באוויר בממוצע
+# מתוך שמונה, ו-429 אפס — הגרורים היו הצוואר, לא המכסות
+# כמה שורות בודדות מותר לתקן אחרי חלון תרגום. התיקון רץ בטור,
+# ולכן חלון שלם שנפל היה הופך לחמישים קריאות רצופות
+TRANSLATE_RETRY_MAX = _int("TRANSLATE_RETRY_MAX", 8)
+GEMINI_WINDOW_TIMEOUT = float(os.getenv("GEMINI_WINDOW_TIMEOUT") or 240)
+# התאמת המגדר מקבלת תקרה נדיבה משלה. היא התיקון הנראה ביותר
+# בעברית, וחלון שמדולג בה משאיר "אתה" לדמות אישה — נמדד מול
+# תרגום אולפן: צורות זכר קפצו מ-14 ל-51 כשהתקרה כאן הושוותה לשאר
+ADDRESSEE_TIMEOUT = float(os.getenv("ADDRESSEE_TIMEOUT") or 600)
+# מעבר המגדר מקבל מודל ורמת חשיבה משלו. הוא דורש הסקה — מי מדבר
+# אל מי — ונפגע קשות ממודל מהיר עם חשיבה נמוכה, בעוד שאר הצינור
+# לא. נמדד על אותו סרט: במעבר ל-3.8-flash עם LOW צורות הזכר עלו
+# מ-52 ל-76 בעוד שתי הדמויות נשים. הוא גם 23 קריאות מתוך מאות,
+# ולכן מודל יקר כאן כמעט אינו עולה בזמן
+ADDRESSEE_MODEL = os.getenv("ADDRESSEE_MODEL", "")
+ADDRESSEE_THINKING = (os.getenv("ADDRESSEE_THINKING") or "HIGH").strip().upper()
+# תקרת חיבורים בלקוח המשותף של ג'מיני. שווה למקביליות המקסימלית
+# (PARALLEL_CEILING) ועוד מרווח, כדי שחיבור לא יהיה הצוואר
+# רמת החשיבה של המודל בקריאות JSON. ריק = לא שולחים את השדה כלל,
+# כלומר ברירת המחדל של המודל. MINIMAL / LOW / MEDIUM / HIGH —
+# הערכים אומתו מול ThinkingLevel ב-SDK הרשמי. תיקון מגדר ובקרת
+# איכות הן משימות סכמה קצרות שאינן צריכות חשיבה עמוקה
+GEMINI_THINKING = (os.getenv("GEMINI_THINKING") or "LOW").strip().upper()
+if GEMINI_THINKING in ("", "0", "OFF", "NO", "DEFAULT"):
+    GEMINI_THINKING = ""
+GEMINI_CONNECTIONS = _int("GEMINI_CONNECTIONS", 24)
+GEMINI_ROUNDS = _int("GEMINI_ROUNDS", 4)
+GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)
+
+
+# תמלול דרך gemini-3.5-transcribe: מודל ASR ייעודי שמחזיר תזמוני מילים
+# ומי אמר אותן. התזמונים שלו מדויקים במקור, בלי צורך ביישור בדיעבד
+GEMINI_STT = (os.getenv("GEMINI_STT") or "0").strip().lower() not in ("0", "off", "no", "")
+GEMINI_STT_SPEAKERS = (os.getenv("GEMINI_STT_SPEAKERS") or "1").strip() not in ("0", "off", "no")
+# עם תזמוני מילים המודל מקבל עד שלושים דקות לבקשה, אז עשרים בטוח
+# מכסת בקשות לדקה לכל מפתח ג'מיני. גוגל לא מפרסמת טבלה מחייבת והמספר
+# משתנה לפי שכבה, ולכן הוא נמדד ולא מנוחש. בלי מגביל יזום אנחנו יורים
+# בקשות עד שמתקבל 429 — ואז כבר שרפנו קריאה וקיבלנו קירור. 0 = ללא
+GEMINI_RPM_PER_KEY = _int("GEMINI_RPM_PER_KEY", 10)
+# תקרת בקשות לדקה לכל מפתחות ג'ימיני ביחד. התיעוד של גוגל: המכסה היא
+# לפי פרויקט ולא לפי מפתח, ולכן חמישה מפתחות מאותו פרויקט הם מכסה
+# אחת. הערך הוא תקרה בלבד — הקצב בפועל מתכווץ לבד כשחוזרים 429
+# ומתאושש כשהם נפסקים. 0 מכבה את התקציב המשותף
+# 0 כברירת מחדל, וזה מכוון: מפתחות מחשבונות שונים הם מכסות נפרדות
+# באמת, ותקרה משותפת רק תחנוק אותם ללא סיבה. מפעילים אותה רק כשכל
+# המפתחות יושבים באותו פרויקט, ואז המכסה אכן אחת
+GEMINI_RPM_TOTAL = _int("GEMINI_RPM_TOTAL", 0)
+# כמה קריאות חקר מחוברות-חיפוש מותר להחזיק באוויר בבת אחת. לחיפוש
+# מכסה נפרדת וקטנה מאוד, ויש עליו מפסק זרם — אבל ירי מקבילי מרוקן
+# אותה לפני שהמפסק מספיק להיסגר, כי כולן כבר באוויר כשהראשונה נכשלת
+SEARCH_PARALLEL = _int("SEARCH_PARALLEL", 2)
+# תקרת זמן לחלק תמלול בודד. בלעדיה חלק אחד שנתקע מחזיק את כל העבודה
+# לנצח, כי asyncio.gather ממתין לאיטי שבהם
+GEMINI_STT_TIMEOUT = float(os.getenv("GEMINI_STT_TIMEOUT") or 900)
+# כמה מהחלקים מספיק שיצליחו כדי להשתמש בתוצאה. מתחת לזה עדיף Groq
+# על תמלול מחורר, כי חור פירושו דקות שלמות בלי כתוביות
+GEMINI_STT_MIN_GOOD = float(os.getenv("GEMINI_STT_MIN_GOOD") or 0.8)
+GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 1200)
+GEMINI_STT_OVERLAP = float(os.getenv("GEMINI_STT_OVERLAP") or 10)
+# איך לקבץ מילים לשורות כתוביות
+GEMINI_STT_PAUSE = float(os.getenv("GEMINI_STT_PAUSE") or 0.72)
+GEMINI_STT_WORDS = _int("GEMINI_STT_WORDS", 18)
+GEMINI_STT_CHARS = _int("GEMINI_STT_CHARS", 110)

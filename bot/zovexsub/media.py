@@ -1,0 +1,1528 @@
+"""עבודה עם ffmpeg: אורך, חילוץ אודיו, חיתוך לחלקים, צריבה."""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import re
+import shutil
+import time
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from pathlib import Path
+
+from . import config
+
+log = logging.getLogger(__name__)
+
+
+class FFmpegError(RuntimeError):
+    pass
+
+
+def _nice_prefix() -> list[str]:
+    """מריץ ffmpeg בעדיפות נמוכה כדי לא להעמיס שרת תפוס.
+
+    "נמוכה" ולא "אפסית". מחלקת ionice 3 היא idle, כלומר התהליך מקבל
+    גישה לדיסק רק כשאף אחד אחר לא רוצה אותה — וצריבה מקבילית היא תשעה
+    תהליכים שקוראים בו-זמנית ממקומות שונים בקובץ של מאות מגה־בייט. כל
+    פעילות דיסק אחרת על השרת, אפילו העלאה או כתיבה ללוג, דוחקת את כולם
+    יחד. קובץ קטן נשאר במטמון העמודים ולכן לא מרגיש את זה, וקובץ גדול
+    נחנק — וזה בדיוק ההבדל בין פרק שרץ מהר לסרט שזוחל.
+    מחלקה 2 בעדיפות 7 היא הנמוכה ביותר שעדיין מקבלת תור: מפנה את הדרך
+    לכל דבר אחר, אבל לעולם לא מורעבת לגמרי.
+    """
+    prefix: list[str] = []
+    if config.NICE and shutil.which("nice"):
+        prefix += ["nice", "-n", str(config.NICE)]
+    if shutil.which("ionice"):
+        prefix += ["ionice", "-c", str(config.IONICE_CLASS),
+                   "-n", str(config.IONICE_LEVEL)]
+    return prefix
+
+
+async def _run(cmd: list[str], *, nice: bool = True,
+               timeout: float | None = None) -> str:
+    full = (_nice_prefix() if nice else []) + cmd
+    proc = await asyncio.create_subprocess_exec(
+        *full, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise FFmpegError(
+            f"הצריבה עברה את תקרת הזמן ({timeout / 60:.0f} דקות) ונעצרה. "
+            f"להעלאת התקרה: BURN_TIMEOUT_FACTOR ב-.env"
+        ) from None
+    except asyncio.CancelledError:
+        # בלי זה ffmpeg היה ממשיך לרוץ יתום אחרי ביטול העבודה
+        proc.kill()
+        await proc.wait()
+        raise
+    if proc.returncode != 0:
+        tail = err.decode("utf-8", "replace").strip().splitlines()[-12:]
+        raise FFmpegError("\n".join(tail) or f"exit {proc.returncode}")
+    return out.decode("utf-8", "replace")
+
+
+async def probe(path: Path) -> dict:
+    raw = await _run(
+        ["ffprobe", "-v", "error", "-print_format", "json",
+         "-show_format", "-show_streams", str(path)],
+        nice=False,
+    )
+    return json.loads(raw)
+
+
+async def video_height(path: Path) -> int:
+    """גובה הווידאו בפיקסלים, או 0 כשלא ניתן לקרוא.
+
+    B17: הערכת גודל הפלט הניחה קצב סיביות קבוע לכל פרופיל, בלי קשר
+    לרזולוציה. אותו פרופיל על 480p ועל 1080p מייצר קבצים שונים בסדר
+    גודל, ולכן הבחירה האוטומטית ירדה דרגה גם כשלא היה צורך
+    """
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=height", "-of", "default=nw=1:nk=1",
+            str(path),
+        ], timeout=60)
+    except (FFmpegError, OSError):
+        return 0
+    digits = "".join(c for c in out if c.isdigit())
+    return int(digits) if digits else 0
+
+
+_cfr_flag: list[str] = []
+
+
+async def cfr_args(fps: float) -> list[str]:
+    """דגלי קצב קבוע, בצורה שהגרסה המותקנת מבינה.
+
+    ‏-fps_mode נוסף ב-ffmpeg 5.0. על 4.x הוא אופציה לא מוכרת,
+    ו-ffmpeg נופל מיד — כלומר כל הצריבה המקבילית נכשלה ועברה למסלול
+    יחיד. השם הישן הוא -vsync, שעדיין נתמך גם בחדשות.
+    """
+    if fps <= 0:
+        return []
+    if not _cfr_flag:
+        try:
+            out = await _run(["ffmpeg", "-hide_banner", "-h", "full"],
+                             nice=False, timeout=30)
+        except (FFmpegError, OSError):
+            out = ""
+        _cfr_flag.append("-fps_mode" if "-fps_mode" in out else "-vsync")
+        log.info("דגל קצב קבוע: %s", _cfr_flag[0])
+    return [_cfr_flag[0], "cfr", "-r", f"{fps:.6f}",
+            "-video_track_timescale", "90000"]
+
+
+async def is_vfr(path: Path) -> bool:
+    """האם למקור קצב פריימים משתנה.
+
+    רק מקור כזה זקוק לכפיית קצב קבוע בהרכבה. על מקור CFR, שהוא רוב
+    מוחלט, הדגלים מיותרים — והם עלו ביוקר: -fps_mode אינו קיים
+    ב-ffmpeg 4.x והפיל את כל הצריבה המקבילית. מוסיפים אותם רק
+    כשהם באמת נדרשים.
+
+    הסימן המקובל: פער של יותר מאחוז בין r_frame_rate ל-avg_frame_rate.
+    """
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate,avg_frame_rate",
+            "-of", "default=nw=1:nk=1", str(path),
+        ], timeout=60)
+    except (FFmpegError, OSError):
+        return False
+
+    def ratio(text: str) -> float:
+        try:
+            top, _, bottom = text.strip().partition("/")
+            return float(top) / float(bottom or 1)
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
+    values = [ratio(line) for line in out.strip().splitlines() if line.strip()]
+    values = [v for v in values if v > 0]
+    if len(values) < 2:
+        return False
+    nominal, average = values[0], values[1]
+    drift = abs(nominal - average) / max(nominal, average)
+    if drift > 0.01:
+        log.info("מקור VFR: %.3f מול %.3f — נכפה קצב קבוע", nominal, average)
+        return True
+    return False
+
+
+async def video_fps(path: Path) -> float:
+    """קצב הפריימים הנומינלי של המקור, או 0 כשלא ניתן לקרוא.
+
+    נדרש להרכבה המקבילית. מכולת MP4 אינה תומכת בקצב משתנה, ולכן
+    ffmpeg מנחש קצב לכל קטע בנפרד — ובמקור VFR הניחושים נבדלים, צירי
+    הזמן אינם תואמים, וההרכבה יוצאת עם חותמות זמן שבורות. זה מה
+    שהפיק קובץ של 0.374 פריימים לשנייה במקום 23.976
+    """
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=r_frame_rate", "-of", "default=nw=1:nk=1",
+            str(path),
+        ], timeout=60)
+    except (FFmpegError, OSError):
+        return 0.0
+    text = out.strip().splitlines()[0] if out.strip() else ""
+    try:
+        if "/" in text:
+            top, bottom = text.split("/", 1)
+            return float(top) / float(bottom) if float(bottom) else 0.0
+        return float(text)
+    except (ValueError, ZeroDivisionError):
+        return 0.0
+
+
+async def frame_count(path: Path) -> int:
+    """כמה פריימים יש בפועל בזרם הווידאו."""
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-count_frames", "-show_entries", "stream=nb_read_frames",
+            "-of", "default=nw=1:nk=1", str(path),
+        ], timeout=1800)
+    except (FFmpegError, OSError):
+        return 0
+    digits = "".join(c for c in out if c.isdigit())
+    return int(digits) if digits else 0
+
+
+async def duration_seconds(path: Path) -> float:
+    info = await probe(path)
+    try:
+        return float(info["format"]["duration"])
+    except (KeyError, TypeError, ValueError):
+        for stream in info.get("streams", []):
+            if stream.get("duration"):
+                return float(stream["duration"])
+    raise FFmpegError("לא הצלחתי לקרוא את אורך הקובץ")
+
+
+async def has_audio(path: Path) -> bool:
+    info = await probe(path)
+    return any(s.get("codec_type") == "audio" for s in info.get("streams", []))
+
+
+# שפות שהתווית שלהן בקובץ נכתבת בכמה צורות. ffprobe מחזיר מה שהמקודד
+# כתב, וזה לא אחיד: "he", "heb", "iw" (הקוד הישן של עברית) כולם אותה שפה
+LANGUAGE_NAMES = {
+    "heb": "עברית", "he": "עברית", "iw": "עברית",
+    "eng": "אנגלית", "en": "אנגלית",
+    "ara": "ערבית", "ar": "ערבית",
+    "rus": "רוסית", "ru": "רוסית",
+    "fre": "צרפתית", "fra": "צרפתית", "fr": "צרפתית",
+    "spa": "ספרדית", "es": "ספרדית",
+    "ger": "גרמנית", "deu": "גרמנית", "de": "גרמנית",
+    "und": "לא מצוין",
+}
+
+
+async def audio_tracks(path: Path) -> list[dict]:
+    """רצועות השמע בקובץ, בסדר שבו ffmpeg ממספר אותן ב--map 0:a:N.
+
+    קובץ עם שתי רצועות הוא מצב רגיל: דיבוב ועוד מקור, או מקור ופרשנות
+    הבמאי. ‏extract_audio לקח תמיד 0:a:0 — הרצועה הראשונה — ולכן סרט
+    שהרצועה הראשונה בו אינה השפה שרוצים תומלל מהשפה הלא נכונה, בלי
+    שום דרך לבחור אחרת
+    """
+    try:
+        info = await probe(path)
+    except Exception as exc:  # noqa: BLE001 — בלי מידע נשארים ברצועה 0
+        log.warning("לא ניתן לקרוא את רצועות השמע (%s)", exc)
+        return []
+    out = []
+    for position, stream in enumerate(
+            s for s in info.get("streams", []) if s.get("codec_type") == "audio"):
+        tags = stream.get("tags") or {}
+        code = str(tags.get("language") or "und").lower()
+        out.append({
+            "index": position,
+            "language": code,
+            "name": LANGUAGE_NAMES.get(code, code),
+            "title": str(tags.get("title") or "").strip(),
+            "codec": (stream.get("codec_name") or "").lower(),
+            "channels": int(stream.get("channels") or 0),
+        })
+    return out
+
+
+def track_label(track: dict) -> str:
+    """תיאור קצר לרצועה, לכפתור או ללוג."""
+    parts = [track["name"]]
+    if track["title"]:
+        parts.append(track["title"])
+    if track["channels"] > 2:
+        parts.append(f"{track['channels']} ערוצים")
+    return " · ".join(parts)
+
+
+async def extract_audio(src: Path, dst: Path, track: int = 0) -> Path:
+    """FLAC 16kHz מונו — מה ש-Whisper אוהב, וגם הקטן ביותר ללא איבוד דיוק.
+
+    ‏track הוא המספור של ffmpeg: 0 היא הרצועה הראשונה, וזו ברירת
+    המחדל שהייתה קשיחה כאן קודם
+    """
+    await _run([
+        "ffmpeg", "-nostdin", "-y", "-threads", str(config.FFMPEG_THREADS),
+        "-i", str(src), "-vn", "-map", f"0:a:{max(0, track)}",
+        "-ac", "1", "-ar", "16000", "-c:a", "flac", "-compression_level", "8",
+        str(dst),
+    ])
+    return dst
+
+
+async def cut_audio(audio: Path, start: float, end: float, dst: Path) -> Path:
+    """חותך קטע אודיו לבדיקה חוזרת."""
+    await _run([
+        "ffmpeg", "-nostdin", "-y", "-threads", str(config.FFMPEG_THREADS),
+        "-ss", f"{max(0.0, start):.3f}", "-t", f"{max(0.2, end - start):.3f}",
+        "-i", str(audio), "-ac", "1", "-ar", "16000", "-c:a", "flac", str(dst),
+    ])
+    return dst
+
+
+async def _run_progress(cmd: list[str], total: float, on_progress, *,
+                        timeout: float | None = None) -> None:
+    """מריץ ffmpeg וקורא את ההתקדמות שלו תוך כדי ריצה."""
+    full = _nice_prefix() + cmd[:1] + ["-progress", "pipe:1", "-nostats"] + cmd[1:]
+    proc = await asyncio.create_subprocess_exec(
+        *full, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+
+    # stderr נקרא תוך כדי ריצה ולא אחרי הסיום. ffmpeg כותב לשם אזהרות,
+    # ובצריבה ארוכה הן ממלאות את חוצץ הצינור (כ-64KB) — ואז ffmpeg נחסם
+    # על הכתיבה בזמן שאנחנו ממתינים שהוא יסתיים. תקיעה הדדית מושלמת,
+    # שנגמרת רק בתקרת הזמן ומדווחת כאילו הקידוד היה איטי מדי
+    tail: list[str] = []
+
+    async def drain() -> None:
+        assert proc.stderr
+        async for raw in proc.stderr:
+            tail.append(raw.decode("utf-8", "replace").rstrip())
+            del tail[:-40]
+
+    async def pump() -> None:
+        speed = ""
+        assert proc.stdout
+        async for raw in proc.stdout:
+            line = raw.decode("utf-8", "replace").strip()
+            if line.startswith("speed="):
+                speed = line.split("=", 1)[1].strip()
+            elif line.startswith("out_time_us=") and total > 0:
+                try:
+                    done = int(line.split("=", 1)[1]) / 1_000_000
+                except ValueError:
+                    continue
+                await on_progress(min(1.0, done / total), speed)
+
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(pump(), drain(), proc.wait()), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise FFmpegError(
+            f"הצריבה עברה את תקרת הזמן ({timeout / 60:.0f} דקות) ונעצרה. "
+            f"להעלאת התקרה: BURN_TIMEOUT_FACTOR ב-.env"
+        ) from None
+    except asyncio.CancelledError:
+        # בלי זה ffmpeg היה ממשיך לרוץ יתום אחרי ביטול העבודה
+        proc.kill()
+        await proc.wait()
+        raise
+
+    if proc.returncode != 0:
+        raise FFmpegError("\n".join(tail[-12:]) or f"ffmpeg נכשל (exit {proc.returncode})")
+
+
+@dataclass
+class Chunk:
+    path: Path
+    offset: float  # שנייה שבה החלק מתחיל בתוך המקור
+
+
+async def split_audio(audio: Path, out_dir: Path, total: float,
+                      workers: int = 1) -> list[Chunk]:
+    """מחלק אודיו לחלקים שנכנסים במגבלת הגודל של ה-API.
+
+    החלוקה היא לפי זמן, וה-offset נשמר כדי שחותמות הזמן יחזרו למקום הנכון.
+    כשיש הרבה מפתחות שווה לחתוך דק יותר: כל חלק רץ על מפתח אחר, וכך
+    כולם עובדים בו-זמנית במקום שחלקם ימתינו בתור.
+    """
+    size = audio.stat().st_size
+    if size <= config.STT_CHUNK_BYTES and total <= config.STT_CHUNK_SECONDS and workers <= 1:
+        return [Chunk(audio, 0.0)]
+
+    # אורך חלק שמבטיח גם גודל וגם תקרת זמן
+    by_size = total * (config.STT_CHUNK_BYTES / size) * 0.9
+    chunk_len = max(60.0, min(float(config.STT_CHUNK_SECONDS), by_size))
+
+    # להעסיק את כל המפתחות: חלק לכל אחד, אבל לא קצר מהמינימום
+    if workers > 1:
+        even = total / workers
+        chunk_len = min(chunk_len, max(float(config.STT_CHUNK_MIN_SECONDS), even))
+
+    if size <= config.STT_CHUNK_BYTES and total <= chunk_len:
+        return [Chunk(audio, 0.0)]
+
+    chunks: list[Chunk] = []
+    start = 0.0
+    idx = 0
+    while start < total - 0.25:
+        dst = out_dir / f"part{idx:03d}.flac"
+        await _run([
+            "ffmpeg", "-nostdin", "-y", "-threads", str(config.FFMPEG_THREADS),
+            "-ss", f"{start:.3f}", "-t", f"{chunk_len:.3f}", "-i", str(audio),
+            "-ac", "1", "-ar", "16000", "-c:a", "flac", "-compression_level", "8",
+            str(dst),
+        ])
+        chunks.append(Chunk(dst, start))
+        start += chunk_len
+        idx += 1
+    log.info("האודיו חולק ל-%d חלקים של ~%.0f שניות", len(chunks), chunk_len)
+    return chunks
+
+
+async def mean_volume(audio: Path) -> float:
+    """עוצמת הקול הממוצעת בדציבלים — בסיס לסף שמסתגל לתוכן."""
+    proc = await asyncio.create_subprocess_exec(
+        *(_nice_prefix() + ["ffmpeg", "-nostdin", "-i", str(audio),
+                            "-af", "volumedetect", "-f", "null", "-"]),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    match = re.search(r"mean_volume: *(-?[\d.]+) dB", err.decode("utf-8", "replace"))
+    return float(match.group(1)) if match else -30.0
+
+
+# יחס הדיבור שאנחנו מצפים לו בתוכן דיאלוגי. סף שמוצא הרבה יותר מזה
+# מחשיב מוזיקת רקע כדיבור; סף שמוצא הרבה פחות חותך תחילת מילים.
+TARGET_SPEECH_RATIO = 0.60
+
+
+async def speech_spans(audio: Path, min_silence: float = 0.18) -> list[tuple[float, float]]:
+    """מאתר את הקטעים שבהם באמת מדברים.
+
+    סף קבוע לא עובד: בתוכן עם מוזיקת רקע שום דבר לא יורד מתחת לסף נמוך,
+    והכול מסווג כדיבור. לכן נבדקים כמה ספים סביב עוצמת הקול הממוצעת,
+    ונבחר זה שמייצר יחס דיבור קרוב למצופה — לא הראשון שמחזיר משהו.
+    """
+    average = await mean_volume(audio)
+    total = await duration_seconds(audio)
+    if total <= 0:
+        return []
+
+    best: tuple[float, float, list] | None = None
+    for offset in (-9.0, -6.0, -3.0, 0.0, 3.0, 6.0):
+        threshold = max(-50.0, min(-12.0, average - offset))
+        spans = await _detect(audio, threshold, min_silence, total)
+        ratio = sum(b - a for a, b in spans) / total
+        log.info("סף %.1fdB: %d קטעים, %.0f%% דיבור", threshold, len(spans), ratio * 100)
+        if not spans or not 0.25 <= ratio <= 0.92:
+            continue
+        distance = abs(ratio - TARGET_SPEECH_RATIO)
+        if best is None or distance < best[0]:
+            best = (distance, threshold, spans)
+
+    if best is None:
+        log.info("אף סף לא הפריד בין דיבור לרקע — מדלגים על ההצמדה")
+        return []
+
+    _, threshold, spans = best
+    log.info("נבחר סף %.1fdB עם %d קטעי דיבור", threshold, len(spans))
+    return spans
+
+
+async def _detect(audio: Path, threshold: float, min_silence: float,
+                  total: float) -> list[tuple[float, float]]:
+    cmd = ["ffmpeg", "-nostdin", "-i", str(audio), "-af",
+           f"highpass=f=180,lowpass=f=3600,"
+           f"silencedetect=noise={threshold}dB:d={min_silence}", "-f", "null", "-"]
+    proc = await asyncio.create_subprocess_exec(
+        *(_nice_prefix() + cmd),
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    text = err.decode("utf-8", "replace")
+
+    silences: list[tuple[float, float]] = []
+    start: float | None = None
+    for match in re.finditer(r"silence_(start|end): *(-?[\d.]+)", text):
+        kind, value = match.group(1), float(match.group(2))
+        if kind == "start":
+            start = value
+        elif start is not None:
+            silences.append((start, value))
+            start = None
+
+    if start is not None:
+        silences.append((start, total))
+
+    spans, cursor = [], 0.0
+    for begin, finish in silences:
+        if begin - cursor > 0.05:
+            spans.append((cursor, begin))
+        cursor = max(cursor, finish)
+    if total - cursor > 0.05:
+        spans.append((cursor, total))
+    return spans
+
+
+CREDIT_ASS = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1280
+PlayResY: 720
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: credit,Noto Sans Hebrew,{size},&H00FFFFFF,&H00000000,&H64000000,-1,0,1,2,1,5,20,20,20,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.20,{end},credit,,0,0,0,,{{\\fad(400,600)}}{text}
+"""
+
+
+def _ass_time(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    hours, rest = divmod(int(seconds), 3600)
+    minutes, secs = divmod(rest, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{int(seconds % 1 * 100):02d}"
+
+
+def credit_file(work: Path) -> Path | None:
+    """קרדיט פתיחה כקובץ ASS נפרד.
+
+    נכתב כ-ASS ולא כטקסט על הווידאו כי libass מטפל נכון בכיווניות של
+    העברית, בעוד ש-drawtext היה מציג את האותיות הפוכות.
+    """
+    if not config.CREDIT_TEXT.strip():
+        return None
+    # חלק שאין בו אות או ספרה אינו קרדיט אלא תו שנשאר מעריכה — נקודה
+    # בודדת, מקף, קו מפריד. הוא הופיע על המסך בפתיחה בלי שאיש התכוון
+    lines = [part.strip() for part in config.CREDIT_TEXT.split("|")
+             if any(ch.isalnum() for ch in part)]
+    if not lines:
+        return None
+
+    body = "\\N".join(RLE + line + PDF for line in lines)
+    dst = work / "credit.ass"
+    dst.write_text(
+        CREDIT_ASS.format(size=config.CREDIT_SIZE,
+                          end=_ass_time(config.CREDIT_SECONDS), text=body),
+        encoding="utf-8",
+    )
+    return dst
+
+
+# שלושה גדלי כתוביות. המתאר והשוליים גדלים יחד עם הגופן, אחרת כתובית
+# גדולה נראית דקה ונדבקת לתחתית המסך. "גדול" הוא גדול וקריא, לא ענק —
+# כתובית שתופסת רבע מסך מסתירה את הסרט
+# נמדד מול כתוביות של מקודד מקצועי, בצילום מסך של נגן אמיתי. שיטת
+# המדידה: גובה אזור הווידאו, ובתוכו המרחק בין ראש שורה לראש השורה
+# הבאה — מדד יציב, שאינו תלוי בהחלקת קצוות או בדחיסת התמונה.
+#
+#   מקצועי           מרווח שורות 8.40%   מרחק מהתחתית 7.11%
+#   FontSize 20      7.04%               10.00%   ← מה שהיה
+#   FontSize 22      8.70%
+#   FontSize 23      9.17%
+#
+# אינטרפולציה נותנת 21.6, ולכן 22. ‏MarginV ירד מ-28 ל-20 כי 28 הרחיק
+# את הכתוביות לעשרה אחוזים מהתחתית — הן ישבו גבוה מדי על המסך
+SUB_SIZES = {
+    "קטן": {"font": 22, "outline": 2.2, "margin": 20},
+    "בינוני": {"font": 26, "outline": 2.6, "margin": 20},
+    "גדול": {"font": 30, "outline": 3.0, "margin": 20},
+}
+
+# גופנים שאפשר לבחור. הערך הריק פירושו "מה שמוגדר ב-SUB_FONT"
+SUB_FONTS = {
+    "dejavu": "DejaVu Sans",
+    "free": "FreeSans",
+    "ברירת מחדל": "",
+}
+
+# מראה הכתוביות. ASS מגדיר את זה דרך BorderStyle: 1 הוא קו מתאר וצל,
+# 3 הוא קופסה אטומה מאחורי הטקסט
+SUB_LOOKS = ("קופסה", "לבן", "קו")
+
+
+@dataclass
+class Style:
+    """שלוש הבחירות של המשתמש, נוסעות יחד.
+
+    עדיף אובייקט אחד על שרשור שלושה פרמטרים דרך ארבע חתימות: כל תוספת
+    עתידית (צבע, מיקום) נכנסת כאן בלבד
+    """
+    size: str = ""
+    font: str = ""
+    look: str = ""
+
+
+def sub_style(size: str = "", font: str = "", look: str = "") -> str:
+    values = SUB_SIZES.get(size or config.SUB_SIZE, SUB_SIZES["קטן"])
+    name = SUB_FONTS.get(font, "") or config.SUB_FONT
+    look = look or config.SUB_LOOK
+
+    if look == "קופסה":
+        # רקע שחור אטום מאחורי המילים. Outline קטן משמש כאן כמרווח
+        # פנימי של הקופסה ולא כקו מתאר
+        shape = ("OutlineColour=&H00000000,BackColour=&H00000000,"
+                 "BorderStyle=3,Outline=1.2,Shadow=0")
+    elif look == "לבן":
+        # אותיות בלבן בלבד. בלי קו ובלי צל — נקי, אבל על רקע בהיר
+        # הכתובית עלולה להיעלם, וזו בחירה של המשתמש
+        shape = "OutlineColour=&H00000000,BorderStyle=1,Outline=0,Shadow=0"
+    else:
+        shape = ("OutlineColour=&H00000000,BorderStyle=1,"
+                 f"Outline={values['outline']},Shadow=0")
+
+    return (f"FontName={name},FontSize={values['font']},"
+            f"PrimaryColour=&H00FFFFFF,{shape},"
+            f"Alignment=2,MarginV={values['margin']}")
+
+
+def burn_threads() -> int:
+    """כמה ליבות לתת לצריבה עכשיו, לפי העומס בפועל.
+
+    השרת מריץ דברים נוספים. בשעה שקטה אין סיבה להשאיר ליבות בטלות,
+    ובשעת עומס אין סיבה להילחם על מעבד. nice ו-ionice ממשיכים לדאוג
+    שגם המספר שנבחר כאן נדחק מיד כשתהליך אחר צריך את המעבד.
+    """
+    total = os.cpu_count() or 2
+    setting = str(config.BURN_THREADS)
+    if setting.isdigit():
+        return max(1, min(int(setting), total))
+
+    try:
+        load = os.getloadavg()[0]
+    except (OSError, AttributeError):
+        load = 0.0
+
+    free = total - load - config.RESERVE_CORES
+    threads = int(max(1, min(total, round(free))))
+    if config.BURN_THREADS_MAX:
+        threads = min(threads, config.BURN_THREADS_MAX)
+    log.info("עומס נוכחי %.1f מתוך %d ליבות — הצריבה תקבל %d",
+             load, total, threads)
+    return threads
+
+
+RLE = "\u202b"  # Right-to-Left Embedding — פותח קטע שכיוונו מימין לשמאל
+PDF = "\u202c"  # Pop Directional Formatting — סוגר אותו
+_MARKS = "\u200e\u200f\u202a\u202b\u202c"
+
+
+# פיסוק שבעברית תמיד חותם משפט. כשהוא מופיע בתחילת השורה בסדר הלוגי
+# זו כמעט תמיד שגיאה של המתרגם, והוא מוצג בצד הלא נכון של השורה
+# המקף נשאר בחוץ בכוונה: שורה שמתחילה במקף היא סימון של דובר חדש
+# בכתוביות, לא פיסוק שהתגלגל להתחלה
+_LEADING_PUNCTUATION = re.compile(r"^[!?,.:;…]+\s*")
+
+
+def _move_leading_punctuation(text: str) -> str:
+    """מעביר פיסוק פותח לסוף השורה.
+
+    המודל פולט לפעמים "?מה שלומך" במקום "מה שלומך?" — הסימן נמצא ראשון
+    בסדר הלוגי, ואז הוא מרונדר בצד השמאלי של שורה עברית. העטיפה
+    הדו-כיוונית לבדה לא מתקנת את זה, כי מבחינתה הסימן באמת שייך להתחלה.
+    """
+    if not HEBREW_LETTER.search(text):
+        return text
+    match = _LEADING_PUNCTUATION.match(text)
+    if not match:
+        return text
+    rest = text[match.end():].strip()
+    return f"{rest}{match.group().strip()}" if rest else text
+
+
+HEBREW_LETTER = re.compile(r"[\u0590-\u05FF]")
+
+
+def rtl_copy(srt: Path) -> Path:
+    """עותק לצריבה שבו כל שורת טקסט עטופה בהטבעה דו-כיוונית.
+
+    libass קובע את כיוון השורה לפי התו הראשון שלה. שורה שמתחילה בספרה,
+    באות לטינית או בסימן פיסוק נקראת כאילו היא משמאל לימין, והפיסוק
+    הסופי קופץ לצד הלא נכון. העטיפה הזו היא הפתרון המקובל לעברית,
+    ערבית ופרסית — היא קובעת את הכיוון במפורש במקום לנחש אותו.
+
+    הקובץ שנשלח למשתמש נשאר נקי — העטיפה רק בעותק הזה.
+    """
+    out = []
+    from . import srt as srt_tools
+
+    for line in srt_tools.read_subtitle(srt).splitlines():
+        stripped = line.strip()
+        is_meta = (not stripped) or stripped.isdigit() or "-->" in stripped
+        if is_meta:
+            out.append(line)
+        else:
+            out.append(RLE + _move_leading_punctuation(line.strip(_MARKS)) + PDF)
+    dst = srt.with_name(srt.stem + ".rtl.srt")
+    dst.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return dst
+
+
+# קודקי שמע שנגנים ניידים ולקוחות טלגרם מנגנים בלי יוצא מן הכלל.
+# EAC3, DTS ו-TrueHD אינם ביניהם: הם עוברים בסרטון, הווידאו מתנגן,
+# והשמע שותק ברוב המכשירים — תקלה שקשה לאתר כי במחשב היא לא קיימת
+PORTABLE_AUDIO = {"aac", "mp3"}
+
+
+async def _audio_args(video: Path, track: int = 0) -> list[str]:
+    """שומר שמע תואם כמו שהוא, וממיר כל השאר ל-AAC.
+
+    העתקה עיוורת הייתה הבאג: מקור EAC3 הועתק פנימה, ואצל רוב הצופים
+    הסרטון יצא אילם. היא גם הסבירה למה רצועת השמע שקלה יותר מהווידאו —
+    640kbps של EAC3 מול וידאו דחוס.
+
+    המרה רק כשצריך: קידוד מחדש של שמע תקין רק מאבד איכות.
+    """
+    try:
+        info = await probe(video)
+    except Exception as exc:  # noqa: BLE001 — בלי מידע ממירים, זה הבטוח
+        log.warning("לא ניתן לקרוא את רצועת השמע (%s) — ממירים ל-AAC", exc)
+        info = {}
+    tracks = [s for s in info.get("streams", [])
+              if s.get("codec_type") == "audio"]
+    if not tracks:
+        return ["-an"]
+    # הרצועה שנבחרה, ולא תמיד הראשונה. בלי זה נבדק הקודק של רצועה
+    # אחת ונצרבה אחרת — ומקור EAC3 שהועתק כמו שהוא יוצא אילם
+    chosen = tracks[min(max(0, track), len(tracks) - 1)]
+    codec = (chosen.get("codec_name") or "").lower()
+    channels = int(chosen.get("channels") or 2)
+    if codec in PORTABLE_AUDIO:
+        log.info("שמע %s נשאר כמו שהוא", codec)
+        return ["-c:a", "copy"]
+    # ערבול ל-stereo: רצועת 5.1 שמומרת כמו שהיא יוצאת חלשה בדיבור
+    # בנגן שמנגן רק שני ערוצים, וזה בדיוק מה שחשוב בכתוביות
+    log.info("שמע %s (%d ערוצים) מומר ל-AAC — אחרת אין קול ברוב המכשירים",
+             codec or "לא ידוע", channels)
+    return ["-c:a", "aac", "-b:a", str(config.AUDIO_BITRATE),
+            "-ac", "2" if channels > 2 else str(max(1, channels)),
+            "-ar", "48000"]
+
+
+def _escape(path: Path) -> str:
+    return str(path).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+
+
+def _video_filters(srt: Path, credit: Path | None,
+                   style: Style | None = None) -> str:
+    filters = []
+    if config.BURN_MAX_HEIGHT:
+        # min() מבטיח שמקור נמוך מהתקרה נשאר כמו שהוא ולא מוגדל
+        filters.append(f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos")
+    style = style or Style()
+    look = sub_style(style.size, style.font, style.look)
+    filters.append(f"subtitles='{_escape(srt)}':force_style='{look}'")
+    if credit:
+        filters.append(f"subtitles='{_escape(credit)}'")
+    return ",".join(filters)
+
+
+def _encoder_args(settings: dict, threads: int, duration: float) -> list[str]:
+    codec = config.BURN_CODEC or settings["codec"]
+    preset = config.BURN_PRESET or settings["preset"]
+    crf = config.BURN_CRF or str(settings["crf"])
+    pix_fmt = config.BURN_PIX_FMT or settings["pix_fmt"]
+    tune = config.BURN_TUNE or settings["tune"]
+
+    # בלי זה ffmpeg נופל על "Too many packets buffered" בקבצים שבהם
+    # הווידאו והאודיו רחוקים זה מזה בזמן
+    args = ["-max_muxing_queue_size", "1024",
+            "-c:v", codec, "-preset", preset, "-crf", str(crf), "-pix_fmt", pix_fmt]
+    if tune:
+        args += ["-tune", tune]
+    if codec == "libx265":
+        # hvc1 מאפשר ניגון בנגנים של אפל ובטלגרם; pools מגביל את הליבות
+        # hvc1 מאפשר ניגון באפל ובטלגרם. frame-threads=2 מגדיל throughput
+        # בלי להעלות את מספר הליבות, ו-log-level משתיק את הפלט הרועש של
+        # x265 שמילא את צינור ה-stderr בצריבה ארוכה
+        args += ["-tag:v", "hvc1", "-x265-params",
+                 f"pools={threads}:frame-threads=2:log-level=error"]
+    elif codec == "libx264":
+        args += ["-x264-params", f"threads={threads}"]
+
+    # CRF בלבד לא מבטיח גודל. תקרת bitrate עם חוצץ ("capped CRF") שומרת
+    # על האיכות המשתנה ובכל זאת מבטיחה שהקובץ ייכנס במגבלת ההעלאה.
+    # פרופיל שמסומן cap=False הוא CRF טהור, ואין עליו תקרה. ‏CRF הוא
+    # יעד איכות, ו-maxrate על גביו מרעיב את סצנות התנועה — כלומר
+    # האיכות צונחת היכן שזה נראה הכי רע
+    allow_cap = settings.get("cap", True)
+    cap = (_bitrate_cap(duration)
+           if config.UPLOAD_LIMIT_MB and allow_cap else 0)
+    if not allow_cap:
+        log.info("פרופיל CRF טהור — בלי תקרת ביטרייט")
+    if cap:
+        args += ["-maxrate", f"{cap}k", "-bufsize", f"{cap * 2}k"]
+        log.info("תקרת bitrate: %dkbps כדי להישאר מתחת ל-%dMB",
+                 cap, config.UPLOAD_LIMIT_MB)
+    return args
+
+
+def _describe_profile(settings: dict, video: Path, duration: float) -> None:
+    log.info("פרופיל צריבה: %s (%s %s CRF%s) למקור של %.0fMB באורך %.0f דקות",
+             config.profile_name(settings),
+             config.BURN_CODEC or settings["codec"],
+             config.BURN_PRESET or settings["preset"],
+             config.BURN_CRF or settings["crf"],
+             video.stat().st_size / 1024 ** 2, duration / 60)
+
+
+# הקטעים תופסים את רוב פס ההתקדמות, וההרכבה הסופית את השאר. בלי זה
+# הצריבה הגיעה ל-100% ואז עמדה שם בשקט לאורך כל ההרכבה
+ASSEMBLE_FROM = 0.95
+
+
+class CorePool:
+    """מחלק את ליבות הצריבה בין העבודות שרצות על המכונה.
+
+    סמפור לא מספיק כאן: הוא FIFO, וצריבה שנרשמה ראשונה מכניסה את כל
+    הקטעים שלה לתור לפני שהשנייה בכלל מגיעה — כלומר השנייה ממתינה
+    לראשונה במלואה במקום להתחלק איתה.
+
+    כאן לכל עבודה יש מכסה שמחושבת מחדש לפי כמה עבודות רצות ברגע זה:
+    עבודה לבדה מקבלת את כל המכונה, ושתיים מתחלקות בשווה. המכסה לא
+    מבוזבזת — אם אף עבודה שממתינה לא מתחת למכסה שלה, מי שממתין יכול
+    לקחת בכל זאת, כדי שלא יישאר מקום פנוי סתם.
+    """
+
+    def __init__(self, slots: int):
+        self.slots = slots
+        self.free = slots
+        self.held: dict[int, int] = {}
+        # ספירה ולא קבוצה: לעבודה אחת יש הרבה קטעים ממתינים, וכשאחד
+        # מהם תופס מקום השאר עדיין ממתינים. קבוצה הייתה מוחקת את העבודה
+        # מהרשימה ואז השנייה הייתה נראית כאילו אף אחד לא מחכה לה
+        self.waiting: dict[int, int] = {}
+        self.cond = asyncio.Condition()
+        self._next = 0
+
+    async def resize(self, slots: int) -> None:
+        """משנה את מספר המקומות תוך כדי ריצה.
+
+        B9: תקרת הזיכרון חושבה פעם אחת, בפעם הראשונה שנוצרה הבריכה.
+        מאז השרת מריץ דברים אחרים, הזיכרון הפנוי משתנה, והמספר שנקבע
+        בהפעלה כבר לא מתאר את המכונה. free עשוי לרדת מתחת לאפס כשמצמצמים
+        בזמן שקטעים רצים — וזה בסדר: ready כבר ממתין בכל מצב כזה, והמקום
+        יוחזר כשהם יסתיימו
+        """
+        async with self.cond:
+            if slots == self.slots:
+                return
+            self.free += slots - self.slots
+            log.info("מקומות הצריבה עודכנו מ-%d ל-%d", self.slots, slots)
+            self.slots = slots
+            self.cond.notify_all()
+
+    def share(self) -> int:
+        return max(1, self.slots // max(1, len(self.held)))
+
+    @asynccontextmanager
+    async def job(self):
+        """נרשם כעבודה, וכך משנה את המכסה של כל השאר."""
+        async with self.cond:
+            self._next += 1
+            token = self._next
+            self.held[token] = 0
+            self.cond.notify_all()
+        log.info("צריבה %d נכנסה: %d עבודות, מכסה %d קטעים (%d חוטים)",
+                 token, len(self.held), self.share(),
+                 self.share() * config.BURN_SEGMENT_THREADS)
+        try:
+            yield token
+        finally:
+            async with self.cond:
+                self.held.pop(token, None)
+                self.waiting.pop(token, None)
+                self.cond.notify_all()
+
+    @asynccontextmanager
+    async def slot(self, token: int):
+        """תופס מקום אחד, וממתין אם העבודה כבר מיצתה את המכסה שלה."""
+        def ready() -> bool:
+            if self.free <= 0 or token not in self.held:
+                return self.free > 0
+            limit = self.share()
+            return (self.held[token] < limit
+                    or not any(self.held.get(other, 0) < limit
+                               for other, pending in self.waiting.items()
+                               if pending and other != token))
+
+        async with self.cond:
+            self.waiting[token] = self.waiting.get(token, 0) + 1
+            try:
+                await self.cond.wait_for(ready)
+            finally:
+                self.waiting[token] = max(0, self.waiting.get(token, 1) - 1)
+            self.free -= 1
+            self.held[token] = self.held.get(token, 0) + 1
+        try:
+            yield
+        finally:
+            async with self.cond:
+                self.free += 1
+                if token in self.held:
+                    self.held[token] -= 1
+                self.cond.notify_all()
+
+
+# בריכת הליבות של המכונה, משותפת לכל הצריבות. נוצרת בפעם הראשונה שצריך
+# אותה, כדי שתהיה שייכת ללולאת האירועים הרצה
+_pool: CorePool | None = None
+
+
+
+def _memory_cap(slots: int) -> int:
+    """מוריד מקומות אם אין מספיק זיכרון לכולם.
+
+    הקצאת־יתר מכפילה את מספר תהליכי ffmpeg שרצים יחד, וכל מקודד 1080p
+    מחזיק חוצצים משלו. בלי התקרה הזאת מכונה עם הרבה ליבות ומעט זיכרון
+    הייתה מגיעה ל-OOM, וה-OOM killer היה הורג תהליך אקראי — כלומר גם
+    את הבוט עצמו, לא רק קטע צריבה אחד.
+    """
+    try:
+        with open("/proc/meminfo", encoding="ascii") as handle:
+            fields = dict(
+                (parts[0].rstrip(":"), int(parts[1]))
+                for parts in (line.split() for line in handle) if len(parts) >= 2
+            )
+        available = fields["MemAvailable"] * 1024
+    except (OSError, KeyError, ValueError):
+        return slots
+
+    room = int(available * 0.75) // config.BURN_SEGMENT_MEMORY
+    if room >= slots:
+        return slots
+    capped = max(1, room)
+    log.warning("זיכרון פנוי %.1fGB מאפשר רק %d מקומות צריבה במקום %d",
+                available / 1024 ** 3, capped, slots)
+    return capped
+
+
+def core_pool() -> CorePool:
+    global _pool
+    if _pool is None:
+        count = config.burn_slots(os.cpu_count() or 2)
+        count = _memory_cap(count)
+        _pool = CorePool(count)
+        cores = os.cpu_count() or 2
+        log.info("מקומות צריבה במכונה: %d קטעים ×%d חוטים = %d חוטים "
+                 "על %d ליבות (הקצאת־יתר ×%.1f)",
+                 count, config.BURN_SEGMENT_THREADS,
+                 count * config.BURN_SEGMENT_THREADS, cores,
+                 count * config.BURN_SEGMENT_THREADS / cores)
+    return _pool
+
+
+async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
+         style: Style | None = None, profile: str = "",
+         track: int = 0) -> Path:
+    """צריבה. במכונה עם הרבה ליבות מפוצלת לקטעים מקבילים.
+
+    ‏track היא רצועת השמע שתיכנס לפלט, במספור של ffmpeg. ברירת
+    המחדל 0 היא מה שהיה קשיח כאן קודם
+    """
+    duration = await duration_seconds(video)
+    segments = config.burn_chunks(duration)
+    # מחשבים מחדש לפי הזיכרון שפנוי עכשיו, ולא לפי זה שהיה בהפעלה
+    await core_pool().resize(
+        _memory_cap(config.burn_slots(os.cpu_count() or 2)))
+
+    if segments > 1 and duration >= config.BURN_PARALLEL_MIN_MINUTES * 60:
+        # שני ניסיונות ולא אחד. הכשלון הנפוץ אינו בצריבת הקטעים אלא
+        # בהרכבה שאחריה, והקטעים הצרובים נשארים שלמים על הדיסק —
+        # הניסיון השני מדלג עליהם וחוזר ישר להרכבה. זה ההבדל בין
+        # שניות לבין צריבה שנייה של כל הסרט, שזה מה שנראה למשתמש
+        # כמו 100 אחוז שחוזר לאפס
+        exc: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                return await _burn_parallel(video, srt, dst, duration,
+                                            segments, on_progress, style,
+                                            profile, reuse=attempt > 1,
+                                            track=track)
+            except Exception as failure:  # noqa: BLE001
+                exc = failure
+                if attempt == 1:
+                    log.warning("המסלול המקבילי נכשל (%s: %s) — ניסיון שני "
+                                "על הקטעים שכבר נצרבו",
+                                type(failure).__name__, failure)
+                    if on_progress:
+                        await on_progress(ASSEMBLE_FROM, "מרכיב שוב")
+        if exc is not None:
+            # B10: קודם נרשמה כאן שורה אחת בלי עקבות, והמסלול המקבילי
+            # נזנח בשקט. צריבה שלמה רצה אז פי שלושה לאט בלי שאיש ידע
+            # למה — exception מלא הוא ההבדל בין "קרה משהו" לבין סיבה
+            log.exception("הצריבה המקבילית נכשלה (%s: %s) — עוברים לתהליך יחיד",
+                          type(exc).__name__, exc)
+            if on_progress:
+                # שם המחלקה לבדו חסר ערך: "FFmpegError" אינו אומר אם
+                # זו אופציה לא מוכרת, קובץ חסר או דיסק מלא. הסיבה
+                # עצמה היא ההבדל בין אבחון מיידי לסיבוב שלם של ניחושים
+                why = str(exc).strip().splitlines()
+                tail = why[-1][:120] if why else type(exc).__name__
+                await on_progress(0.0, f"נפל למסלול יחיד: {tail}")
+
+    return await _burn_single(video, srt, dst, duration, on_progress, style,
+                              profile, track=track)
+
+
+def _settings_for(video: Path, duration: float, height: int,
+                  profile: str = "") -> dict:
+    """הגדרות הצריבה: בחירה מפורשת של המשתמש גוברת על הסולם האוטומטי."""
+    if profile and profile in config.PROFILES:
+        log.info("פרופיל נבחר ידנית: %s", profile)
+        return config.PROFILES[profile]
+    return config.profile_for(video.stat().st_size, duration, height)
+
+
+async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
+                       on_progress=None, style: Style | None = None,
+                       profile: str = "", track: int = 0) -> Path:
+    marked = rtl_copy(srt)
+    credit = credit_file(dst.parent)
+    settings = _settings_for(video, duration, await video_height(video),
+                             profile)
+    _describe_profile(settings, video, duration)
+    threads = burn_threads()
+
+    cmd = [
+        "ffmpeg", "-nostdin", "-y", "-threads", str(threads),
+        # פענוח בחומרה כשיש. הפריימים חוזרים לזיכרון המערכת מאליהם, ולכן
+        # מסנן הכתוביות ממשיך לעבוד כרגיל, וכשאין חומרה ffmpeg נופל חזרה
+        # לתוכנה בלי להיכשל
+        "-hwaccel", "auto",
+        "-i", str(video), "-vf", _video_filters(marked, credit, style),
+    ] + _encoder_args(settings, threads, duration)
+    cmd += await _audio_args(video, track)
+    cmd += ["-movflags", "+faststart", str(dst)]
+
+    limit = config.burn_timeout(duration)
+    log.info("צריבה בתהליך אחד, %d חוטים, תקרת זמן %.0f דקות", threads, limit / 60)
+    # גם תהליך יחיד נרשם כעבודה, כדי שלא יתחרה בצריבה שרצה לידו
+    pool = core_pool()
+    async with pool.job() as token, pool.slot(token):
+        if on_progress:
+            await _run_progress(cmd, duration, on_progress, timeout=limit)
+        else:
+            await _run(cmd, timeout=limit)
+
+    await _check_codec(dst, config.BURN_CODEC or settings["codec"])
+    log.info("הצריבה הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
+    return dst
+
+
+async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
+                         segments: int, on_progress=None,
+                         style: Style | None = None,
+                         profile: str = "", reuse: bool = False,
+                         track: int = 0) -> Path:
+    """חותך את הווידאו לקטעים, צורב כל אחד בתהליך משלו, ומרכיב בחזרה.
+
+    מסנן הכתוביות של ffmpeg רץ בחוט אחד, ולכן תהליך יחיד לא מצליח להעסיק
+    מכונה עם הרבה ליבות — המקודד ממתין לפריימים. תהליך לכל קטע נותן
+    צינור רינדור נפרד לכל אחד, וזה מה שמנצל את הליבות בפועל.
+
+    האודיו אינו נוגע בקידוד: הקטעים נצרבים ללא קול, ובסוף מוזג האודיו
+    המקורי כמו שהוא. כך אין סיכון להיסט קול בין הקטעים.
+    """
+    from . import srt as srt_tools
+
+    work = dst.parent / "parallel"
+    work.mkdir(parents=True, exist_ok=True)
+    marked = rtl_copy(srt)
+    credit = credit_file(work)
+    settings = _settings_for(video, duration, await video_height(video),
+                             profile)
+    _describe_profile(settings, video, duration)
+    # מכולת MP4 אינה תומכת בקצב פריימים משתנה, ולכן ffmpeg מנחש קצב
+    # לכל קטע בנפרד. במקור VFR הניחושים נבדלים, ציר הזמן של הקטעים
+    # אינו תואם, וה-concat מפיק חותמות זמן שבורות — כך נוצר פלט של
+    # 0.374 פריימים לשנייה במקום 23.976, עם אובדן כמעט כל הפריימים.
+    # קצב מפורש וזהה לכל הקטעים מסיר את הניחוש מהתמונה
+    fps = await video_fps(video)
+    # נשמר לדיווח בלבד: הכפייה עצמה חלה על כל מקור
+    vfr = await is_vfr(video)
+    if vfr:
+        log.info("המקור בקצב פריימים משתנה")
+    if fps <= 0:
+        log.warning("קצב הפריימים של המקור לא נקרא — ההרכבה עלולה להישבר")
+    else:
+        log.info("קצב פריימים אחיד לכל הקטעים: %.3f", fps)
+
+    threads = config.BURN_SEGMENT_THREADS
+    # חיתוך על גבולות פריימים מלאים, ולא על זמן עגול. ב-23.976 פריימים
+    # לשנייה אורך כמו 7.500 אינו מספר שלם של פריימים, ו-ffmpeg מעגל
+    # כלפי מעלה: נמדד 7.5075 במקום 7.500, כלומר 180 פריימים במקום
+    # 179.82. כל קטע גדל, השגיאה מצטברת על פני כל הקטעים, והאודיו
+    # נלקח מהמקור שלם — ולכן הווידאו נגרר אחרי הקול, וזה מחמיר ככל
+    # שמתקדמים בסרט. זה בדיוק מה שדווח: שומעים, ורק אחר כך השפתיים
+    # זזות. כשכל קטע הוא מספר שלם של פריימים אין מה לעגל
+    step = 1.0 / fps if fps > 0 else 0.0
+    frames = round(duration * fps) if fps > 0 else 0
+    per_segment = frames // segments if frames else 0
+    span = (per_segment * step) if per_segment else (duration / segments)
+    limit = config.burn_timeout(span)
+    pool = core_pool()
+    log.info("צריבה מקבילית: %d קטעים של %.1f דקות, %d חוטים לקטע, "
+             "עד %d קטעים בו-זמנית",
+             segments, span / 60, threads, config.burn_slots(os.cpu_count() or 2))
+
+    # תוכנית החיתוך נשמרת לצד הקטעים, ונבדקת לפני שמשתמשים בהם.
+    # הדילוג על קטע קיים הניח שהקטעים על הדיסק שייכים לאותה תוכנית,
+    # ומעולם לא בדק זאת. בשרת נמדדו קטעים של 239.9 שניות מול תוכנית
+    # שמחפשת 119.9: אף אחד לא התאים, 48 מתוך 49 נצרבו מחדש, והמשתמש
+    # ראה צריבה שלמה מתחילה מאפס אחרי שהגיעה למאה אחוז.
+    #
+    # כשהתוכנית שונה אין מה להציל: מוחקים פעם אחת ומתחילים נקי
+    # הטביעה כוללת את הכתוביות ואת הסגנון, ולא רק את גיאומטריית
+    # החיתוך. הקטעים הם וידאו עם כתוביות **כבר צרובות בתוכו**: קטע
+    # משיוט קודם נושא את התזמונים והסגנון של אותו שיוט. המסלול
+    # המיידי משתמש באותה תיקיית עבודה של יצירת הכתוביות (bot.py,
+    # work=offer.work), בעוד צריבה נפרדת מקבלת תיקייה חדשה —
+    # ולכן רק במסלול המיידי אפשר לפגוש קטעים ישנים. זה בדיוק ההבדל
+    # שבגללו "מיידי יוצא עקום ונפרד יוצא תקין"
+    try:
+        stamp = srt.stat()
+        subtitles = f"{stamp.st_size}:{int(stamp.st_mtime)}"
+    except OSError:
+        subtitles = "?"
+    plan = {"duration": round(duration, 3), "fps": round(fps, 3),
+            "segments": segments, "span": round(span, 3),
+            "srt": subtitles,
+            "style": repr(style), "profile": profile or ""}
+    card = work / "plan.json"
+    if not reuse:
+        # ניסיון ראשון בעבודה הזאת: מתחילים נקי תמיד, בלי קשר לתוכנית.
+        # הקטעים הם וידאו שהכתוביות כבר צרובות בתוכו, והמסלול המיידי
+        # רץ בתיקיית העבודה של יצירת הכתוביות — כלומר קטע משיוט קודם
+        # יכול לשבת שם עם תזמונים ישנים. שיתוף קטעים נועד לחסוך ניסיון
+        # שני באותה צריבה, ולא להעביר חומר בין עבודות
+        if any(work.glob("seg*.mp4")):
+            log.info("מנקה קטעים משיוט קודם לפני צריבה חדשה")
+        shutil.rmtree(work, ignore_errors=True)
+        work.mkdir(parents=True, exist_ok=True)
+        marked = rtl_copy(srt)
+        credit = credit_file(work)
+    elif card.exists():
+        try:
+            old_plan = json.loads(card.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            old_plan = None
+        if old_plan != plan:
+            log.warning("תוכנית החיתוך השתנתה (%s ⇐ %s) — מתחילים נקי",
+                        plan, old_plan)
+            shutil.rmtree(work, ignore_errors=True)
+            work.mkdir(parents=True, exist_ok=True)
+            marked = rtl_copy(srt)
+            credit = credit_file(work)
+    card.write_text(json.dumps(plan), encoding="utf-8")
+
+    done = [0.0] * segments
+    lock = asyncio.Lock()
+    started = time.monotonic()
+
+    async def one(index: int) -> Path:
+        begin = index * span
+        # הקטע האחרון לוקח את השארית, כדי שסכום הקטעים יהיה בדיוק
+        # אורך המקור ולא ייפול ממנו בכמה פריימים
+        length = (duration - begin if index == segments - 1
+                  else min(span, duration - begin))
+        # ומספר הפריימים המדויק שהקטע הזה חייב להוציא. ‎-t לבדו נותן
+        # לffmpeg להוציא פריים אחד יותר או פחות בכל קטע, והשגיאה
+        # מצטברת לאורך הסרט: הכתוביות של כל קטע נחתכות לפי הגבול
+        # התיאורטי ‎index*span, אבל הקטע שלפניו כבר הזיז את ציר הזמן.
+        # נמדד על קליפ של שלוש דקות, אותו מקור ואותן כתוביות:
+        #   תהליך יחיד   0.041 שניות
+        #   3 קטעים      0.082
+        #   5 קטעים      0.122
+        #   10 קטעים     0.164
+        #   16 קטעים     0.259
+        # כלומר כ-15 אלפיות לכל קטע, וסרט של שעתיים נחתך ל-56 קטעים
+        piece_frames = (frames - per_segment * (segments - 1)
+                        if index == segments - 1 else per_segment)
+        piece_srt = srt_tools.slice_file(marked, begin, begin + length,
+                                         work / f"seg{index:02d}.srt")
+        # הקרדיט מופיע רק בפתיחת הסרט, כלומר רק בקטע הראשון
+        filters = _video_filters(piece_srt, credit if index == 0 else None, style)
+        piece = work / f"seg{index:02d}.mp4"
+        # קטע שנצרב בניסיון קודם נשאר על הדיסק, ולצרוב אותו שוב זה
+        # לחזור על עבודה של שעה. נבדק לפי אורך בפועל, כי קובץ שנקטע
+        # באמצע קיים אבל אינו שלם
+        if piece.exists() and piece.stat().st_size:
+            try:
+                have = await duration_seconds(piece)
+            except Exception:  # noqa: BLE001 — קובץ פגום נצרב מחדש
+                have = 0.0
+            if abs(have - length) <= 1.0:
+                log.info("קטע %d/%d כבר קיים (%.1f שניות) — מדלגים",
+                         index + 1, segments, have)
+                async with lock:
+                    done[index] = length
+                return piece
+            log.warning("קטע %d/%d קיים אבל אורכו %.1f במקום %.1f — נצרב מחדש",
+                        index + 1, segments, have, length)
+
+        cmd = [
+            "ffmpeg", "-nostdin", "-y",
+            "-ss", f"{begin:.3f}", "-t", f"{length + 2 * step:.3f}",
+            "-threads", str(threads), "-hwaccel", "auto", "-i", str(video),
+            "-vf", filters,
+        ] + _encoder_args(settings, threads, duration)
+        # בלי faststart: הקטע הוא קובץ ביניים שאיש לא מנגן, והדגל מכריח
+        # סיבוב נוסף על כל הקובץ. נמדד כ-1.9 שניות מבוזבזות לכל קטע
+        # קצב קבוע לכל קטע, תמיד — לא רק למקור VFR. ההנחה הקודמת
+        # הייתה שגויה: concat אינו דורש קצב קבוע מ-VFR בלבד, הוא
+        # דורש אותו מכל קטע. כל קטע נחתך מאמצע הסרט ומקבל חותמות
+        # זמן יחסיות למקור, ובלי קצב מפורש הוא יוצא עם אורך מלא
+        # ומספר פריימים זעום. נמדד בשרת על מקור 23.976 CFR לגמרי:
+        # הפלט יצא 0.381 פריימים לשנייה, פחות מ-2% מהפריימים.
+        #
+        # החשש שבגללו נוסף הגייט — ש--fps_mode יפיל את ffmpeg 4.x —
+        # כבר נפתר בתוך cfr_args, שבודק את הגרסה ונופל ל--vsync
+        cmd += await cfr_args(fps)
+        # התקרה המדויקת. ‎-t שלמעלה נשאר כגבול פענוח בלבד
+        if piece_frames > 0:
+            cmd += ["-frames:v", str(piece_frames)]
+        cmd += ["-an", str(piece)]
+
+        async def progress(fraction: float, speed: str) -> None:
+            async with lock:
+                done[index] = fraction * length
+                if not on_progress:
+                    return
+                # הקצב שffmpeg מדווח הוא של תהליך בודד. בצריבה מקבילית
+                # מעניין הקצב המצרפי, ולכן הוא נמדד מול שעון הקיר: כמה
+                # שניות וידאו נצרבו בסך הכל חלקי הזמן שעבר באמת.
+                elapsed = time.monotonic() - started
+                rate = sum(done) / elapsed if elapsed > 1 else 0.0
+                await on_progress(min(1.0, sum(done) / duration) * ASSEMBLE_FROM,
+                                  f"{rate:.1f}x" if rate else speed)
+
+        # ממתין למקום פנוי במכונה. זה מה שמחלק את הליבות בין צריבות
+        # מקבילות: קטע שמחכה לא צורך כלום
+        async with pool.slot(token):
+            await _run_progress(cmd, length, progress, timeout=limit)
+        log.info("קטע %d/%d הסתיים", index + 1, segments)
+        return piece
+
+    async with pool.job() as token:
+        pieces = await asyncio.gather(*(one(i) for i in range(segments)))
+    # מכאן והלאה כשלון משאיר את הקטעים על הדיסק בכוונה: הם תקינים,
+    # והניסיון הבא מדלג עליהם במקום לצרוב את כל הסרט מחדש
+
+    listing = work / "concat.txt"
+    listing.write_text(
+        "".join(f"file '{piece.name}'\n" for piece in pieces), encoding="utf-8"
+    )
+
+    # הרכבה, מיזוג האודיו המקורי ו-faststart במעבר אחד. קודם זה היו שני
+    # מעברים: קובץ מחובר ללא קול, ואז קריאה שלו וכתיבת עותק נוסף. על קובץ
+    # של גיגה־בייטים זה היה סיבוב שלם מיותר — נמדד כפול זמן, פלט זהה
+    # בייט־בייט. וזה גם מה שנראה כמו תקיעה על 99%, כי אף אחד לא דיווח
+    async def assembling(fraction: float, speed: str) -> None:
+        if on_progress:
+            await on_progress(ASSEMBLE_FROM + (1.0 - ASSEMBLE_FROM) * fraction,
+                              "מרכיב")
+
+    if on_progress:
+        await on_progress(ASSEMBLE_FROM, "מרכיב")
+
+    audio = await _audio_args(video, track)
+
+    async def demuxer() -> None:
+        """החיבור המהיר: concat demuxer והעתקה בלי קידוד מחדש."""
+        await _run_progress([
+            "ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
+            "-i", str(listing), "-i", str(video),
+            "-map", "0:v:0", "-map", f"1:a:{max(0, track)}?", "-c:v", "copy",
+        ] + audio + [
+            "-movflags", "+faststart", "-shortest", str(dst),
+        ], duration, assembling, timeout=limit)
+
+    async def through_ts() -> None:
+        """החיבור העמיד: דרך MPEG-TS, שסובל הבדלי פרמטרים בין קטעים.
+
+        ‏concat demuxer דורש שכל הקטעים יהיו זהים בפרמטרים עד הרמה
+        הנמוכה ביותר, ונכשל כשמשהו זז — גם כשהקטעים עצמם תקינים
+        לגמרי. ‏MPEG-TS הוא פורמט שידור: הוא נושא פרמטרים בכל חבילה,
+        ולכן חיבור שלו הוא שרשור בייטים פשוט שעובד גם כשהדמוקסר
+        מוותר.
+
+        זה עדיין בלי קידוד מחדש — דקות, לא שעה. וזה ההבדל בין
+        "ההרכבה נפלה, צורבים הכל מחדש" לבין "ההרכבה נפלה, מרכיבים
+        אחרת"
+        """
+        codec = (settings.get("codec") or "").lower()
+        bridge = ("hevc_mp4toannexb" if "265" in codec or "hevc" in codec
+                  else "h264_mp4toannexb")
+        parts = []
+        for piece in pieces:
+            lane = piece.with_suffix(".ts")
+            await _run(["ffmpeg", "-nostdin", "-y", "-i", str(piece),
+                        "-c", "copy", "-bsf:v", bridge,
+                        "-f", "mpegts", str(lane)], timeout=limit)
+            parts.append(str(lane))
+        joined = "concat:" + "|".join(parts)
+        await _run_progress([
+            "ffmpeg", "-nostdin", "-y", "-i", joined, "-i", str(video),
+            "-map", "0:v:0", "-map", f"1:a:{max(0, track)}?", "-c:v", "copy",
+        ] + audio + [
+            "-movflags", "+faststart", "-shortest", str(dst),
+        ], duration, assembling, timeout=limit)
+
+    async def assemble_and_check(route) -> None:
+        """מרכיב ומוודא יחד, כי הכישלון הנפוץ אינו ב-ffmpeg אלא אחריו.
+
+        ‏ffmpeg מסיים בקוד יציאה אפס ומפיק קובץ שאיבד כמעט את כל
+        הפריימים — נמדד בשרת כ"קצב הפריימים בפלט 0.490 במקום 24.000".
+        כלומר ההרכבה נכשלת בלי להיכשל, ורק הבדיקה שאחריה תופסת את זה.
+
+        כשהבדיקה הייתה מחוץ ל-try, דרך החיבור השנייה לא רצה אף פעם
+        בדיוק במקרה שבשבילו היא נבנתה
+        """
+        await route()
+        if on_progress:
+            await on_progress(1.0, "בודק")
+        await _verify(dst, duration, fps)
+
+    try:
+        await assemble_and_check(demuxer)
+    except (FFmpegError, OSError) as exc:
+        # הקטעים נצרבו ותקינים. ליפול מכאן לתהליך יחיד פירושו לצרוב
+        # את כל הסרט מחדש — ארבעים דקות — בגלל שלב חיבור שנמשך דקות.
+        # לכן מנסים דרך חיבור שנייה לפני שמוותרים
+        log.warning("החיבור המהיר נכשל (%s) — מנסה דרך MPEG-TS", exc)
+        if on_progress:
+            await on_progress(ASSEMBLE_FROM, "מרכיב בדרך אחרת")
+        await assemble_and_check(through_ts)
+    await _check_codec(dst, config.BURN_CODEC or settings["codec"])
+    shutil.rmtree(work, ignore_errors=True)
+    log.info("הצריבה המקבילית הסתיימה: %.0fMB", dst.stat().st_size / 1024 ** 2)
+    return dst
+
+
+async def poster(video: Path, work: Path) -> Path | None:
+    """תמונה ממוזערת לסרטון.
+
+    בלי תמונה טלגרם מציג ריבוע שחור ולפעמים "0 מתוך 0" עד שנכנסים
+    להודעה. נלקחת שנייה 20 כדי לדלג על הקרדיט שבפתיחה.
+    """
+    thumb = work / "poster.jpg"
+    try:
+        await _run([
+            "ffmpeg", "-nostdin", "-y", "-ss", "20", "-i", str(video),
+            "-frames:v", "1", "-vf", "scale=320:-2", "-q:v", "4", str(thumb),
+        ], timeout=120)
+    except (FFmpegError, OSError) as exc:
+        log.warning("יצירת התמונה הממוזערת נכשלה: %s", exc)
+        return None
+    return thumb if thumb.exists() and thumb.stat().st_size else None
+
+
+async def thumb_from_image(image: Path, work: Path) -> Path | None:
+    """מכין תמונה שהמשתמש שלח לשמש כתצוגה מקדימה.
+
+    טלגרם חוסמת תצוגה מקדימה ב-320 פיקסל וב-200KB בפורמט JPEG. זו
+    מגבלה שלה ואי אפשר לעקוף אותה — תמונת 4K תוקטן תמיד, בכל בוט.
+
+    מה שכן בידינו הוא לא לבזבז את התקרה: הקטנה בלנצוש ואיכות JPEG
+    גבוהה נראית הרבה יותר טוב מאותם 320 פיקסל שנחתכו מפריים וידאו.
+    אם התוצאה עדיין כבדה מדי, האיכות יורדת בהדרגה עד שהיא נכנסת
+    """
+    out = work / "cover.jpg"
+    for quality in range(config.THUMB_QUALITY, 12):
+        try:
+            await _run([
+                "ffmpeg", "-nostdin", "-y", "-i", str(image),
+                "-vf", f"scale='min({config.THUMB_MAX},iw)':-2:flags=lanczos",
+                "-frames:v", "1", "-q:v", str(quality), str(out),
+            ], timeout=120)
+        except (FFmpegError, OSError) as exc:
+            log.warning("הכנת התצוגה המקדימה נכשלה: %s", exc)
+            return None
+        if not out.exists() or not out.stat().st_size:
+            return None
+        if out.stat().st_size <= config.THUMB_BYTES:
+            log.info("תצוגה מקדימה מותאמת: %dKB באיכות %d",
+                     out.stat().st_size // 1024, quality)
+            return out
+        log.info("התצוגה המקדימה %dKB — מעל התקרה, מנסה איכות %d",
+                 out.stat().st_size // 1024, quality + 1)
+    log.warning("לא הצלחנו להכניס את התצוגה המקדימה לתקרה של טלגרם")
+    return None
+
+
+async def _check_codec(result: Path, expected: str = "") -> None:
+    """מוודא שהפלט באמת HEVC כשזה מה שביקשנו.
+
+    בלי זה נפילה שקטה לפרופיל x264 — או דריסה ידנית שנשכחה ב-.env —
+    הייתה מגיעה לאתר כקובץ בקודק אחר, ומתגלה רק אצל צופה שלא מצליח
+    לנגן. ALLOW_X264=1 מכבה את הבדיקה במפורש.
+    """
+    # B7: BURN_CODEC מאפשר לדרוס את הקודק, והאימות בדק hevc קשיח. מי
+    # שדרס במפורש קיבל כישלון רק בסוף הצריבה כולה, אחרי שכל העבודה
+    # כבר נעשתה. בדיקה מול מה שבאמת ביקשנו לקודד מסירה את הסתירה
+    wanted = {"libx265": "hevc", "libx264": "h264"}.get(expected or "", "")
+    if config.ALLOW_X264 and not wanted:
+        return
+    try:
+        out = await _run([
+            "ffprobe", "-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream=codec_name,codec_tag_string",
+            "-of", "default=nw=1:nk=1", str(result),
+        ], timeout=60)
+    except (FFmpegError, OSError) as exc:
+        log.warning("בדיקת הקודק לא רצה: %s", exc)
+        return
+    fields = [line.strip() for line in out.splitlines() if line.strip()]
+    codec = fields[0] if fields else ""
+    tag = fields[1] if len(fields) > 1 else ""
+    target = wanted or "hevc"
+    if codec != target:
+        raise FFmpegError(
+            f"הפלט יצא בקודק {codec or 'לא ידוע'} במקום {target}. "
+            f"אם זו הייתה הכוונה: ALLOW_X264=1 ב-.env")
+    if target == "hevc" and tag != "hvc1":
+        log.warning("תגית הווידאו היא %s ולא hvc1 — ניגון באפל עלול להיכשל", tag)
+    log.info("אימות קודק: %s/%s", codec, tag)
+
+
+async def _verify(result: Path, expected: float,
+                  source_fps: float = 0.0) -> None:
+    """בלי אימות, הרכבה שבורה מגיעה למשתמש בשקט."""
+    if not result.exists() or result.stat().st_size < 1024:
+        raise FFmpegError("קובץ הפלט ריק")
+    info = await probe(result)
+    kinds = {stream.get("codec_type") for stream in info.get("streams", [])}
+    if "video" not in kinds:
+        raise FFmpegError("אין זרם וידאו בפלט")
+    actual = float(info.get("format", {}).get("duration", 0) or 0)
+    if abs(actual - expected) > max(2.0, expected * 0.01):
+        raise FFmpegError(
+            f"אורך הפלט {actual:.1f} שניות במקום {expected:.1f} — ההרכבה לא תקינה"
+        )
+
+    # אורך לבדו אינו מספיק. הקובץ השבור נמשך 02:06:15 מול 02:06:07 —
+    # סטייה של עשירית האחוז — ובכל זאת הכיל 2,800 פריימים במקום
+    # 181,000. בדיקת האורך עברה והפלט ההרוס נשלח למשתמש בשקט
+    stream = next((x for x in info.get("streams", [])
+                   if x.get("codec_type") == "video"), {})
+    rate = stream.get("avg_frame_rate") or "0/1"
+    try:
+        top, _, bottom = rate.partition("/")
+        got_fps = float(top) / float(bottom or 1)
+    except (ValueError, ZeroDivisionError):
+        got_fps = 0.0
+    if source_fps > 0 and got_fps > 0 and got_fps < source_fps * 0.9:
+        raise FFmpegError(
+            f"קצב הפריימים בפלט {got_fps:.3f} במקום {source_fps:.3f} — "
+            "ההרכבה איבדה פריימים"
+        )
+
+    # הפרש בין אורך הווידאו לאורך האודיו בפלט. זה הסימן המבחין של
+    # היסט קול: היסט קבוע הוא בעיית מיקס, והיסט שגדל לאורך הסרט הוא
+    # קצב פריימים — כל קטע יוצא קצר בכמה פריימים בעוד האודיו נשאר
+    # שלם, והשגיאה מצטברת בכל חיבור. נמדד ולא מתוקן בשלב הזה, כי
+    # התיקון תלוי בכיוון ובגודל ואין טעם לנחש אותו
+    def _field(kind: str, name: str) -> float:
+        for item in info.get("streams", []):
+            if item.get("codec_type") == kind:
+                return float(item.get(name) or 0)
+        return 0.0
+
+    def _span(kind: str) -> float:
+        return _field(kind, "duration")
+
+    video_span, audio_span = _span("video"), _span("audio")
+    if video_span > 0 and audio_span > 0:
+        drift = audio_span - video_span
+        # נקודת ההתחלה, ולא רק האורך. שני זרמים יכולים להיות באותו
+        # אורך בדיוק ועדיין להתחיל בזמנים שונים — וזה הסימן של היסט
+        # קבוע לאורך כל הסרט, להבדיל מהיסט שמצטבר. בלי המספר הזה
+        # אי אפשר להבחין בין השניים, ושניהם נראים למשתמש אותו דבר
+        video_from, audio_from = _field("video", "start_time"), \
+            _field("audio", "start_time")
+        offset = audio_from - video_from
+        line = (f"אורך וידאו {video_span:.3f} · אודיו {audio_span:.3f} · "
+                f"הפרש {drift:+.3f} · התחלה {video_from:.3f}/"
+                f"{audio_from:.3f} · פער התחלה {offset:+.3f} שניות")
+        if abs(offset) > 0.05:
+            log.warning("הזרמים מתחילים בזמנים שונים — %s", line)
+        if abs(drift) > 0.2:
+            log.warning("היסט בין הקול לתמונה — %s", line)
+        else:
+            log.info("סנכרון קול-תמונה תקין — %s", line)
+    log.info("אימות ההרכבה עבר: %.1f שניות, %.3f פריימים לשנייה, זרמים %s",
+             actual, got_fps, ", ".join(sorted(kinds)))
+
+
+def _bitrate_cap(duration: float) -> int:
+    """כמה kbps מותר לווידאו כדי שהקובץ כולו ייכנס במגבלת ההעלאה.
+
+    התקרה חסומה מלמעלה, וזה לא קוסמטי: ffmpeg מקבל את bufsize כמספר
+    שלם 32 ביט, ו-bufsize הוא פי שתיים מהתקרה. סרטון קצר מקבל תקציב
+    עצום לכל שנייה — על 26 שניות יצא cap של 1,146,135kbps, כלומר
+    bufsize של 2,292,270k, ו-ffmpeg דחה אותו:
+    "Value 2292270000.000000 for parameter 'bufsize' out of range".
+    הצריבה נפלה על סרטון תקין לגמרי, רק קצר.
+
+    ומעבר לכך התקרה הזאת ממילא חסרת משמעות: שום מקור אינו מתקרב
+    למאה מגהביט לשנייה, ותקרה שגבוהה מהמקור אינה מגבילה כלום
+    """
+    if duration <= 0:
+        return 0
+    budget_bits = config.UPLOAD_LIMIT_MB * 1024 ** 2 * 8 * 0.90  # שוליים לאודיו ולמכולה
+    want = int(budget_bits / duration / 1000)
+    return max(300, min(want, config.BITRATE_CAP_MAX))
+
+
+async def scene_cuts(video: Path, threshold: float = 0.35) -> list[float]:
+    """זמני חיתוכי הצילום בסרטון, בשניות.
+
+    נטפליקס אוסרת על כתובית לחצות חיתוך צילום, ואם אין ברירה — לשמור
+    12 פריימים ממנו. הנימוק מתועד בפטנט של גוגל על איתור שגיאות תזמון:
+    כתובית שמופיעה רגע לפני חיתוך נקראת פעמיים על ידי הצופה, כי החיתוך
+    מושך את העין בחזרה אל הטקסט.
+
+    ffmpeg מזהה את זה לבדו דרך מסנן scene, בלי שום קריאת AI ובלי מודל
+    """
+    cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-i", str(video),
+           "-vf", f"select='gt(scene,{threshold})',metadata=print:file=-",
+           "-an", "-sn", "-f", "null", "-"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await proc.communicate()
+    except OSError as exc:
+        log.warning("זיהוי חיתוכי צילום נכשל (%s)", exc)
+        return []
+    cuts = []
+    for line in (out or b"").decode("utf-8", "replace").splitlines():
+        found = re.search(r"pts_time:([0-9.]+)", line)
+        if found:
+            try:
+                cuts.append(float(found.group(1)))
+            except ValueError:
+                continue
+    cuts.sort()
+    log.info("זוהו %d חיתוכי צילום", len(cuts))
+    return cuts
