@@ -597,6 +597,9 @@ SRT_MAX_LINES = 2
 # שם כמעט אין כתובית מעל 5.5 שניות, ואצלנו היו 14
 # כמה מותר להזיז נקודת חיתוך כדי להנחית אותה בשקט שבין מילים
 SNAP_REACH = float(os.getenv("SNAP_REACH") or 0.7)
+# פער שקט שמצדיק פיצול בפני עצמו, גם בכתובית קצרה. הערך נלמד
+# מכללי החלוקה הפומביים של stable-ts, שמפצלת בכל פער כזה
+SRT_GAP_SPLIT = float(os.getenv("SRT_GAP_SPLIT") or 0.5)
 SRT_SPLIT_FROM = float(os.getenv("SRT_SPLIT_FROM") or 4.5)
 SRT_MIN_DURATION = float(os.getenv("SRT_MIN_DURATION") or 1.0)
 SRT_MAX_DURATION = float(os.getenv("SRT_MAX_DURATION") or 7.0)

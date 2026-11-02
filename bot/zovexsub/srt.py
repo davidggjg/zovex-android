@@ -895,6 +895,15 @@ def drop_blank(cues: list["Cue"]) -> int:
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
+def widest_hush(cue: "Cue") -> float:
+    """השקט הארוך ביותר בתוך הכתובית, לפי תזמוני המילים."""
+    spoken = getattr(cue, "words", None) or []
+    best = 0.0
+    for (_, before), (after, _) in zip(spoken, spoken[1:]):
+        best = max(best, after - before)
+    return best
+
+
 def snap_to_silence(cue: "Cue", guess: float) -> float:
     """מזיז את נקודת החיתוך אל השקט הקרוב שבין שתי מילים.
 
@@ -948,8 +957,17 @@ def split_long_cues(cues: list["Cue"], fps: float = 24.0) -> int:
         span = cue.end - cue.start
         flat = " ".join((cue.text or "").split())
         parts = _SENTENCE_END.split(flat)
-        if (span < config.SRT_SPLIT_FROM or len(parts) < 2
-                or span < least * 2):
+        # שתי עילות לפיצול, ולא אחת:
+        #   א. הכתובית ארוכה מדי
+        #   ב. יש בתוכה שקט ממשי — ואז לא משנה כמה היא ארוכה
+        #
+        # הכלל השני נלמד מהכללים הפומביים של stable-ts, שמפצלת בכל
+        # פער מעל חצי שנייה בלי קשר לאורך. זה בדיוק המקרה שהמשתמש
+        # תיאר: "הוא כותב עכשיו משהו שאמור להיות בעוד עשרים שניות"
+        hush = widest_hush(cue)
+        if (len(parts) < 2 or span < least * 2
+                or (span < config.SRT_SPLIT_FROM
+                    and hush < config.SRT_GAP_SPLIT)):
             index += 1
             continue
 

@@ -3411,6 +3411,36 @@ def _split_at_silence():
     assert srt.split_long_cues(short) == 0
 
 
+@check("שקט ממשי מפצל כתובית גם כשהיא קצרה")
+def _split_on_gap():
+    from zovexsub import config, srt
+
+    # הכלל נלמד מכללי החלוקה הפומביים של stable-ts: פיצול בכל פער
+    # מעל חצי שנייה, בלי קשר לאורך הכתובית. אצלנו הפיצול היה מותנה
+    # באורך בלבד, ולכן כתובית קצרה שנמתחת על שקט עברה — וזה מה
+    # שהמשתמש תיאר: "הוא כותב עכשיו משהו שאמור להיות בעוד 20 שניות"
+    short_with_hush = [srt.Cue(
+        0, 0.0, 3.5, "משפט ראשון. משפט שני.",
+        words=[(0.0, 0.6), (0.7, 1.2), (2.6, 3.0), (3.1, 3.5)])]
+    assert srt.split_long_cues(short_with_hush) == 1
+    assert len(short_with_hush) == 2
+    # והחיתוך באמצע השקט, לא באמצע דיבור
+    assert 1.2 < short_with_hush[0].end < 2.6, short_with_hush[0].end
+
+    # כתובית קצרה עם דיבור רצוף אינה מתפצלת
+    continuous = [srt.Cue(
+        0, 0.0, 3.0, "משפט ראשון. משפט שני.",
+        words=[(0.0, 0.7), (0.8, 1.5), (1.6, 2.2), (2.3, 3.0)])]
+    assert srt.split_long_cues(continuous) == 0
+
+    # widest_hush מודד את השקט הארוך ביותר
+    cue = srt.Cue(0, 0.0, 3.5, "טקסט",
+                  words=[(0.0, 0.6), (0.7, 1.2), (2.6, 3.0)])
+    assert abs(srt.widest_hush(cue) - 1.4) < 0.01, srt.widest_hush(cue)
+    assert srt.widest_hush(srt.Cue(0, 0.0, 1.0, "טקסט")) == 0.0
+    assert config.SRT_GAP_SPLIT > 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
