@@ -643,6 +643,9 @@ async def build_hebrew(segments: list[Segment], language: str,
 
 async def _translate_all(segments: list[Segment], language: str, notes: str,
                          on_step=None, genders: str = "") -> list[str]:
+    # שורות שלא תורגמו אחרי כל הניסיונות. נאספות כאן כדי להיאמר
+    # למשתמש בסוף, במקום לצאת אליו כאנגלית בלי הסבר
+    failed: list[int] = []
     """מתרגם את כל החלונות במקביל.
 
     כל חלון עומד בפני עצמו: ההקשר שלו נלקח משורות המקור שלפניו ואחריו,
@@ -759,19 +762,38 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         # במקום זה ניסיון שני אחד על החלון כולו, ואם גם הוא נפל —
         # טקסט המקור. שורה באנגלית גרועה פחות משעה של המתנה
         if missing and len(missing) == len(window):
-            log.warning("חלון %d-%d חזר ריק — ניסיון שני על החלון כולו",
-                        window[0].index, window[-1].index)
-            async with gate:
-                again = await _bounded(gemini.ask_json(
-                    TRANSLATE_SYSTEM, prompt, schema=schema))
-            got = _collect(again)
-            for seg in window:
-                out[seg.index] = (got.get(seg.index) or "").strip()
-            missing = [s.index for s in window if not out[s.index]]
+            # קודם היה כאן ניסיון שני אחד, ואחריו טקסט המקור. בנימוק
+            # ש"שורה באנגלית גרועה פחות משעה של המתנה". נמדד בקובץ
+            # של סרט שלם: 189 כתוביות מתוך 840 — 22.5% — יצאו בשפת
+            # המקור, בשני רצפים רצופים של 137 ו-52 כתוביות. כלומר
+            # שני חלונות שנפלו הפכו לשש דקות וחצי של אנגלית על המסך,
+            # והמשתמש לא ידע למה.
+            #
+            # חלון שנפל הוא כמעט תמיד מכסה רגעית, והמכסה לדקה
+            # מתאפסת תוך דקה. לכן כמה ניסיונות עם המתנה ביניהם, ולא
+            # אחד — וכשזה בכל זאת נכשל, זה נאמר למשתמש ולא נקבר בלוג
+            for turn in range(2, config.TRANSLATE_WINDOW_TRIES + 1):
+                log.warning("חלון %d-%d חזר ריק — ניסיון %d מתוך %d",
+                            window[0].index, window[-1].index, turn,
+                            config.TRANSLATE_WINDOW_TRIES)
+                async with gate:
+                    again = await _bounded(gemini.ask_json(
+                        TRANSLATE_SYSTEM, prompt, schema=schema))
+                got = _collect(again)
+                for seg in window:
+                    out[seg.index] = (got.get(seg.index) or "").strip()
+                missing = [s.index for s in window if not out[s.index]]
+                if not missing:
+                    log.info("חלון %d-%d עבר בניסיון %d",
+                             window[0].index, window[-1].index, turn)
+                    break
+                if turn < config.TRANSLATE_WINDOW_TRIES:
+                    await asyncio.sleep(config.TRANSLATE_WINDOW_REST)
             if missing:
-                log.warning("חלון %d-%d נכשל פעמיים — %d שורות נשארות "
-                            "בשפת המקור", window[0].index, window[-1].index,
-                            len(missing))
+                log.error("חלון %d-%d נכשל %d פעמים — %d שורות יישארו "
+                          "בשפת המקור", window[0].index, window[-1].index,
+                          config.TRANSLATE_WINDOW_TRIES, len(missing))
+                failed.extend(missing)
                 for idx in missing:
                     out[idx] = segments[idx].text
                 missing = []
@@ -863,6 +885,25 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
                     len(empty))
         for index in empty:
             out[index] = segments[index].text
+
+    # הדיווח למשתמש. קודם אובדן התרגום היה שקט לגמרי: הקובץ יצא עם
+    # רצפים ארוכים בשפת המקור, ורק הלוג על השרת ידע על זה. שורה
+    # באנגלית על המסך היא פגם שהצופה רואה, ולכן המשתמש צריך לדעת
+    # עליו מיד — ובאיזו דקה בסרט הוא נמצא
+    untranslated = sorted(set(failed) | set(empty))
+    if untranslated:
+        share = len(untranslated) / max(1, len(segments)) * 100
+        spots = ", ".join(
+            f"{int(segments[i].start // 60):02d}:{int(segments[i].start % 60):02d}"
+            for i in untranslated[:1]
+            + ([untranslated[len(untranslated) // 2]]
+               if len(untranslated) > 2 else [])
+            + (untranslated[-1:] if len(untranslated) > 1 else []))
+        log.error("⚠️ %d שורות (%.0f%%) נשארו בשפת המקור, סביב %s",
+                  len(untranslated), share, spots)
+        if on_step:
+            await on_step(f"⚠️ {len(untranslated)} שורות לא תורגמו "
+                          f"({share:.0f}%) סביב {spots}", 1.0)
     return out
 
 

@@ -3580,6 +3580,44 @@ def _audit_tells_real_speech_from_defect() -> None:
     assert "חיתוך באמצע צירוף" in kinds, sorted(kinds)
 
 
+@check("חלון תרגום שנפל מקבל כמה ניסיונות, והאובדן נאמר למשתמש")
+def _failed_window_retries_and_reports() -> None:
+    flow = inspect.getsource(hebrew._translate_all)
+    # קודם היה ניסיון שני אחד ואז טקסט המקור. נמדד בקובץ של סרט שלם:
+    # 189 מתוך 840 כתוביות יצאו בשפת המקור, בשני רצפים רצופים
+    assert "TRANSLATE_WINDOW_TRIES" in flow, "אין לולאת ניסיונות"
+    assert "TRANSLATE_WINDOW_REST" in flow, "אין המתנה בין ניסיונות"
+    assert config.TRANSLATE_WINDOW_TRIES >= 3, config.TRANSLATE_WINDOW_TRIES
+    assert config.TRANSLATE_WINDOW_REST > 0, config.TRANSLATE_WINDOW_REST
+    # והאובדן נאמר למשתמש, לא רק נכתב ללוג על השרת
+    assert "untranslated" in flow and "on_step" in flow
+    said = flow[flow.index("untranslated = "):]
+    assert "await on_step(" in said, "האובדן לא מדווח למסך"
+
+
+@check("ההמתנה על 429 היא מה שגוגל ביקשה, לא מספר קבוע")
+def _honours_googles_retry_delay() -> None:
+    from zovexsub import gemini
+    # גוגל מחזירה RetryInfo בגוף התשובה, והתיעוד הרשמי אומר לכבד אותו.
+    # קודם ישנו כאן GEMINI_COOLDOWN שניות קבועות בלי קשר לבקשה שלה,
+    # וכל החלונות המקבילים נכנסו לשינה באותו רגע וחזרו ביחד — זה מה
+    # שנראה כ"תקוע על 80 אחוז ואז קופץ עשר בבת אחת"
+    assert gemini._retry_delay('{"retryDelay": "17s"}') == 17.0
+    assert gemini._retry_delay('{"retryDelay": "4.5s"}') == 4.5
+    assert gemini._retry_delay("{}") == 0.0
+
+    fail = gemini.GeminiError("נפל", retry_after=23.0)
+    assert fail.retry_after == 23.0
+    assert gemini.GeminiError("בלי").retry_after == 0.0
+
+    flow = inspect.getsource(gemini._call)
+    assert "retry_after" in flow, "ההמתנה של גוגל אינה נקראת"
+    assert "GEMINI_WAIT_CAP" in flow, "אין תקרה להמתנה"
+    assert "random" in flow, "אין פיזור מקרי — החלונות יחזרו ביחד"
+    # והתקרה אמיתית: מכסה יומית לא משתקת את ההרצה לשעות
+    assert 30 <= gemini.GEMINI_WAIT_CAP <= 180, gemini.GEMINI_WAIT_CAP
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

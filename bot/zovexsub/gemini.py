@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 
@@ -30,6 +31,9 @@ _resolve_lock = asyncio.Lock()
 _blocked: dict[tuple[str, str], float] = {}
 # מעל זה מדובר במכסה יומית ולא בהגבלת קצב לדקה
 LONG_WAIT = 120.0
+# תקרה להמתנה בין סבבים. בלעדיה מכסה יומית עם retryDelay של שעות
+# הייתה משתקת את ההרצה; מכסה כזו מטופלת ב-_blocked, לא בהמתנה
+GEMINI_WAIT_CAP = 90.0
 # מודל שהשרת שלו עמוס. אין טעם להתעקש עליו כשיש חלופה זמינה
 _overloaded: dict[str, float] = {}
 OVERLOAD_REST = 90.0
@@ -42,7 +46,15 @@ def _retry_delay(payload: str) -> float:
 
 
 class GeminiError(RuntimeError):
-    pass
+    """כשל בקריאה. retry_after הוא מה שגוגל ביקשה במפורש, אם ביקשה.
+
+    בלי השדה הזה המתנה על 429 היא ניחוש. גוגל מחזירה RetryInfo עם
+    retryDelay בגוף התשובה, והתיעוד הרשמי אומר לכבד אותו
+    """
+
+    def __init__(self, *args, retry_after: float = 0.0) -> None:
+        super().__init__(*args)
+        self.retry_after = retry_after
 
 
 # לקוח אחד לכל התהליך, ולא אחד לכל קריאה. קודם כל _chain_once פתח
@@ -208,14 +220,26 @@ async def _call(model: str, body: dict, *, timeout: float = 300.0) -> dict:
                 raise
             _exhausted.clear()
             _overloaded.clear()
-            log.warning("כל המודלים במכסה לדקה — ממתינים %.0f שניות (סבב %d/%d)",
-                        config.GEMINI_COOLDOWN, attempt, config.GEMINI_ROUNDS)
-            await asyncio.sleep(config.GEMINI_COOLDOWN)
+            # קודם ישנו כאן GEMINI_COOLDOWN שניות קבועות, שלא היה להן
+            # שום קשר למה שגוגל ביקשה. היא מחזירה retryDelay במפורש —
+            # לרוב 10 עד 25 שניות — וההמלצה הרשמית היא לכבד אותו.
+            # התוצאה של השינה הקבועה: כל החלונות המקבילים נכנסו לשינה
+            # באותו רגע וחזרו ביחד, וזה מה שנראה כ"תקוע על 80 אחוז
+            # ואז קופץ עשר". הפיזור המקרי שובר את הצבירה הזאת
+            asked = getattr(exc, "retry_after", 0.0)
+            wait = min(asked or config.GEMINI_COOLDOWN, GEMINI_WAIT_CAP)
+            wait *= 1.0 + random.random() * 0.4
+            log.warning("כל המודלים במכסה לדקה — ממתינים %.0f שניות "
+                        "(%s · סבב %d/%d)", wait,
+                        f"גוגל ביקשה {asked:.0f}" if asked else "ברירת מחדל",
+                        attempt, config.GEMINI_ROUNDS)
+            await asyncio.sleep(wait)
     raise GeminiError("כל המודלים נכשלו")
 
 
 async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict:
     last_error = "לא ידוע"
+    asked_wait = 0.0
 
     web = await client()
     chain = _chain(model)
@@ -287,6 +311,7 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
                     continue
 
                 wait = _retry_delay(resp.text)
+                asked_wait = wait or asked_wait
                 if wait > LONG_WAIT:
                     # מכסה יומית של המפתח הזה במודל הזה. המפתח עצמו
                     # עדיין טוב למודלים אחרים, אז לא מקררים אותו כולו
@@ -350,7 +375,10 @@ async def _chain_once(model: str, body: dict, *, timeout: float = 300.0) -> dict
 
         log.warning("עובר למודל הבא אחרי %s", last_error)
 
-    raise GeminiError(f"כל המודלים נכשלו — {last_error}")
+    # ההמתנה שגוגל ביקשה עולה עם הכשל, כדי ש-_call יכבד אותה ולא
+    # ינחש מספר קבוע
+    raise GeminiError(f"כל המודלים נכשלו — {last_error}",
+                      retry_after=asked_wait)
 
 
 def _text_of(payload: dict) -> str:

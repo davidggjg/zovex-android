@@ -752,6 +752,11 @@ ALIGN_THREADS = _int("ALIGN_THREADS", 2)
 # כמה שורות בודדות מותר לתקן אחרי חלון תרגום. התיקון רץ בטור,
 # ולכן חלון שלם שנפל היה הופך לחמישים קריאות רצופות
 TRANSLATE_RETRY_MAX = _int("TRANSLATE_RETRY_MAX", 8)
+# כמה פעמים לנסות חלון תרגום שחזר ריק לגמרי, והמתנה בין הניסיונות.
+# חלון שנפל הוא כמעט תמיד מכסה רגעית, והמכסה לדקה מתאפסת תוך דקה —
+# ולכן המתנה והמשך עדיפים על פליטת טקסט המקור לקובץ הסופי
+TRANSLATE_WINDOW_TRIES = _int("TRANSLATE_WINDOW_TRIES", 4)
+TRANSLATE_WINDOW_REST = float(os.getenv("TRANSLATE_WINDOW_REST") or 20)
 GEMINI_WINDOW_TIMEOUT = float(os.getenv("GEMINI_WINDOW_TIMEOUT") or 240)
 # התאמת המגדר מקבלת תקרה נדיבה משלה. היא התיקון הנראה ביותר
 # בעברית, וחלון שמדולג בה משאיר "אתה" לדמות אישה — נמדד מול
