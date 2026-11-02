@@ -200,18 +200,41 @@ def check_content(cues: list[srt.Cue]) -> list[Finding]:
             # חיתוך באמצע צירוף: הכתובית נגמרת במילת קישור שמחייבת
             # המשך. זה לא "אין נקודה בסוף" — משפט אפשר לפרוס על שתי
             # כתוביות, וזה תקין. "של" בסוף כתובית אינו תקין לעולם
-            tail = re.sub(r"[^\wא-ת]+$", "", body)
-            if body and nxt and _DANGLING.search(tail):
+            # כתובית שנגמרת בנקודה, בסימן שאלה או בקריאה היא שלמה.
+            # "מה?" הוא שאלה מלאה, לא צירוף שנקרע — ולכן מסירים רק
+            # מרכאות ורווחים, ולא את הפיסוק עצמו
+            tail = body.rstrip(" \"'\u201d\u201c)»")
+            if (body and nxt and not _SENTENCE_END.search(tail)
+                    and _DANGLING.search(tail)):
                 out.append(Finding(WARN, "חיתוך באמצע צירוף", cue.index,
                                    cue.start,
                                    f"נגמרת ב-\"{tail.split()[-1]}\" ⇢ "
                                    f"\"{nxt[:20]}…\""))
-        # אותה מילה שלוש פעמים ברצף — חתימה קלאסית של הזיית מודל
-        words = body.split()
+        # אותה מילה שלוש פעמים ברצף. בסרט זה לרוב דיבור אמיתי
+        # ("תעצרי! תעצרי! תעצרי!"), ולכן זו אזהרה ולא חסימה — ובצעקה
+        # עם שני סימני קריאה ומעלה היא יורדת להערה בלבד
+        words = [w.strip(",.!?\u2026") for w in body.split()]
+        shout = body.count("!") >= 2
         for a, b, c in zip(words, words[1:], words[2:]):
             if a == b == c and len(a) > 1:
-                out.append(Finding(BLOCKER, "הזיה", cue.index, cue.start,
-                                   f"\"{a}\" חוזרת שלוש פעמים"))
+                out.append(Finding(NOTE if shout else WARN, "מילה חוזרת",
+                                   cue.index, cue.start,
+                                   f"\"{a}\" שלוש פעמים — "
+                                   + ("כנראה דיבור אמיתי" if shout
+                                      else "לבדוק אם זו הזיה")))
+                break
+        # חתימת מיזוג: צירוף שלם שחוזר בתוך אותה כתובית. זה כמעט
+        # תמיד הדבקה של שתי אמירות נפרדות, ולא דיבור — וזה בדיוק
+        # הפגם שהמשתמש תיאר, מילה שנאמרה פעמיים שנדבקה לאמירה
+        # שבאה עשר שניות אחר כך
+        for size in (4, 3):
+            chunks = [" ".join(words[i:i + size])
+                      for i in range(len(words) - size + 1)]
+            twice = next((c for c in chunks if chunks.count(c) > 1), None)
+            if twice:
+                out.append(Finding(BLOCKER, "מיזוג כפול", cue.index,
+                                   cue.start,
+                                   f"\"{twice}\" חוזר באותה כתובית"))
                 break
     return out
 

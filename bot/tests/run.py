@@ -3468,7 +3468,7 @@ def _audit_catches_planted_faults() -> None:
              + audit.check_gender(cues)
              + audit.check_content(cues))
     kinds = {f.kind for f in found}
-    for want in ("קצרה מדי", "מהירה לקריאה", "חפיפה", "הזיה",
+    for want in ("קצרה מדי", "מהירה לקריאה", "חפיפה", "מילה חוזרת",
                  "מגדר מתנגש", "חיתוך באמצע צירוף", "ארוכה מדי",
                  "זמן הפוך"):
         assert want in kinds, f"{want} לא נתפס · נמצאו {sorted(kinds)}"
@@ -3507,6 +3507,77 @@ def _audit_measures_reading_speed() -> None:
     # סימני כיווניות אינם תווים לצורך קריאה
     marked = srt.Cue(1, 0.0, 2.0, "\u202b" + "א" * 20 + "\u202c")
     assert abs(audit._cps(marked) - 10.0) < 0.01, audit._cps(marked)
+
+
+@check("כתובית בלי שום פיסוק עדיין מתפצלת בשקט")
+def _splits_unpunctuated_on_silence() -> None:
+    # המקרה שהמשתמש דיווח עליו: "היי היי" שנאמר פעמיים נדבק ל"היי"
+    # שבא עשר שניות אחר כך. קודם הפונקציה יצאה מיד כשאין נקודה
+    # בטקסט, ולכן דווקא הכתוביות שהמודל החזיר כרצף אחד — אלה שהכי
+    # צריכות פיצול — נשארו שלמות
+    cue = srt.Cue(1, 0.0, 9.0, "היי היי אחי אתה שומע אותי",
+                  words=[(0.0, 0.4), (0.5, 0.9),          # "היי היי"
+                         (8.0, 8.3), (8.4, 8.7), (8.8, 9.0)])
+    cues = [cue]
+    assert srt.split_long_cues(cues) >= 1, "לא פוצל בכלל"
+    assert len(cues) >= 2, len(cues)
+    # החיתוך נופל בתוך השקט הגדול, לא באמצע הדיבור
+    assert 0.9 <= cues[0].end <= 8.0, cues[0].end
+    # ושתי החלקים נושאים טקסט אמיתי, לא נחתכו באמצע מילה
+    for part in cues[:2]:
+        assert part.text.strip(), part
+        assert not part.text.startswith(" "), repr(part.text)
+
+
+@check("גבול מילה נבחר ולא אמצע מילה")
+def _word_bound_lands_on_space() -> None:
+    text = "אחת שתיים שלוש ארבע חמש"
+    for share in (0.0, 0.25, 0.5, 0.75, 1.0):
+        mark = srt._word_bound(text, share)
+        assert text[mark] == " " or mark == 0, (share, mark, text[mark:])
+    # בלי רווחים אין איפה לחתוך, ומחזירים אפס כדי שהקורא ידלג
+    assert srt._word_bound("מילהאחת", 0.5) == 0
+
+
+@check("hush_middle מוצא גם את רוחב השקט וגם את מקומו")
+def _hush_middle_locates_silence() -> None:
+    cue = srt.Cue(0, 0.0, 10.0, "טקסט",
+                  words=[(0.0, 1.0), (1.2, 1.5), (7.5, 8.0), (9.0, 10.0)])
+    width, mid = srt.hush_middle(cue)
+    assert abs(width - 6.0) < 0.01, width      # מ-1.5 עד 7.5
+    assert abs(mid - 4.5) < 0.01, mid          # האמצע
+    # בלי תזמוני מילים אין מה למצוא, ואין קריסה
+    assert srt.hush_middle(srt.Cue(0, 0.0, 5.0, "טקסט")) == (0.0, 0.0)
+
+
+@check("audit מבדיל צעקה אמיתית ממיזוג, ושאלה מצירוף שנקרע")
+def _audit_tells_real_speech_from_defect() -> None:
+    import audit
+    # "תעצרי! תעצרי! תעצרי!" הוא דיבור אמיתי בסרט אימה, לא הזיה.
+    # הוא יורד להערה; מה שנשאר חסימה הוא צירוף שחוזר בתוך כתובית,
+    # שהוא חתימה של הדבקת שתי אמירות נפרדות
+    shout = srt.parse("1\n00:00:01,000 --> 00:00:03,000\n"
+                      "תעצרי! תעצרי! תעצרי!")
+    found = audit.check_content(shout)
+    assert found and all(f.severity == audit.NOTE for f in found), \
+        [(f.severity, f.kind) for f in found]
+
+    merged = srt.parse("1\n00:00:01,000 --> 00:00:08,000\n"
+                       "בחווה של חיות הבית שלי בחווה של חיות הבית שלי")
+    kinds = {f.kind for f in audit.check_content(merged)}
+    assert "מיזוג כפול" in kinds, sorted(kinds)
+
+    # "מה?" היא שאלה שלמה ולא צירוף שנקרע, ואין להתריע עליה
+    question = srt.parse("1\n00:00:01,000 --> 00:00:02,500\nמה?"
+                         "\n\n2\n00:00:02,700 --> 00:00:04,000\nשום דבר.")
+    kinds = {f.kind for f in audit.check_content(question)}
+    assert "חיתוך באמצע צירוף" not in kinds, sorted(kinds)
+
+    # אבל "של" בסוף כתובית נקרע, תמיד
+    broken = srt.parse("1\n00:00:01,000 --> 00:00:02,500\nזה הבית של"
+                       "\n\n2\n00:00:02,700 --> 00:00:04,000\nאבא שלי.")
+    kinds = {f.kind for f in audit.check_content(broken)}
+    assert "חיתוך באמצע צירוף" in kinds, sorted(kinds)
 
 
 def main() -> int:

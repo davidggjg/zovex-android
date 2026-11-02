@@ -895,6 +895,23 @@ def drop_blank(cues: list["Cue"]) -> int:
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
 
 
+def hush_middle(cue: "Cue") -> tuple[float, float]:
+    """רוחב השקט הגדול ביותר בתוך הכתובית, ואמצעו בשניות.
+
+    ‏widest_hush מחזיר רק את הרוחב, ולכן הוא יכול להחליט **אם** לפצל
+    אבל לא **איפה**. כשאין סימן פיסוק בטקסט אין גבול משפט לחתוך בו,
+    והשקט עצמו הוא הגבול היחיד שקיים — הוא בא מתזמוני המילים של
+    המקור ולא מניחוש
+    """
+    spoken = sorted((float(a), float(b)) for a, b in (cue.words or [])
+                    if float(b) > float(a))
+    best, mid = 0.0, 0.0
+    for (_, left), (right, _) in zip(spoken, spoken[1:]):
+        if right - left > best:
+            best, mid = right - left, (left + right) / 2
+    return best, mid
+
+
 def widest_hush(cue: "Cue") -> float:
     """השקט הארוך ביותר בתוך הכתובית, לפי תזמוני המילים."""
     spoken = getattr(cue, "words", None) or []
@@ -937,6 +954,18 @@ def snap_to_silence(cue: "Cue", guess: float) -> float:
     return found
 
 
+def _word_bound(text: str, share: float) -> int:
+    """מקום הרווח הקרוב ביותר ליחס הנתון מאורך הטקסט.
+
+    חיתוך לפי יחס זמנים נופל באמצע מילה; זה מחזיר אותו לגבול מילה
+    """
+    target = len(text) * min(max(share, 0.0), 1.0)
+    spaces = [i for i, ch in enumerate(text) if ch == " "]
+    if not spaces:
+        return 0
+    return min(spaces, key=lambda i: abs(i - target))
+
+
 def split_long_cues(cues: list["Cue"], fps: float = 24.0) -> int:
     """מפצל כתובית ארוכה שמחזיקה כמה משפטים. מחזיר כמה פוצלו.
 
@@ -964,20 +993,34 @@ def split_long_cues(cues: list["Cue"], fps: float = 24.0) -> int:
         # הכלל השני נלמד מהכללים הפומביים של stable-ts, שמפצלת בכל
         # פער מעל חצי שנייה בלי קשר לאורך. זה בדיוק המקרה שהמשתמש
         # תיאר: "הוא כותב עכשיו משהו שאמור להיות בעוד עשרים שניות"
-        hush = widest_hush(cue)
-        if (len(parts) < 2 or span < least * 2
-                or (span < config.SRT_SPLIT_FROM
-                    and hush < config.SRT_GAP_SPLIT)):
+        hush, hush_at = hush_middle(cue)
+        if span < least * 2 or (span < config.SRT_SPLIT_FROM
+                                and hush < config.SRT_GAP_SPLIT):
             index += 1
             continue
 
-        # הגבול הקרוב ביותר לאמצע, לפי תווים
-        middle = len(flat) / 2
-        best, seen, mark = None, 0, 0
-        for part in parts[:-1]:
-            seen += len(part) + 1
-            if best is None or abs(seen - middle) < abs(mark - middle):
-                best, mark = part, seen
+        if len(parts) >= 2:
+            # הגבול הקרוב ביותר לאמצע, לפי תווים
+            middle = len(flat) / 2
+            best, seen, mark = None, 0, 0
+            for part in parts[:-1]:
+                seen += len(part) + 1
+                if best is None or abs(seen - middle) < abs(mark - middle):
+                    best, mark = part, seen
+        elif hush >= config.SRT_GAP_SPLIT and hush_at > cue.start:
+            # אין שום סימן פיסוק. קודם הפונקציה יצאה כאן, ולכן כתובית
+            # שהמודל החזיר כרצף אחד בלי נקודות נשארה שלמה גם כשהיו
+            # בתוכה שתי אמירות נפרדות עם שקט ביניהן. התוצאה שהמשתמש
+            # ראה: מילה שנאמרה פעמיים נדבקה לאמירה שבאה עשר שניות
+            # אחר כך, והטקסט הופיע על המסך שניות לפני שנאמר.
+            #
+            # השקט הוא גבול לגיטימי לא פחות מנקודה — הוא נמדד מתזמוני
+            # המילים של המקור. חותכים בגבול המילה הקרוב אליו
+            mark = _word_bound(flat, (hush_at - cue.start) / span)
+        else:
+            index += 1
+            continue
+
         head, tail = flat[:mark].strip(), flat[mark:].strip()
         if not head or not tail:
             index += 1
