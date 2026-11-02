@@ -4,7 +4,7 @@ from __future__ import annotations
 import bisect
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import config
@@ -26,6 +26,11 @@ class Cue:
     start: float
     end: float
     text: str
+    # תזמוני המילים של המקור, כפי שהתמלול מסר אותם. הם של שפת
+    # המקור ולא של העברית — התרגום משנה את מספר המילים — ולכן אי
+    # אפשר למפות מילה עברית לזמן. מה שכן אפשר, וזה העיקר: לדעת
+    # היכן **לא** דיברו, ולהפיל כל חיתוך בשקט הזה ולא באמצע מילה
+    words: list = field(default_factory=list)
 
 
 # כמה מותר להזיז כתובית כדי להצמיד אותה לדיבור שזוהה.
@@ -59,7 +64,11 @@ def build_cues(segments: list[Segment], lines: list[str],
         text = (hebrew or "").strip()
         if not text:
             continue
-        cues.append(Cue(0, seg.start, max(seg.end, seg.start + 0.3), text))
+        spoken = [(float(w.start), float(w.end))
+                  for w in (getattr(seg, "words", None) or [])
+                  if w.end > w.start]
+        cues.append(Cue(0, seg.start, max(seg.end, seg.start + 0.3), text,
+                        words=spoken))
 
     if speech:
         # קודם מתקנים שעון מוסט, ורק אחר כך מצמידים נקודתית. הסדר
@@ -685,7 +694,7 @@ def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     frame = 1.0 / max(1.0, fps)
     gap = max(config.SRT_GAP, 2 * frame)
     fixed = {"ריקות": 0, "שורות": 0, "קצרות": 0, "ארוכות": 0, "הפוכות": 0,
-             "כפולות": 0, "קולות": 0}
+             "כפולות": 0, "קולות": 0, "מוזגו": 0}
 
     fixed["כפולות"] = drop_echoes(cues)
     fixed["קולות"] = drop_filler(cues)
@@ -693,6 +702,9 @@ def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     # כתובית שאינה נכנסת בשתי שורות מפוצלת, ולא נדחסת לשלוש. ‏wrap
     # לבדו נופל כאן ל-_hard_wrap ומייצר שורה שלישית
     split_overlong(cues, fps)
+    # ואחריו פיצול לפי זמן: כתובית שנכנסת ברוחב אבל מחזיקה כמה
+    # משפטים על פני שניות ארוכות מציגה לצופה דבר שטרם נאמר
+    fixed["מוזגו"] = split_long_cues(cues, fps)
 
     kept: list[Cue] = []
     for cue in cues:
@@ -876,6 +888,96 @@ def drop_blank(cues: list["Cue"]) -> int:
         for position, cue in enumerate(cues, start=1):
             cue.index = position
     return removed
+
+
+# סוף משפט. הפיצול נעשה כאן בלבד, ולכן לעולם לא באמצע מילה —
+# נמדד אצל המשתמש: "הוא חותך בחצי של מילה בשורה שהייתה תקינה"
+_SENTENCE_END = re.compile(r"(?<=[.!?…])\s+")
+
+
+def snap_to_silence(cue: "Cue", guess: float) -> float:
+    """מזיז את נקודת החיתוך אל השקט הקרוב שבין שתי מילים.
+
+    חלוקת הזמן לפי מספר תווים היא קירוב, והיא יכולה ליפול בדיוק
+    באמצע מילה — נמדד אצל המשתמש: "הוא חותך בחצי של מילה בשורה
+    שהייתה תקינה". תזמוני המילים אומרים היכן באמת לא דיברו, והחיתוך
+    נופל שם.
+
+    המילים הן של שפת המקור ולא של העברית, ולכן אי אפשר למפות מילה
+    עברית לזמן. אבל "היכן יש שקט" אינו תלוי בשפה כלל, וזה כל מה
+    שנדרש כאן
+    """
+    spoken = getattr(cue, "words", None) or []
+    if len(spoken) < 2:
+        return guess
+    reach = config.SNAP_REACH
+    best, found = None, guess
+    for (_, before), (after, _) in zip(spoken, spoken[1:]):
+        if after <= before:
+            continue
+        middle = (before + after) / 2
+        if abs(middle - guess) > reach:
+            continue
+        # הפער הגדול ביותר בטווח: שם ההפסקה אמיתית ולא נשימה
+        width = after - before
+        if best is None or width > best:
+            best, found = width, middle
+    if best is not None and found != guess:
+        log.debug("החיתוך הוזז מ-%.2f ל-%.2f, אל שקט של %.2fש",
+                  guess, found, best)
+    return found
+
+
+def split_long_cues(cues: list["Cue"], fps: float = 24.0) -> int:
+    """מפצל כתובית ארוכה שמחזיקה כמה משפטים. מחזיר כמה פוצלו.
+
+    ‏split_overlong מפצל לפי רוחב בלבד — כתובית שאינה נכנסת בשתי
+    שורות. כתובית שנכנסת ברוחב אבל נמתחת על שבע שניות ומכילה שלושה
+    משפטים עוברת אותו בשלום, והצופה רואה על המסך דבר שייאמר רק בעוד
+    עשרים שניות. נמדד מול תרגום אולפן של אותו סרט: 14 כתוביות כאלה
+    אצלנו מול אחת אצלם.
+
+    הזמן מתחלק לפי מספר התווים, שזו קירוב טוב לזמן הדיבור, והפיצול
+    נעשה רק בגבול משפט
+    """
+    least = config.SRT_MIN_DURATION
+    gone = 0
+    index = 0
+    while index < len(cues):
+        cue = cues[index]
+        span = cue.end - cue.start
+        flat = " ".join((cue.text or "").split())
+        parts = _SENTENCE_END.split(flat)
+        if (span < config.SRT_SPLIT_FROM or len(parts) < 2
+                or span < least * 2):
+            index += 1
+            continue
+
+        # הגבול הקרוב ביותר לאמצע, לפי תווים
+        middle = len(flat) / 2
+        best, seen, mark = None, 0, 0
+        for part in parts[:-1]:
+            seen += len(part) + 1
+            if best is None or abs(seen - middle) < abs(mark - middle):
+                best, mark = part, seen
+        head, tail = flat[:mark].strip(), flat[mark:].strip()
+        if not head or not tail:
+            index += 1
+            continue
+
+        share = len(head) / max(1, len(head) + len(tail))
+        cut = snap_to_silence(cue, cue.start + span * share)
+        if cut - cue.start < least or cue.end - cut < least:
+            index += 1
+            continue
+
+        second = Cue(index=0, start=cut, end=cue.end, text=wrap(tail))
+        cue.end = cut
+        cue.text = wrap(head)
+        cues.insert(index + 1, second)
+        gone += 1
+        # לא מקדמים: הכתובית הראשונה עשויה להתפצל שוב
+    return gone
 
 
 def split_overlong(cues: list["Cue"], fps: float = 24.0) -> int:

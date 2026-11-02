@@ -3379,6 +3379,38 @@ def _cast_table():
         "הדמויות והשחקנים שחיפשת ברשת" in body
 
 
+@check("כתובית ארוכה מתפצלת בשקט שבין מילים, ולא באמצע דיבור")
+def _split_at_silence():
+    from zovexsub import srt
+
+    # דיבור עד 2.0, שקט עד 3.4, דיבור שוב. חלוקה לפי תווים לבדה
+    # יכולה ליפול בדיוק באמצע מילה — נמדד אצל המשתמש: "הוא חותך
+    # בחצי של מילה בשורה שהייתה תקינה"
+    words = [(0.0, 0.9), (1.0, 2.0), (3.4, 4.2), (4.3, 5.0), (5.1, 7.0)]
+    cue = srt.Cue(0, 0.0, 7.0, "משפט ראשון. משפט שני כאן.", words=words)
+
+    for guess in (2.4, 2.9, 3.2):
+        assert abs(srt.snap_to_silence(cue, guess) - 2.7) < 0.01, guess
+    # ניחוש רחוק מכל שקט נשאר במקומו
+    assert srt.snap_to_silence(cue, 5.05) == 5.05
+    # ובלי תזמוני מילים אין מה להצמיד אליו
+    bare = srt.Cue(0, 0.0, 7.0, "טקסט")
+    assert srt.snap_to_silence(bare, 3.0) == 3.0
+
+    # והפיצול עצמו נופל שם, בגבול משפט — ולכן לעולם לא באמצע מילה
+    cues = [srt.Cue(0, 0.0, 7.0, "משפט ראשון. משפט שני כאן.", words=words)]
+    assert srt.split_long_cues(cues) == 1
+    assert len(cues) == 2
+    assert abs(cues[0].end - 2.7) < 0.01, cues[0].end
+    assert cues[0].end == cues[1].start
+    assert cues[0].text.strip() == "משפט ראשון."
+    assert cues[1].text.strip() == "משפט שני כאן."
+
+    # כתובית קצרה או חד-משפטית אינה נגעת
+    short = [srt.Cue(0, 0.0, 2.0, "משפט אחד בלבד.", words=words)]
+    assert srt.split_long_cues(short) == 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
