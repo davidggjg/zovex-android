@@ -3618,6 +3618,38 @@ def _honours_googles_retry_delay() -> None:
     assert 30 <= gemini.GEMINI_WAIT_CAP <= 180, gemini.GEMINI_WAIT_CAP
 
 
+@check("לולאת הפרומפט נותנת ציון, ומשווה רק מה שהשתנה")
+def _harness_scores_translations() -> None:
+    import harness
+    from zovexsub import stt
+    segs = [stt.Segment(index=i, start=i * 2.0, end=i * 2.0 + 1.8, text=t)
+            for i, t in enumerate(["Hello there", "How are you",
+                                   "Come here now"])]
+    clean = harness.grade(segs, ["שלום לך.", "מה שלומך?", "בוא הנה."])
+    assert clean.points == 0.0, clean.counts
+
+    # כל פגם שהפרומפט אחראי לו נתפס ומקבל משקל
+    broken = harness.grade(segs, ["שלום לך.", "How are you",
+                                  "בוא הנה, קחי את זה."])
+    assert broken.points > 0, broken.counts
+    assert "לא תורגם" in broken.counts, broken.counts
+    assert "מגדר מתנגש" in broken.counts, broken.counts
+    # שורה שלא תורגמה שוקלת יותר מכל פגם אחר: זו אנגלית על המסך
+    assert harness.WEIGHT["לא תורגם"] == max(harness.WEIGHT.values())
+
+    # הציון מנורמל למאה שורות, אחרת אי אפשר להשוות בין קטעים
+    longer = harness.grade(segs * 2, ["שלום לך.", "How are you",
+                                      "בוא הנה."] * 2)
+    one = harness.grade(segs, ["שלום לך.", "How are you", "בוא הנה."])
+    assert abs(longer.points - one.points) < 0.01, (longer.points, one.points)
+
+    # הבסיס חייב להיות בין הווריאציות, אחרת אין מול מה להשוות
+    assert harness.VARIANTS["base"] == "", harness.VARIANTS["base"]
+    # וכל ווריאציה היא תוספת לבסיס, לא שכתוב שלו
+    for name, extra_text in harness.VARIANTS.items():
+        assert name == "base" or extra_text.strip(), name
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

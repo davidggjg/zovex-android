@@ -643,15 +643,15 @@ async def build_hebrew(segments: list[Segment], language: str,
 
 async def _translate_all(segments: list[Segment], language: str, notes: str,
                          on_step=None, genders: str = "") -> list[str]:
-    # שורות שלא תורגמו אחרי כל הניסיונות. נאספות כאן כדי להיאמר
-    # למשתמש בסוף, במקום לצאת אליו כאנגלית בלי הסבר
-    failed: list[int] = []
     """מתרגם את כל החלונות במקביל.
 
     כל חלון עומד בפני עצמו: ההקשר שלו נלקח משורות המקור שלפניו ואחריו,
     ולא מתרגום של חלון קודם. לכן אין סיבה להריץ אותם בזה אחר זה, ומפתח
     לכל חלון מנצל את כל המפתחות במקום אחד.
     """
+    # שורות שלא תורגמו אחרי כל הניסיונות. נאספות כאן כדי להיאמר
+    # למשתמש בסוף, במקום לצאת אליו כאנגלית בלי הסבר
+    failed: list[int] = []
     out: list[str] = [""] * len(segments)
     schema = {
         "type": "object",
