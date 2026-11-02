@@ -3441,6 +3441,74 @@ def _split_on_gap():
     assert config.SRT_GAP_SPLIT > 0
 
 
+@check("audit תופס כל פגם שנטען בכוונה")
+def _audit_catches_planted_faults() -> None:
+    import audit
+    text = "\n\n".join([
+        "1\n00:00:01,000 --> 00:00:03,200\nשלום, מה קורה פה?",
+        # קצרה, מהירה, חופפת, והזיה של מילה חוזרת
+        "2\n00:00:03,300 --> 00:00:03,500\nמהר מדי מדי מדי מדי",
+        # ציווי בזכר ליד ציווי בנקבה — שגיאה תמיד, בלי קשר למי הדובר
+        "3\n00:00:03,450 --> 00:00:09,000\nבוא הנה, קחי את זה",
+        # נגמרת במילת קישור שמחייבת המשך
+        "4\n00:00:09,200 --> 00:00:11,000\nזה הבית של",
+        "5\n00:00:11,200 --> 00:00:13,000\nאבא שלי",
+        # ארוכה מעל שבע שניות
+        "6\n00:00:13,200 --> 00:00:23,000\nארוכה מדי בהרבה",
+        # זמן הפוך
+        "7\n00:00:31,000 --> 00:00:29,000\nזמן הפוך",
+    ])
+    cues = srt.parse(text)
+    assert len(cues) == 7, len(cues)
+
+    found = (audit.check_timing(cues, cps_limit=17.0, fps=24.0,
+                                min_dur=1.0, max_dur=7.0)
+             + audit.check_layout(cues, line_limit=42, max_lines=2)
+             + audit.check_language(cues)
+             + audit.check_gender(cues)
+             + audit.check_content(cues))
+    kinds = {f.kind for f in found}
+    for want in ("קצרה מדי", "מהירה לקריאה", "חפיפה", "הזיה",
+                 "מגדר מתנגש", "חיתוך באמצע צירוף", "ארוכה מדי",
+                 "זמן הפוך"):
+        assert want in kinds, f"{want} לא נתפס · נמצאו {sorted(kinds)}"
+
+    # והעיקר: הכתובית התקינה הראשונה אינה מייצרת שום התראה
+    assert not [f for f in found if f.index == 1], \
+        [f.kind for f in found if f.index == 1]
+
+
+@check("audit לא מתריע על קובץ תקין")
+def _audit_quiet_on_clean_file() -> None:
+    import audit
+    # שלוש כתוביות בתקן: מתחת ל-42 תווים, משך סביר, רווח של שני
+    # פריימים ומעלה, בלי מילת קישור תלויה בסוף
+    text = "\n\n".join([
+        "1\n00:00:01,000 --> 00:00:03,500\nבוקר טוב, איך ישנת?",
+        "2\n00:00:03,600 --> 00:00:06,000\nלא רע, תודה ששאלת.",
+        "3\n00:00:06,200 --> 00:00:09,000\nאני הולך לעבודה עכשיו.",
+    ])
+    cues = srt.parse(text)
+    found = (audit.check_timing(cues, cps_limit=17.0, fps=24.0,
+                                min_dur=1.0, max_dur=7.0)
+             + audit.check_layout(cues, line_limit=42, max_lines=2)
+             + audit.check_language(cues)
+             + audit.check_gender(cues)
+             + audit.check_content(cues))
+    assert not found, [(f.kind, f.detail) for f in found]
+
+
+@check("audit מודד קצב קריאה כמו שהתקן מודד")
+def _audit_measures_reading_speed() -> None:
+    import audit
+    # עשרים תווים בשתי שניות = עשרה תווים לשנייה
+    cue = srt.Cue(1, 0.0, 2.0, "א" * 20)
+    assert abs(audit._cps(cue) - 10.0) < 0.01, audit._cps(cue)
+    # סימני כיווניות אינם תווים לצורך קריאה
+    marked = srt.Cue(1, 0.0, 2.0, "\u202b" + "א" * 20 + "\u202c")
+    assert abs(audit._cps(marked) - 10.0) < 0.01, audit._cps(marked)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
