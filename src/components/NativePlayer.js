@@ -2,8 +2,9 @@ import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {ltrRow, pinLeft, pinRight, t} from '../i18n';
 import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image,
-  PanResponder, Pressable,
+  PanResponder, Pressable, Animated, Easing,
 } from 'react-native';
+import {nextEpLead} from '../utils/nextEpLead';
 // ExoPlayer. ניסיון המעבר ל-libVLC בוטל: הוא הקריס בלחיצה על פליי, וגם
 // אחרי שאותר ותוקן בו באג אמיתי (ראה scripts/fix-vlc-autoplay-crash.sh)
 // הוא קרס שוב. בלי adb אין דרך לנפות קריסה נייטיבית בלי לנחש, וכל ניחוש
@@ -183,7 +184,31 @@ export default function NativePlayer({
     try { ref.current && ref.current.seek(v); } catch (_) {}
   };
 
-  const skip = d => { seekTo(posRef.current + d); poke(); };
+  // ── חיווי הדילוג ±10 ─────────────────────────────────────────────────────
+  //
+  // עד כה בנגן הזה לא היה שום חיווי בכלל: לוחצים, הסרט קופץ, וזה הכול.
+  // בנגן ה-WebView היה ריבוע עם "▶▶" ו-"+10 שניות" — בדיוק מה שנראה
+  // זול. שני הנגנים מקבלים עכשיו אותו חיווי: דיסקית עגולה שקופה בצד שאליו
+  // דילגנו, עם אותו אייקון חץ-מעגלי שעל הכפתור שנלחץ.
+  // Animated.Value אחד נשלט דרך useRef, כדי שלא ייבנה מחדש בכל ציור.
+  const [skipSide, setSkipSide] = useState(0);   // ‎-1 אחורה, 1 קדימה, 0 כבוי
+  const skipAnim = useRef(new Animated.Value(0)).current;
+  const skipTimer = useRef(null);
+
+  const flashSkip = useCallback(dir => {
+    setSkipSide(dir);
+    skipAnim.setValue(0);
+    Animated.timing(skipAnim, {
+      toValue: 1, duration: 620, easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+    if (skipTimer.current) clearTimeout(skipTimer.current);
+    skipTimer.current = setTimeout(() => setSkipSide(0), 620);
+  }, [skipAnim]);
+
+  useEffect(() => () => { if (skipTimer.current) clearTimeout(skipTimer.current); }, []);
+
+  const skip = d => { seekTo(posRef.current + d); flashSkip(d > 0 ? 1 : -1); poke(); };
 
   // סרגל ההתקדמות. PanResponder ולא Slider חיצוני — אין ספריית slider
   // בפרויקט, והוספת תלות בשביל פס אחד לא מוצדקת.
@@ -268,6 +293,15 @@ export default function NativePlayer({
   }, [isLive, ready, retryKey]);
 
   const frac = dur > 0 ? Math.max(0, Math.min(1, pos / dur)) : 0;
+
+  // ── חלון "הפרק הבא" ──────────────────────────────────────────────────────
+  //
+  // עד כה הכפתור הקטן בסרגל התחתון היה דלוק מהשנייה הראשונה של הפרק ועד
+  // סופו, וזה לא מה שהוא אמור להיות. הכרטיס עולה רק בחלון שבאמת מתאים לו
+  // — ראה src/utils/nextEpLead.js לחישוב ולמדידות שמאחוריו — ואותו חישוב
+  // בדיוק רץ גם בנגן ה-WebView, כדי ששניהם יתנהגו זהה.
+  const nearEnd = !isLive && hasNext && dur > 30 && pos > 0 &&
+                  (dur - pos) <= nextEpLead(dur);
 
   const curSrc = vtSrc || src || '';
   const liveHls = isLive && !NOT_HLS.test(curSrc);
@@ -416,10 +450,45 @@ export default function NativePlayer({
         onLongPress={() => setHeld(true)}
         delayLongPress={450}
         onPressOut={() => setHeld(false)} />
+      {/* ── תג ה-×2 ───────────────────────────────────────────────────────────
+          היה: מלבן שחור אטום עם "×2 ⏩". ה-⏩ הוא אימוג'י — כל מכשיר מצייר
+          אותו בצבע ובגודל שלו, לרוב כריבוע כתום — ולכן זה נראה כמו מדבקה
+          שהודבקה על הסרט ולא כמו חלק מהנגן. עכשיו: גלולה שקופה בגובה קבוע
+          עם "2x" בגופן של הנגן ושני שברונים מצוירים (אותם משולשים של
+          כפתור ההפעלה), בלי שום תו שתלוי בגופן המכשיר. */}
       {held && (
         <View style={styles.holdBadge} pointerEvents="none">
-          <Text style={styles.holdTxt}>×2 ⏩</Text>
+          <Text style={styles.hold2x}>2x</Text>
+          <View style={styles.holdChevs}>
+            <Text style={styles.holdChev}>▶</Text>
+            <Text style={[styles.holdChev, styles.holdChev2]}>▶</Text>
+          </View>
         </View>
+      )}
+
+      {/* ── חיווי הדילוג ─────────────────────────────────────────────────── */}
+      {skipSide !== 0 && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.skipDisc,
+            skipSide > 0 ? styles.skipDiscR : styles.skipDiscL,
+            {
+              opacity: skipAnim.interpolate({
+                inputRange: [0, 0.18, 0.62, 1], outputRange: [0, 1, 1, 0],
+              }),
+              transform: [{
+                scale: skipAnim.interpolate({
+                  inputRange: [0, 0.18, 0.62, 1], outputRange: [0.82, 1, 1, 1.12],
+                }),
+              }],
+            },
+          ]}>
+          {/* האייקון עצמו לא מסתובב: הוא כולל את הספרות "10" במרכזו, וסיבוב
+              היה מטה אותן. התנועה היא של הדיסקית, והאייקון נשאר קריא. */}
+          <Image source={skipSide > 0 ? FWD10 : BACK10} resizeMode="contain"
+            style={styles.skipDiscIcon} />
+        </Animated.View>
       )}
 
       {!ready && (
@@ -488,8 +557,11 @@ export default function NativePlayer({
                 ? <Text style={[styles.time, {color: '#ff4d5e', fontWeight: '800'}]}>● LIVE</Text>
                 : <Text style={styles.time}>{fmt(pos)} / {fmt(dur)}</Text>}
               <View style={[styles.bright, ltrRow()]}>
-                {hasNext && (
-                  <TouchableOpacity style={styles.nextBtn} onPress={onNext}>
+                {/* ‎!nearEnd‎: בחלון שלקראת הסוף הכרטיס הגדול ממילא על המסך,
+                    ושני כפתורי "פרק הבא" בבת אחת זה רעש. מחוץ לחלון הכפיל
+                    הקטן נשאר — הוא הדרך לדלג קדימה באמצע פרק. */}
+                {hasNext && !nearEnd && (
+                  <TouchableOpacity style={styles.nextBtn} onPress={() => onNext && onNext()}>
                     <Text style={styles.nextTxt}>
                       {nextLabel ? `${t('player.nextLabel')}: ${nextLabel}` : t('player.nextEpisode')}
                     </Text>
@@ -530,6 +602,22 @@ export default function NativePlayer({
         </>
       )}
 
+      {/* ── כרטיס "המשך לפרק הבא" ──────────────────────────────────────────
+          מחוץ ל-{shown} בכוונה: הפקדים נעלמים אחרי ארבע שניות, והכרטיס
+          הזה צריך להישאר עד סוף הפרק — כמו בנטפליקס. */}
+      {nearEnd && (
+        <View style={styles.nextCard}>
+          <Text style={styles.nextCardLbl}>{t('player.nextLabel')}</Text>
+          {!!nextLabel && (
+            <Text style={styles.nextCardTitle} numberOfLines={1}>{nextLabel}</Text>
+          )}
+          <TouchableOpacity style={styles.nextCardBtn} activeOpacity={0.85}
+            onPress={() => onNext && onNext()}>
+            <Text style={styles.nextCardBtnTxt}>{t('player.nextEpisode')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {debug && !!diag && (
         <View style={styles.diag} pointerEvents="none">
           <Text style={styles.diagTxt}>{diag}</Text>
@@ -558,10 +646,43 @@ const styles = StyleSheet.create({
   sheetTxt: {color: '#e8eaed', fontSize: 15},
   sheetTxtSel: {color: '#8db4ff', fontWeight: '700'},
   // תג שמופיע כל עוד מחזיקים — משוב שהמהירות אכן השתנתה.
-  holdBadge: {position: 'absolute', top: 22, alignSelf: 'center', zIndex: 60,
-              backgroundColor: 'rgba(0,0,0,0.72)', paddingVertical: 7,
-              paddingHorizontal: 16, borderRadius: 20},
-  holdTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
+  holdBadge: {position: 'absolute', top: 26, alignSelf: 'center', zIndex: 60,
+              flexDirection: 'row', alignItems: 'center', height: 34,
+              paddingHorizontal: 15, borderRadius: 999,
+              backgroundColor: 'rgba(18,18,20,0.72)',
+              borderWidth: StyleSheet.hairlineWidth,
+              borderColor: 'rgba(255,255,255,0.16)'},
+  hold2x: {color: '#fff', fontSize: 14, fontWeight: '800', letterSpacing: 0.6},
+  holdChevs: {flexDirection: 'row', marginLeft: 8},
+  holdChev: {color: '#fff', fontSize: 11, lineHeight: 13},
+  holdChev2: {marginLeft: -2, opacity: 0.55},
+
+  // דיסקית הדילוג. 74 נקודות, מרוכזת אנכית, 7% מהקצה — אותם מספרים של
+  // נגן ה-WebView, כדי ששני הנגנים יראו זהים.
+  skipDisc: {position: 'absolute', top: '50%', marginTop: -37, zIndex: 20,
+             width: 74, height: 74, borderRadius: 37,
+             alignItems: 'center', justifyContent: 'center',
+             backgroundColor: 'rgba(18,18,20,0.5)',
+             borderWidth: StyleSheet.hairlineWidth,
+             borderColor: 'rgba(255,255,255,0.1)'},
+  skipDiscL: {left: '7%'},
+  skipDiscR: {right: '7%'},
+  skipDiscIcon: {width: 40, height: 40},
+
+  // כרטיס הפרק הבא. פינה תחתונה-ימנית, מעל הסרגל התחתון.
+  nextCard: {position: 'absolute', right: 16, bottom: 92, zIndex: 40,
+             maxWidth: '62%', minWidth: 190, paddingHorizontal: 16,
+             paddingVertical: 13, borderRadius: 14,
+             backgroundColor: 'rgba(14,14,16,0.92)',
+             borderWidth: StyleSheet.hairlineWidth,
+             borderColor: 'rgba(255,255,255,0.12)'},
+  nextCardLbl: {color: 'rgba(255,255,255,0.5)', fontSize: 11, marginBottom: 3,
+                textAlign: 'right'},
+  nextCardTitle: {color: '#fff', fontSize: 13, fontWeight: '700',
+                  textAlign: 'right'},
+  nextCardBtn: {marginTop: 10, backgroundColor: ACCENT, paddingVertical: 9,
+                borderRadius: 9, alignItems: 'center'},
+  nextCardBtnTxt: {color: '#fff', fontSize: 13, fontWeight: '700'},
   wrap: {flex: 1, backgroundColor: '#000'},
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     justifyContent: 'center', alignItems: 'center'},

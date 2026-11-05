@@ -14,6 +14,8 @@ import {saveProgress, saveHistory, loadProgress} from '../api/movies';
 // Google Play Services המודול של Cast לא ייטען בכלל.
 import SHAKA_PLAYER_SOURCE from '../assets/shakaPlayerSource';
 import HLS_JS_SOURCE from '../assets/hlsJsSource';
+import {TG_PROXY, TG_CHANNELS, cleanVideoRef} from '../utils/videoSource';
+import {nextEpLead, NEXT_EP_MIN_LEAD, NEXT_EP_MAX_LEAD, NEXT_EP_LEAD_RATIO} from '../utils/nextEpLead';
 
 // Live streams used to feel like they hung forever on some networks. Root
 // cause: the player waited on fetching shaka-player.compiled.js (~560KB) and,
@@ -30,32 +32,9 @@ function escapeForInlineScript(js) {
 
 const {PipModule} = NativeModules;
 
-const TG_PROXY = 'https://zovex.duckdns.org';
-
-// Maps channel names → numeric IDs (same as CustomVideoPlayer.jsx)
-const TG_CHANNELS = {zove8: '7282626428', ZOVE8: '7282626428'};
-
-// שתי צורות שבורות שקיימות בקטלוג בפועל, ושתיהן ניתנות לשחזור ודאי:
-//
-//   <iframe src="https://…"></iframe>   הודבק קוד ההטמעה במקום הכתובת.
-//                                       ב"פאוור קאפל" 7 פרקים שמורים כתובת
-//                                       נקייה ו-3 כ-iframe שלם — אותו יעד
-//                                       בדיוק, ולכן החילוץ אינו ניחוש.
-//   ttps://…                            נבלעה ה-h הראשונה. ב"הכבוד של אשרף"
-//                                       9 פרקים כאלה; הם ניצלו במקרה כי זיהוי
-//                                       dailymotion מסתכל על הדומיין ולא על
-//                                       הסכימה, אבל אותה תקלה בכתובת ישירה
-//                                       שוברת אותה לגמרי.
-//
-// מנקים כאן, בכניסה, כדי שכל ענפי הזיהוי שלמטה יקבלו כתובת אמיתית.
-function cleanVideoRef(raw) {
-  let v = (raw || '').trim();
-  if (!v) return '';
-  const iframe = v.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
-  if (iframe) v = iframe[1].trim();
-  v = v.replace(/^(?:ttps?):\/\//i, m => (m.toLowerCase().startsWith('ttps') ? 'https://' : 'http://'));
-  return v.replace(/&amp;/g, '&');
-}
+// TG_PROXY / TG_CHANNELS / cleanVideoRef עברו ל-src/utils/videoSource.js:
+// בדיקת ההורדה הייתה חייבת את אותה לוגיקה בדיוק, והעתק שני היה נפרד
+// מהראשון ביום הראשון. ראה ההערה שם.
 
 // ── מסלול תיקון-קול ─────────────────────────────────────────────────────────
 // ממיר קישור /stream לקישור /vh — HLS עם הווידאו כמו שהוא (-c:v copy, אפס
@@ -306,7 +285,7 @@ const escHtml = s => String(s == null ? '' : s)
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const escAttr = s => escHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-function buildPlayerHtml(movie, src, startTime, isLive, hasNext, isTv) {
+function buildPlayerHtml(movie, src, startTime, isLive, hasNext, isTv, nextEpTitle) {
   const movieJson = JSON.stringify(movie).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   const hls = isHlsUrl(src);
   const iframe = isIframeUrl(src, movie.type || 'direct');
@@ -347,6 +326,14 @@ function postMsg(m){try{window.ReactNativeWebView&&window.ReactNativeWebView.pos
 @keyframes fadeInOut{0%{opacity:0;transform:translateY(-50%) scale(.7)}25%{opacity:1;transform:translateY(-50%) scale(1.1)}70%{opacity:1}100%{opacity:0}}
 @keyframes resumeFade{0%{opacity:0;transform:translateX(-50%) translateY(-8px)}15%{opacity:1;transform:translateX(-50%) translateY(0)}80%{opacity:1}100%{opacity:0}}
 @keyframes liveDot{0%,100%{box-shadow:0 0 0 0 rgba(229,9,20,.6)}50%{box-shadow:0 0 0 6px rgba(229,9,20,0)}}
+/* דילוג: הדיסקית נכנסת רכה וגדלה קלות ביציאה — אותה תנועה שיש לנגן
+   הנייטיב, כדי ששני הנגנים יראו זהים. אין יותר ריבוע קופץ. */
+@keyframes skipPulse{0%{opacity:0;transform:scale(.82)}18%{opacity:1;transform:scale(1)}62%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.12)}}
+@keyframes skipRingL{0%{transform:rotate(0)}100%{transform:rotate(-38deg)}}
+@keyframes skipRingR{0%{transform:rotate(0)}100%{transform:rotate(38deg)}}
+@keyframes holdIn{0%{opacity:0;transform:translateX(-50%) translateY(-6px)}100%{opacity:1;transform:translateX(-50%) translateY(0)}}
+@keyframes holdChev{0%,100%{opacity:.35}50%{opacity:1}}
+@keyframes nextIn{0%{opacity:0;transform:translateY(14px)}100%{opacity:1;transform:translateY(0)}}
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100%;height:100%;background:#000;overflow:hidden}
 #wrap{position:relative;width:100vw;height:100vh;background:#000;overflow:hidden}
@@ -402,27 +389,50 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
 #ratelbl{position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);
   font-size:9px;font-weight:700;color:#8db4ff;letter-spacing:-0.3px}
 #ratebtn{position:relative}
-/* תג שמופיע כל עוד מחזיקים את המסך — משוב שהמהירות אכן השתנתה. */
-#holdbadge{display:none;position:absolute;top:22px;left:50%;transform:translateX(-50%);
-  z-index:60;background:rgba(0,0,0,0.72);color:#fff;font-size:15px;font-weight:700;
-  padding:7px 16px;border-radius:20px;letter-spacing:0.5px}
-#holdbadge.on{display:block}
+/* ── תג ה-×2 ───────────────────────────────────────────────────────────────
+   היה: מלבן שחור אטום עם "×2 ⏩" — אימוג'י שכל מכשיר מצייר אחרת, ולכן
+   נראה כמו מדבקה שהודבקה על הסרט. עכשיו: גלולה שקופה-מטושטשת בגובה קבוע,
+   עם "2x" בספרות הגופן עצמו ושני שברונים מצוירים שמהבהבים — אותה שפה
+   עיצובית של שאר הפקדים, ובלי שום תו שתלוי בגופן המכשיר. */
+#holdbadge{display:none;position:absolute;top:26px;left:50%;transform:translateX(-50%);
+  z-index:60;background:rgba(18,18,20,.62);-webkit-backdrop-filter:blur(14px);
+  backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.14);
+  box-shadow:0 6px 22px rgba(0,0,0,.42);border-radius:999px;padding:0 15px;height:34px;
+  align-items:center;gap:8px}
+#holdbadge.on{display:flex;animation:holdIn .18s ease-out forwards}
+#holdbadge .hb2x{color:#fff;font:800 14px/1 Arial;letter-spacing:.6px}
+#holdbadge .hbchev{display:flex;align-items:center;gap:1px}
+#holdbadge .hbchev svg:nth-child(1){animation:holdChev .9s ease-in-out infinite}
+#holdbadge .hbchev svg:nth-child(2){animation:holdChev .9s ease-in-out .15s infinite}
 #ctrls{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
   display:flex;align-items:center;gap:32px;z-index:20;transition:opacity .3s}
 .cbtn{background:none;border:none;color:#fff;width:62px;height:62px;border-radius:50%;cursor:pointer;
   display:flex;align-items:center;justify-content:center;position:relative;-webkit-tap-highlight-color:transparent;outline:none}
 /* המספר יושב בתוך ה-SVG עצמו, ולכן אין יותר .num למקם */
-#skipanim{position:absolute;top:40%;z-index:20;animation:fadeInOut .7s ease forwards;display:none}
-.skipbox{background:rgba(0,0,0,.55);backdrop-filter:blur(8px);border-radius:18px;padding:14px 22px;
-  display:flex;flex-direction:column;align-items:center;gap:4px;border:1px solid rgba(255,255,255,.18)}
-.skipbox span{font:700 13px Arial;color:#fff}
-#nextcard{display:none;position:absolute;bottom:88px;right:16px;z-index:40;
-  background:rgba(10,10,10,.92);border:1px solid rgba(255,255,255,.18);border-radius:14px;
-  padding:14px 18px;direction:rtl;min-width:180px}
-#nextcard .nclbl{color:rgba(255,255,255,.55);font:11px Arial;margin-bottom:4px}
-#nextcard .nctitle{color:#fff;font:700 13px/1.3 Arial}
-#nextcard .ncbtn{display:block;margin-top:10px;background:#e91e8c;border:none;color:#fff;
-  padding:8px 0;border-radius:8px;font:700 13px Arial;cursor:pointer;width:100%;text-align:center}
+/* ── חיווי הדילוג ±10 ─────────────────────────────────────────────────────
+   היה: ריבוע עם "▶▶" ו-"+10 שניות" מתחתיו — שני אימוג'ים וקופסה, בדיוק
+   מה שנראה זול. עכשיו: דיסקית עגולה שקופה עם אותו אייקון חץ-מעגלי של
+   כפתורי הדילוג (אותה גאומטריה בדיוק: קשת סביב (24,24) והמספר במרכז),
+   שמסתובב קלות לכיוון הדילוג. העין רואה את אותו סמל שנלחץ, זז. */
+#skipanim{position:absolute;top:50%;margin-top:-37px;z-index:20;display:none;
+  width:74px;height:74px;border-radius:50%;background:rgba(18,18,20,.5);
+  -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.1);align-items:center;justify-content:center}
+#skipanim.on{display:flex;animation:skipPulse .62s cubic-bezier(.22,.61,.36,1) forwards}
+#skipanim svg{width:40px;height:40px}
+#nextcard{display:none;position:absolute;bottom:92px;right:16px;z-index:40;
+  background:rgba(14,14,16,.9);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 32px rgba(0,0,0,.5);
+  border-radius:14px;padding:13px 16px;direction:rtl;min-width:190px;max-width:62%}
+#nextcard.on{display:block;animation:nextIn .24s ease-out forwards}
+#nextcard .nclbl{color:rgba(255,255,255,.5);font:11px Arial;letter-spacing:.3px;margin-bottom:3px}
+#nextcard .nctitle{color:#fff;font:700 13px/1.35 Arial;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+#nextcard .nctitle:empty{display:none}
+#nextcard .ncbtn{display:flex;align-items:center;justify-content:center;gap:7px;
+  margin-top:10px;background:#e91e8c;border:none;color:#fff;padding:9px 0;border-radius:9px;
+  font:700 13px Arial;cursor:pointer;width:100%;-webkit-tap-highlight-color:transparent}
+#nextcard .ncbtn:active{background:#c81878}
 #resumetoast{display:none;position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:50;
   background:rgba(0,0,0,.72);border-radius:20px;padding:8px 18px;color:#fff;font:600 13px Arial;
   white-space:nowrap;pointer-events:none;border:1px solid rgba(255,255,255,.15)}
@@ -466,14 +476,14 @@ video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;backgr
         </div>
       </div>
     </div>
-    <div id="skipanim"><div class="skipbox"><span id="skipicon"></span><span id="skiptext"></span></div></div>
-    ${hasNext ? `<div id="nextcard"><div class="nclbl">הפרק הבא</div><div class="nctitle" id="nexttitle"></div><button class="ncbtn" onclick="goNextEp()">המשך לפרק הבא ▶</button></div>` : ''}
+    <div id="skipanim"></div>
+    ${hasNext ? `<div id="nextcard"><div class="nclbl">הפרק הבא</div><div class="nctitle" id="nexttitle">${escHtml(nextEpTitle || '')}</div><button class="ncbtn" id="ncbtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="#fff"><polygon points="4,3 17,12 4,21"/><rect x="18" y="3" width="3" height="18" rx="1.2"/></svg><span>המשך לפרק הבא</span></button></div>` : ''}
     <div id="resumetoast"></div>
     <div id="ratesheet">
       <div class="rshead">מהירות הפעלה</div>
       <div class="rsopts" id="rsopts"></div>
     </div>
-    <div id="holdbadge">‏×2 ⏩</div>
+    <div id="holdbadge"><span class="hb2x">2x</span><span class="hbchev"><svg width="9" height="12" viewBox="0 0 9 12" fill="#fff"><polygon points="0,0 9,6 0,12"/></svg><svg width="9" height="12" viewBox="0 0 9 12" fill="#fff"><polygon points="0,0 9,6 0,12"/></svg></span></div>
   </div>
 </div>
 ${hls ? `<script>${escapeForInlineScript(SHAKA_PLAYER_SOURCE)}</script>
@@ -531,6 +541,13 @@ function _startRefresh(shakaPl){
 }
 
 var HAS_NEXT=${hasNext ? 'true' : 'false'};
+// ראה src/utils/nextEpLead.js — אותו חישוב בדיוק, כדי ששני הנגנים יציגו
+// את הכרטיס באותו רגע. נגזר מהאורך האמיתי כשהוא נודע, ולא מספר קבוע.
+var NEXT_LEAD_MIN=${NEXT_EP_MIN_LEAD}, NEXT_LEAD_MAX=${NEXT_EP_MAX_LEAD}, NEXT_LEAD_RATIO=${NEXT_EP_LEAD_RATIO};
+function nextLead(d){
+  if(!d||!isFinite(d)||d<=0)return NEXT_LEAD_MIN;
+  return Math.min(NEXT_LEAD_MAX,Math.max(NEXT_LEAD_MIN,Math.round(d*NEXT_LEAD_RATIO)));
+}
 var vid=null, dragging=false, hideTimer=null, ctrlsVisible=true, isFullscreen=false, nextShown=false;
 
 var overlay=document.getElementById('overlay');
@@ -591,16 +608,27 @@ function showCtrls(){
 
 function toggleCtrls(){if(ctrlsVisible){clearTimeout(hideTimer);hideCtrls();}else{showCtrls();}}
 function checkNextEp(){
-  if(!HAS_NEXT||nextShown||!vid||IS_LIVE)return;
+  if(!HAS_NEXT||!vid||IS_LIVE)return;
+  var card=document.getElementById('nextcard');
+  if(!card)return;
   var dur=usableDur(vid);if(!dur||dur<30)return;
-  if(dur-vid.currentTime<=300&&vid.currentTime>0){
-    nextShown=true;
-    var card=document.getElementById('nextcard');
-    if(card)card.style.display='block';
-    showCtrls();
-  }
+  // מוצג כשנכנסים לחלון ומוסתר כשיוצאים ממנו. קודם nextShown היה דלת
+  // אחת בלבד: גרירה אחורה השאירה את הכרטיס על המסך עד סוף הפרק.
+  var inWindow = vid.currentTime>0 && (dur-vid.currentTime)<=nextLead(dur);
+  if(inWindow===nextShown)return;
+  nextShown=inWindow;
+  card.classList.toggle('on',inWindow);
+  if(inWindow)showCtrls();
 }
 function goNextEp(){postMsg({type:'next_episode'});}
+// addEventListener ולא onclick בתוך ה-HTML: כל הסקריפט הזה עטוף ב-IIFE,
+// ולכן goNextEp אינה על window — ‎onclick="goNextEp()"‎ נפתר מול הסקופ
+// הגלובלי וזרק ReferenceError בכל לחיצה. זה היה **הכפתור המרכזי של
+// המשך-לפרק-הבא, מתחיל ועד סוף, בלי שום פעולה**.
+(function(){
+  var b=document.getElementById('ncbtn');
+  if(b)b.addEventListener('click',function(e){e.stopPropagation();goNextEp();});
+})();
 
 overlay.addEventListener('click',function(e){if(e.target===overlay)toggleCtrls();});
 showCtrls();
@@ -652,13 +680,21 @@ function skip(s){
   if(!vid)return;
   vid.currentTime=Math.max(0,vid.currentTime+s);
   var anim=document.getElementById('skipanim');
-  var icon=document.getElementById('skipicon');
-  var txt=document.getElementById('skiptext');
-  if(s>0){anim.style.right='6%';anim.style.left='';icon.textContent='▶▶';txt.textContent='+10 שניות';}
-  else{anim.style.left='6%';anim.style.right='';icon.textContent='◀◀';txt.textContent='-10 שניות';}
-  anim.style.display='block';
-  anim.style.animation='none';anim.offsetHeight;anim.style.animation='fadeInOut .7s ease forwards';
-  setTimeout(function(){anim.style.display='none';},700);
+  if(!anim)return;
+  // אותו חץ-מעגלי של כפתורי הדילוג, מסובב לכיוון הדילוג. ה-g הפנימי הוא
+  // מה שמסתובב, כדי שהמספר במרכז יישאר קריא ולא יתהפך איתו.
+  var arc='<path d="M 37.86 16 A 16 16 0 1 1 24 8" stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none"/><path d="M 24 3.5 L 30.5 8 L 24 12.5 Z" fill="#fff"/>';
+  var num='<text x="24" y="28" text-anchor="middle" font-family="Arial" font-size="14" font-weight="700" fill="#fff">10</text>';
+  if(s>0){
+    anim.style.right='7%';anim.style.left='';
+    anim.innerHTML='<svg viewBox="0 0 48 48" fill="none"><g style="transform-origin:24px 24px;animation:skipRingR .62s ease-out forwards">'+arc+'</g>'+num+'</svg>';
+  }else{
+    anim.style.left='7%';anim.style.right='';
+    anim.innerHTML='<svg viewBox="0 0 48 48" fill="none"><g style="transform-origin:24px 24px;animation:skipRingL .62s ease-out forwards"><g transform="scale(-1,1) translate(-48,0)">'+arc+'</g></g>'+num+'</svg>';
+  }
+  anim.classList.remove('on');anim.offsetHeight;anim.classList.add('on');
+  clearTimeout(skip._t);
+  skip._t=setTimeout(function(){anim.classList.remove('on');},620);
 }
 function doShare(){try{navigator.share&&navigator.share({title:MOVIE.title||'ZOVEX'});}catch{}}
 
@@ -1051,6 +1087,13 @@ export default function PlayerScreen({route, navigation}) {
   const webViewRef = useRef(null);
   const nextEpIdx = seriesEpisodes ? seriesEpisodes.findIndex(e => e.id === movie.id) : -1;
   const hasNext = nextEpIdx >= 0 && nextEpIdx < (seriesEpisodes?.length ?? 0) - 1;
+  // כותרת הפרק הבא, לכרטיס שבנגן ה-WebView. ‎#nexttitle‎ היה div ריק שאף
+  // קוד לא מילא, ולכן הכרטיס הראה "הפרק הבא" ומתחתיו שורה ריקה.
+  const nextEpTitle = hasNext
+    ? (seriesEpisodes[nextEpIdx + 1]?.episode_title
+       || (seriesEpisodes[nextEpIdx + 1]?.episode_number
+           ? `פרק ${seriesEpisodes[nextEpIdx + 1].episode_number}` : ''))
+    : '';
 
   // כשהתגלה שהקול נזרק, מנגנים את אותו פריט דרך /vh — מהמקום שבו הצופה
   // היה, לא מההתחלה.
@@ -1187,10 +1230,10 @@ export default function PlayerScreen({route, navigation}) {
     const iframe = isIframeUrl(s, movie.type || 'direct');
     return {
       src: s,
-      html: buildPlayerHtml(movie, s, at, isLive, hasNext, isTv),
+      html: buildPlayerHtml(movie, s, at, isLive, hasNext, isTv, nextEpTitle),
       isIframe: iframe,
     };
-  }, [movie, startTime, isLive, hasNext, isTv, audioFix, vtFix]);
+  }, [movie, startTime, isLive, hasNext, isTv, nextEpTitle, audioFix, vtFix]);
 
   // ── Chromecast: כפתור שידור לטלוויזיה ──
   // מוצג רק לתוכן ישיר (mp4/HLS) — לא ל-embeds (יוטיוב/דרייב/קלטורה).
@@ -1421,7 +1464,6 @@ export default function PlayerScreen({route, navigation}) {
   const episodeLabel = movie.episode_title
     ? `פרק ${movie.episode_number} - ${movie.episode_title}`
     : movie.episode_number ? `פרק ${movie.episode_number}` : '';
-  const nextEp = hasNext ? seriesEpisodes[nextEpIdx + 1] : null;
 
   return (
     <View style={styles.container}>
@@ -1483,7 +1525,7 @@ export default function PlayerScreen({route, navigation}) {
                    : vtFix ? vtFix.at
                    : nativeAudio ? nativeAudio.at : nativeStart}
           hasNext={hasNext}
-          nextLabel={nextEp?.episode_title || ''}
+          nextLabel={nextEpTitle}
           knownDuration={knownDuration}
           isLive={isLive}
           // כבוי. שורת האבחון עשתה את שלה — הקול עובד — ואין סיבה שצופה

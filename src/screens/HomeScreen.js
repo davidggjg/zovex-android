@@ -46,6 +46,7 @@ import {
   downloadItem,
   deleteDownload,
   preparePlayback,
+  purgeLegacyDownloads,
   downloadEntryToMovie,
   isItemDownloadable,
 } from '../api/downloads';
@@ -139,10 +140,20 @@ function DownloadControl({item, compact, downloadedIds, downloadingId, downloadP
 
   if (isThisDownloading) {
     const pct = Math.round((downloadProgress?.pct || 0) * 100);
-    // אין יותר שלב "מצפין" — הקובץ נשמר כמו שהוא והניגון מיידי. נשאר רק
-    // "מוריד", עם כמה סטטיסטיקות חיות: כמה מתוך כמה, מהירות, וזמן שנותר.
+    // שלב "מצפין" חזר, אבל הוא קצר: ההצפנה היא AES-256 בקוד נייטיב, כלומר
+    // שניות. הגרסה עם ה-XOR ב-JS לקחה ~30 דקות על קובץ של 1GB, ובדיוק לכן
+    // היא הוסרה בזמנו.
+    // בשלב ההורדה מוצגות סטטיסטיקות חיות: כמה מתוך כמה, מהירות, וזמן שנותר.
     // הקבצים גדולים (לרוב 1GB+) על קו איטי, ולכן האחוז לבדו יכול להיראות
     // תקוע — ספירת ה-MB והמהירות זזות תוך שנייה.
+    if (downloadProgress?.phase === 'encrypting') {
+      return (
+        <View style={[mdStyles.dlBtn, compact && mdStyles.dlBtnCompact]}>
+          <ActivityIndicator size="small" color={colors.primary} />
+          {!compact && <Text style={mdStyles.dlBtnTxt}>מצפין…</Text>}
+        </View>
+      );
+    }
     const mb = downloadProgress?.contentLength
       ? `${Math.round((downloadProgress.bytesWritten || 0) / 1048576)}/${Math.round(downloadProgress.contentLength / 1048576)}MB`
       : null;
@@ -1503,7 +1514,12 @@ export default function HomeScreen({navigation, route}) {
   const refreshDownloads = useCallback(() => {
     getDownloads().then(setDownloads).catch(() => {});
   }, []);
-  useEffect(() => { refreshDownloads(); }, [refreshDownloads]);
+  useEffect(() => {
+    // מנקה הורדות מדורות קודמים (XOR ישן, או וידאו שנשמר גלוי) לפני
+    // שמציגים את הרשימה, כדי שלא יוצג "הורד" על קובץ שאי אפשר לנגן
+    // ושאין סיבה שיישאר על המכשיר. ראה purgeLegacyDownloads.
+    purgeLegacyDownloads().catch(() => {}).then(refreshDownloads);
+  }, [refreshDownloads]);
   const downloadedIds = useMemo(() => new Set(downloads.map(d => d.id)), [downloads]);
 
   // חזרה מהנגן: לסרט בודד סוגרים את חלון הפרטים (אין לאן לחזור, וההשארה

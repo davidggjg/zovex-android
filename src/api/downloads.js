@@ -1,27 +1,38 @@
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import {NativeModules} from 'react-native';
+
+import {downloadableUrl} from '../utils/videoSource';
+
+const {SecureDownload} = NativeModules;
 
 // ── Offline downloads ────────────────────────────────────────────────────────
-// Downloaded videos are stored *as-is* under an obscure filename in the app's
-// private document directory - a location no other app (gallery, file manager,
-// etc.) can read on a non-rooted device, the same way Netflix and other
-// streaming apps keep offline downloads out of reach.
 //
-// Previous versions XOR-encrypted every file with an on-device key. The code's
-// own comment admitted it was "a deterrent, not real DRM - anyone who
-// reverse-engineers the app could recover the key." It added no real security
-// against that threat (the key sits on the same device), but it cost a fortune:
-// the XOR ran in pure JS with base64 round-trips and a per-byte loop, reading
-// and rewriting the whole file in 3MB chunks. On a 1GB file that was ~30
-// minutes to "encrypt" after the download, and ANOTHER ~30 minutes to decrypt
-// before playback could even start - which looked exactly like "offline
-// playback doesn't work." Dropping it makes finishing a download and starting
-// playback instant, while the private-storage hiding (the actual protection)
-// stays. If real DRM is ever needed it must be native (Widevine), never JS XOR.
+// שתי הגרסאות הקודמות לא הגנו על כלום:
+//
+//   1. XOR בייט-בייט ב-JavaScript עם מפתח ששכב על אותו מכשיר. ההערה בקוד
+//      הודתה בעצמה ש"זו הרתעה, לא DRM אמיתי". בנוסף הוא רץ בלולאה פר-בייט
+//      עם base64 הלוך ושוב: ~30 דקות להצפין קובץ של 1GB, ועוד ~30 לפענח
+//      לפני שאפשר היה בכלל ללחוץ הפעל.
+//   2. אחרי שהוסר: הקובץ נשמר **גלוי**. על מכשיר לא-רוּט אף אפליקציה אחרת
+//      לא קוראת את התיקייה הפרטית, אבל מכשיר מרוּט, גיבוי, או הוצאה של
+//      האפליקציה מהמכשיר — ומקבלים MP4 שלם ונקי.
+//
+// עכשיו ההצפנה היא נייטיב, עם מפתח שנעול בחומרה של המכשיר: מפתח-על
+// AES-256 שנוצר **בתוך** StrongBox/TEE ואין API שמוציא אותו (גם לא ל-root),
+// ומעליו מפתח נתונים אקראי לכל הורדה שנעטף בו ונשמר בכותרת הקובץ.
+// גוף הווידאו הוא AES-256-CTR. ראה
+// android/app/src/main/java/com/zovexapp/SecureDownloadModule.kt לפרטים,
+// ו-docs/offline-drm.md למה שחסר כדי להגיע ל-Widevine אמיתי.
+//
+// הניגון: אין רגע שבו קובץ מפוענח יושב על הדיסק. הפענוח זורם מול שרת
+// שמאזין רק על 127.0.0.1, מול אסימון אקראי חד-פעמי לאותה צפייה.
 
 const MANIFEST_KEY = 'zovex_downloads_manifest_v1';
-// שם מוסתר; רק סיומת וידאו כדי שהנגן/ExoPlayer יזהה מיכל. נשאר באחסון הפרטי.
 const DL_DIR = RNFS.DocumentDirectoryPath + '/zvxdl';
+// ‎.zvx‎ ולא ‎.mp4‎: הקובץ איננו MP4 — הוא כותרת ואחריה טקסט מוצפן. סיומת
+// שמשקרת רק גורמת לנגנים חיצוניים לנסות לפתוח אותו ולהיכשל.
+const encPathFor = id => `${DL_DIR}/${id}.zvx`;
 
 async function ensureDirs() {
   if (!(await RNFS.exists(DL_DIR))) await RNFS.mkdir(DL_DIR);
@@ -41,55 +52,89 @@ async function saveManifest(list) {
   await AsyncStorage.setItem(MANIFEST_KEY, JSON.stringify(list));
 }
 
-// נתיב הקובץ המקומי של פריט. תומך גם בכניסות ישנות (encPath) לצורך מחיקה,
-// אבל כניסות ישנות היו מוצפנות ולא ינוגנו — הן פשוט יורדו מחדש.
+// נתיב הקובץ המקומי של פריט, לכל דור של כניסות — ‎encPath‎ (XOR הישן),
+// ‎filePath‎ (התקופה שבה הקובץ נשמר גלוי) ו-‎securePath‎ (היום). משמש
+// למחיקה, שחייבת לעבוד על כל אחד מהם.
 function entryPath(entry) {
-  return entry.filePath || entry.encPath || null;
+  return entry.securePath || entry.filePath || entry.encPath || null;
 }
+
+// רק כניסה מוצפנת נחשבת זמינה לניגון. כניסה מדור קודם תיראה כלא-מורדת
+// ותורד מחדש — זה בדיוק מה שצריך לקרות: אין לנו דרך לנגן XOR ישן, ואין
+// שום סיבה להמשיך להחזיק קובץ גלוי על המכשיר.
+const isPlayable = m => !!(m && m.securePath);
 
 export async function getDownloads() {
   return loadManifest();
 }
 
+// ── ניקוי הורדות מדורות קודמים ───────────────────────────────────────────
+// כניסות ישנות מצביעות על קובץ XOR (encPath) או על וידאו גלוי (filePath).
+// אי אפשר לנגן אף אחד מהם במסלול החדש, ואין שום סיבה להשאיר וידאו גלוי
+// על המכשיר אחרי שהוספנו הצפנה — זו בדיוק הבעיה שתוקנה. מוחקים ומסירים
+// מהרשימה; הפריט פשוט יוצג כלא-מורד וניתן להורדה מחדש.
+//
+// נקרא פעם אחת בעליית האפליקציה. בטוח להיקרא שוב: אין מה למחוק בפעם השנייה.
+export async function purgeLegacyDownloads() {
+  const manifest = await loadManifest();
+  const legacy = manifest.filter(m => !isPlayable(m));
+  if (!legacy.length) return 0;
+  for (const entry of legacy) {
+    for (const f of [entry.filePath, entry.encPath, entry.posterLocalPath]) {
+      try { if (f && (await RNFS.exists(f))) await RNFS.unlink(f); } catch (_) {}
+    }
+  }
+  await saveManifest(manifest.filter(isPlayable));
+  return legacy.length;
+}
+
 export async function isDownloaded(id) {
   const list = await loadManifest();
-  return list.some(m => m.id === String(id) && m.filePath);
+  return list.some(m => m.id === String(id) && isPlayable(m));
 }
 
 export async function getDownloadedIds() {
   const list = await loadManifest();
-  return new Set(list.filter(m => m.filePath).map(m => m.id));
+  return new Set(list.filter(isPlayable).map(m => m.id));
 }
 
-// Downloadable only if we have a direct playable file URL (not an iframe
-// embed like YouTube/Vimeo/Drive/Kaltura - those can't be saved as a file).
+// ניתן להורדה רק כשיש כתובת שממנה אפשר לשמור קובץ. ההחלטה עצמה חיה
+// ב-src/utils/videoSource.js, יחד עם בניית הכתובת שמורידים ממנה בפועל.
+//
+// שתי תקלות שהיו כאן, ושתיהן נראו למשתמש אותו דבר — "לחלק מהפרקים בסדרה
+// יש כפתור הורדה ולחלק אין, בלי שום היגיון":
+//
+//   • טלגרם היה ברשימת החסומים יחד עם יוטיוב ודרייב. אבל כל הקטלוג כאן
+//     מגיע מטלגרם דרך השרת, שמגיש אותו כקובץ ב-/stream — כלומר הוא
+//     הדבר הכי ניתן להורדה שיש, והכפתור נעלם כמעט מכל פרק.
+//   • הבדיקה קראה את השדה הגולמי מהקטלוג, בלי cleanVideoRef. פרקים
+//     ששמורים כ-‎ttps://…‎ (נבלעה ה-h) או כקוד ‎<iframe>‎ שלם נפלו על
+//     ‎startsWith('http')‎ — ולכן אותו פרק בדיוק התנגן מצוין ולא היה
+//     אפשר להוריד אותו.
 export function isItemDownloadable(item) {
-  if (!item || item.is_live) return false;
-  const vid = (item.video_id || item.video_url || '').trim();
-  if (!vid.startsWith('http')) return false;
-  const nonDownloadableTypes = [
-    'youtube', 'drive', 'vimeo', 'dailymotion', 'streamable', 'rumble',
-    'archive', 'kan', 'okru', 'kaltura', 'jellyfin', 'telegram',
-  ];
-  if (nonDownloadableTypes.includes(item.type)) return false;
-  if (vid.includes('kaltura.com') || vid.includes('youtube.com') || vid.includes('youtu.be') ||
-      vid.includes('drive.google.com') || vid.includes('vimeo.com') || vid.includes('dailymotion.com') ||
-      vid.includes('t.me')) return false;
-  return true;
+  return !!downloadableUrl(item);
 }
 
 export async function downloadItem(item, onProgress) {
   await ensureDirs();
   const id = String(item.id);
-  const videoUrl = (item.video_url || item.video_id || '').trim();
-  if (!videoUrl.startsWith('http')) throw new Error('אין קישור וידאו ישיר להורדה');
+  // אותה כתובת בדיוק שהכפתור נשען עליה. קודם כאן נקרא השדה הגולמי, ולכן
+  // פריט טלגרם היה מנסה להוריד ‎t.me/…‎ — דף HTML, לא וידאו.
+  const videoUrl = downloadableUrl(item);
+  if (!videoUrl) throw new Error('אין קישור וידאו ישיר להורדה');
 
-  const filePath = `${DL_DIR}/${id}.mp4`;
+  if (!SecureDownload) {
+    // בלי המודול הנייטיב אין הצפנה, ושמירת וידאו גלוי על המכשיר היא בדיוק
+    // מה שתוקן כאן. עדיף להיכשל ולהגיד למה מאשר "להצליח" בלי הגנה.
+    throw new Error('רכיב ההצפנה אינו זמין בגרסה הזו — עדכן את האפליקציה');
+  }
+
+  const securePath = encPathFor(id);
   const partPath = `${DL_DIR}/${id}.part`;
   const posterPath = item.thumbnail_url ? `${DL_DIR}/${id}.poster.jpg` : null;
 
   if (await RNFS.exists(partPath)) await RNFS.unlink(partPath);
-  if (await RNFS.exists(filePath)) await RNFS.unlink(filePath);
+  if (await RNFS.exists(securePath)) await RNFS.unlink(securePath);
 
   // מהירות וזמן-שנותר על חלון גולל של ~5 שניות. ממוצע מתחילת ההורדה נועל
   // נמוך אחרי קטע איטי ולא זז; חלון קצר מתקן את עצמו מיד.
@@ -141,9 +186,15 @@ export async function downloadItem(item, onProgress) {
     throw new Error(`ההורדה נכשלה (${result.statusCode})`);
   }
 
-  // הקובץ ירד במלואו — מעבירים ממנת ה-.part לשם הסופי. עד לרגע הזה אין קובץ
-  // "מוכן", כך שהורדה שנקטעה לא נחשבת בטעות כזמינה.
-  await RNFS.moveFile(partPath, filePath);
+  // הקובץ ירד במלואו. עכשיו מצפינים אותו לשם הסופי — והנייטיב מוחק את
+  // ה-.part הגולמי ברגע שהיעד נכתב במלואו, כך שאין חלון שבו וידאו גלוי
+  // שוכב על המכשיר אחרי שההורדה נגמרה. עד לרגע הזה אין קובץ "מוכן",
+  // ולכן הורדה שנקטעה לא נחשבת בטעות כזמינה.
+  //
+  // זה AES-256 בקוד נייטיב ולא לולאת XOR ב-JS: מדובר בשניות, לא בחצי
+  // שעה שהגרסה הישנה לקחה על קובץ של 1GB.
+  onProgress?.({phase: 'encrypting', pct: 1});
+  await SecureDownload.encryptFile(partPath, securePath);
 
   if (posterPath) {
     try {
@@ -154,7 +205,7 @@ export async function downloadItem(item, onProgress) {
     }
   }
 
-  const stat = await RNFS.stat(filePath);
+  const stat = await RNFS.stat(securePath);
   const entry = {
     id,
     title: item.title || item.name || '',
@@ -163,7 +214,7 @@ export async function downloadItem(item, onProgress) {
     episodeNumber: item.episode_number || null,
     episodeTitle: item.episode_title || null,
     posterLocalPath: posterPath && (await RNFS.exists(posterPath)) ? posterPath : null,
-    filePath,
+    securePath,
     sizeBytes: parseInt(stat.size, 10),
     downloadedAt: new Date().toISOString(),
   };
@@ -188,19 +239,28 @@ export async function deleteDownload(id) {
   await saveManifest(manifest.filter(m => m.id !== strId));
 }
 
-// אין יותר פענוח: הקובץ שמור כמו שהוא, ומחזירים לו file:// ישירות. הניגון
-// מיידי. cleanup הוא no-op — אין קובץ זמני למחוק (הקובץ הקבוע נשאר).
+// הפענוח קורה בזרם, ולא לקובץ זמני: אין שום רגע שבו וידאו גלוי יושב על
+// הדיסק — גם לא באמצע צפייה. מחזירים כתובת של שרת שמאזין רק על 127.0.0.1,
+// מול אסימון אקראי שנוצר עכשיו ומת ב-cleanup (שה-PlayerScreen קורא לו
+// כשיוצאים מהנגן, דרך onLeaveCleanup).
+//
+// הניגון מיידי: אין יותר שלב פענוח מקדים. הגרסה עם ה-XOR פענחה קובץ שלם
+// לפני שהיה אפשר ללחוץ הפעל — כ-30 דקות על קובץ של 1GB.
 export async function preparePlayback(id) {
   const strId = String(id);
   const manifest = await loadManifest();
   const entry = manifest.find(m => m.id === strId);
-  const p = entry && entry.filePath;
+  const p = entry && entry.securePath;
   if (!p || !(await RNFS.exists(p))) {
     throw new Error('קובץ ההורדה לא נמצא — ייתכן שההורדה לא הסתיימה. הורד שוב.');
   }
+  if (!SecureDownload) {
+    throw new Error('רכיב ההצפנה אינו זמין בגרסה הזו — עדכן את האפליקציה');
+  }
+  const {url, token} = await SecureDownload.serve(p);
   return {
-    uri: 'file://' + p,
-    cleanup: () => {},
+    uri: url,
+    cleanup: () => { try { SecureDownload.stopServing(token); } catch (_) {} },
   };
 }
 
