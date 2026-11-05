@@ -2102,7 +2102,19 @@ def _sequential_requests():
     start = inspect.getsource(botjob.run)
     # כשגם תמונה וגם קובץ כתוביות נדרשים, הפתיחה אומרת שזה שלב 1
     assert "שלב 1 מתוך 2" in start, "אין סימון תור בפתיחה"
-    assert 'both = choice.cover == "כן" and choice.source == "own"' in start
+    assert 'both = choice.cover == "כן" and _brings_own(choice)' in start
+    # והתור תקף לשני המסלולים שבהם המשתמש שולח קובץ: "צרוב כמו
+    # שהוא" ו"תרגם לעברית". קודם נבדק כאן טקסט מדויק עם "own"
+    # בלבד, והמסלול השלישי היה נופל בין הכיסאות
+
+    class _Pick:
+        def __init__(self, source):
+            self.source = source
+
+    assert botjob._brings_own(_Pick("own"))
+    assert botjob._brings_own(_Pick("translate"))
+    assert not botjob._brings_own(_Pick("make"))
+    assert not botjob._brings_own(_Pick(""))
 
     # ולא מבקשים כתוביות בזמן שהתמונה עדיין חסרה
     assert "if int(chat_id) in _cover_wait:" in start, \
