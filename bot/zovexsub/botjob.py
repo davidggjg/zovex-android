@@ -31,6 +31,14 @@ _waiting: dict[int, Path | None] = {}
 # ההודעה "שלח עכשיו את קובץ הכתוביות" מופיעה מיד עם הלחיצה, וההורדה
 # נמשכת דקות — המשתמש שולח תוך כדי, ובלי המתנה הקובץ שלו נזרק בשקט
 _given: dict[int, Path] = {}
+# צ'אטים שבחרו "תרגם לעברית" ולא "צרוב כמו שהוא". שני המסלולים
+# ממתינים לקובץ מהמשתמש באותה צורה, ונפרדים רק אחרי שהוא הגיע
+_translating: set[int] = set()
+
+
+def _brings_own(choice) -> bool:
+    """האם המשתמש ישלח קובץ כתוביות משלו — בשני המסלולים."""
+    return getattr(choice, "source", "") in ("own", "translate")
 
 
 class Screen:
@@ -464,14 +472,18 @@ async def run(choice) -> None:
 
     # נרשמים כממתינים לפני ההורדה ולא אחריה: הקובץ של המשתמש מגיע
     # כמעט תמיד תוך כדי, וקודם הוא נפל בין הכיסאות
-    if choice.source == "own":
+    if _brings_own(choice):
         _waiting[int(chat_id)] = None
+        if choice.source == "translate":
+            _translating.add(int(chat_id))
+        else:
+            _translating.discard(int(chat_id))
     # אותו טעם: התמונה מגיעה כמעט תמיד תוך כדי ההורדה, ובלי להירשם
     # מראש ההודעה שלה הייתה נופלת לענף "שלח סרטון או קישור"
     # בקשה אחת בכל פעם, ובסדר קבוע: קודם התמונה ואז הכתוביות. קודם
     # שתי הבקשות נפתחו במקביל ואף אחת לא ידעה על השנייה — המשתמש ראה
     # שני דברים פתוחים ולא ידע מה לשלוח ראשון
-    both = choice.cover == "כן" and choice.source == "own"
+    both = choice.cover == "כן" and _brings_own(choice)
     if choice.cover == "כן":
         _cover_wait.add(int(chat_id))
         await localbot.say(
@@ -492,10 +504,11 @@ async def run(choice) -> None:
         if source is None:
             _waiting.pop(int(chat_id), None)
             _given.pop(int(chat_id), None)
+            _translating.discard(int(chat_id))
             pipeline.cleanup(work)
             return
 
-        if choice.source == "own":
+        if _brings_own(choice):
             _waiting[int(chat_id)] = source
             early = _given.pop(int(chat_id), None)
             if early is not None and early.exists():
@@ -504,7 +517,7 @@ async def run(choice) -> None:
                 shutil.move(str(early), srt_path)
                 _waiting.pop(int(chat_id), None)
                 await screen.show("✅ ממשיך עם הכתוביות ששלחת.", force=True)
-                await _offer_burn(chat_id, source, srt_path, work)
+                await _after_subtitle(chat_id, source, srt_path, work)
                 return
             if int(chat_id) in _cover_wait:
                 # התמונה עדיין לא הגיעה. הבקשה לכתוביות תישלח מיד
@@ -678,7 +691,49 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     # הקידוד מוזר המשתמש שומע על כך מיד ולא באמצע הצריבה
     srt_tools.normalize(found, srt_path)
     await localbot.say(chat_id, "✅ קיבלתי את הכתוביות.")
-    await _offer_burn(chat_id, source, srt_path, work)
+    await _after_subtitle(chat_id, source, srt_path, work)
+
+
+async def _after_subtitle(chat_id, source: Path, srt_path: Path,
+                          work: Path, track: int = 0) -> None:
+    """מה שקורה אחרי שקובץ הכתוביות של המשתמש הגיע.
+
+    שני המסלולים ממתינים לקובץ באותה צורה ונפרדים רק כאן: "צרוב כמו
+    שהוא" הולך ישר לצריבה, ו"תרגם לעברית" עובר קודם תרגום ששומר את
+    התזמונים המקוריים
+    """
+    if int(chat_id) not in _translating:
+        await _offer_burn(chat_id, source, srt_path, work, track)
+        return
+
+    _translating.discard(int(chat_id))
+    note = await localbot.say(
+        chat_id, "🌐 מתרגם את הכתוביות שלך לעברית…\n"
+                 "<i>התזמונים שלך יישמרו בדיוק כפי שהם.</i>")
+    screen = Screen(chat_id, note.get("message_id", 0),
+                    buttons=botmenu.stop_keys(chat_id))
+
+    async def say(text: str) -> None:
+        await screen.show(text, force=True)
+
+    try:
+        hebrew_srt = await pipeline.translate_given(
+            source, srt_path, work, on_progress=say, track=track)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("תרגום הכתוביות שהובאו נכשל")
+        await localbot.say(chat_id,
+                           "❌ התרגום נכשל.\n" + localbot.code(str(exc)))
+        release(chat_id)
+        return
+
+    await screen.show("✅ <b>הכתוביות תורגמו</b> · "
+                      "התזמונים המקוריים נשמרו", force=True)
+    try:
+        await localbot.call("sendDocument", chat_id=str(chat_id),
+                            document=localbot._to_container(hebrew_srt))
+    finally:
+        localbot.clear_outbox(hebrew_srt.name)
+    await _offer_burn(chat_id, source, hebrew_srt, work, track)
 
 
 async def _offer_burn(chat_id, source: Path, srt_path: Path, work: Path,

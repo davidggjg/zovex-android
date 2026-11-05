@@ -38,7 +38,7 @@ class Choice:
     source_message: int = 0      # ההודעה שבה הגיע הסרטון, להעברה לאחסון
     size_bytes: int = 0
     name: str = ""
-    source: str = ""             # make / own
+    source: str = ""             # make / own / translate
     cover: str = ""              # תמונת תצוגה מקדימה: כן / לא
     speed: str = ""              # מהיר (H.264) / איכותי (H.265)
     url: str = ""                # קישור, כשהעבודה התחילה מקישור
@@ -171,7 +171,11 @@ def source_screen(chat_id) -> tuple[str, list]:
             f"{prefs.summary(saved)}\n\n"
             "מה לעשות עם הכתוביות?")
     keys = [[("🤖 תייצר לי כתוביות", "src:make")],
-            [("📄 יש לי קובץ כתוביות", "src:own")],
+            [("📄 יש לי קובץ — צרוב כמו שהוא", "src:own")],
+            # המסלול השלישי: הקובץ של המשתמש מסונכרן, והתזמונים שלו
+            # הם בדיוק הדבר שהכי קשה לנו לייצר. כאן הם נשמרים כמו
+            # שהם ורק הטקסט מתורגם
+            [("🌐 יש לי קובץ — תרגם לעברית", "src:translate")],
             [("⚙️ שנה הגדרות", "settings")],
             [("❌ ביטול", "cancel")]]
     return text, keys
@@ -385,7 +389,10 @@ async def _press(query: dict) -> None:
             if not getattr(choice, name, ""):
                 setattr(choice, name, value)
         label = ("מייצר כתוביות…" if choice.source == "make"
-                 else "שלח עכשיו את קובץ הכתוביות (SRT).")
+                 else "שלח עכשיו את קובץ הכתוביות (SRT)."
+                 if choice.source == "own"
+                 else "שלח עכשיו את קובץ הכתוביות — אתרגם אותו "
+                      "לעברית והתזמונים שלו יישמרו.")
         # הסיכום נשאר על המסך: אחרת אי אפשר לדעת באילו הגדרות זה רץ
         await localbot.edit(
             choice.chat_id, message_id,

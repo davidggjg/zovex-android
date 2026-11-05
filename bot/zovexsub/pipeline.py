@@ -10,7 +10,7 @@ from typing import Awaitable, Callable
 
 from . import (align, config, gemini_stt, hebrew, media,
                progress as prog, realign, srt, vad)
-from .stt import (drop_nonspeech, recover_gaps,
+from .stt import (Segment, drop_nonspeech, recover_gaps,
                   title_hint as stt_title_hint, transcribe)
 
 log = logging.getLogger(__name__)
@@ -238,6 +238,110 @@ async def run(source: Path, work: Path, *, progress: Progress,
         language=transcript.language, notes=notes,
         elapsed=time.monotonic() - started,
     )
+
+
+async def translate_given(source: Path, srt_path: Path, work: Path,
+                          on_progress=None, track: int = 0) -> Path:
+    """מתרגם לעברית קובץ כתוביות שהמשתמש הביא — בלי לגעת בתזמונים.
+
+    זה מסלול שלישי, לצד "תייצר לי כתוביות" ו"צרוב את הקובץ שלי כמו
+    שהוא". ההבדל מהראשון הוא עקרוני: כשהמשתמש מביא קובץ מסונכרן,
+    התזמונים שלו **נכונים** — והם הדבר שהכי קשה לנו לייצר. אין שום
+    סיבה לייצר אותם מחדש ולהחליף דיוק ידוע בניחוש שלנו.
+
+    ולכן כאן לא רצים build_cues, split, snap_to_cuts, close_gaps ולא
+    finalize: כל אחד מהם מזיז זמנים. היחיד שכן רץ הוא שבירת שורות,
+    שמשנה רק איפה נגמרת שורה בתוך הכתובית ולא מתי היא מופיעה.
+
+    האודיו כן נסרק, אבל לא בשביל טקסט ולא בשביל זמנים — רק בשביל
+    **מי מדבר**. בלי תוויות דובר המגדר נשען על ההקשר בלבד, וזו הנקודה
+    שבה הוא נשבר. עם האודיו, "את הולכת" מול "אתה הולך" נקבע לפי הקול
+    שנשמע באותה שנייה בדיוק, ולא לפי ניחוש מהטקסט
+    """
+    async def progress(text: str) -> None:
+        if on_progress:
+            await on_progress(text)
+
+    cues = srt.parse(srt.read_subtitle(srt_path))
+    if not cues:
+        raise RuntimeError("לא הצלחתי לקרוא כתוביות מהקובץ ששלחת.")
+    log.info("קובץ שהובא: %d כתוביות, %s עד %s", len(cues),
+             srt.stamp(cues[0].start)[:8], srt.stamp(cues[-1].end)[:8])
+
+    segments = [Segment(index=i, start=cue.start, end=cue.end,
+                        text=" ".join((cue.text or "").split()))
+                for i, cue in enumerate(cues)]
+
+    # סריקת האודיו — רק לדוברים. כשל כאן אינו מפיל את העבודה: בלי
+    # תוויות דובר התרגום עדיין רץ, רק שהמגדר חוזר להישען על ההקשר
+    language = ""
+    if await media.has_audio(source):
+        await progress("🎧 סורק את האודיו כדי לזהות מי מדבר…")
+        try:
+            audio = await media.extract_audio(source, work / "audio.flac",
+                                              track)
+            spoken = await gemini_stt.transcribe(audio)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("סריקת הדוברים נכשלה (%s) — ממשיכים בלעדיה", exc)
+            spoken = None
+        if spoken and spoken.segments:
+            language = spoken.language or ""
+            tagged = _carry_speakers(segments, spoken.segments)
+            log.info("תוויות דובר הוצמדו ל-%d מתוך %d כתוביות",
+                     tagged, len(segments))
+        else:
+            log.warning("לא התקבלו דוברים מהאודיו — המגדר יישען על ההקשר")
+    else:
+        log.warning("לקובץ אין ערוץ אודיו — אי אפשר לזהות דוברים")
+
+    await progress("🇮🇱 מתרגם · חוקר את התוכן")
+
+    async def on_step(note: str, fraction: float) -> None:
+        await progress(f"🇮🇱 מתרגם · {note} · {fraction * 100:.0f}%")
+
+    lines, _ = await hebrew.build_hebrew(
+        segments, language or "auto", on_step=on_step,
+        title=stt_title_hint(source).rstrip("."))
+
+    # אותם זמנים בדיוק, טקסט חדש. wrap משנה רק היכן נשברת השורה
+    out = [srt.Cue(index=i + 1, start=cue.start, end=cue.end,
+                   text=srt.wrap(lines[i] if i < len(lines) else cue.text))
+           for i, cue in enumerate(cues)]
+    target = work / f"{source.stem}.he.srt"
+    target.write_text(srt.render(out), encoding="utf-8")
+    log.info("תורגמו %d כתוביות, התזמונים נשמרו כפי שהיו", len(out))
+    return target
+
+
+def _carry_speakers(given: list[Segment], heard: list[Segment]) -> int:
+    """מצמיד לכל כתובית שהובאה את הדובר שנשמע באותו זמן.
+
+    ההצמדה לפי חפיפה בזמן ולא לפי טקסט, כי הטקסט של המשתמש והטקסט
+    שהמודל שמע אינם זהים — ואין צורך שיהיו. מה שצריך להתאים זה רק
+    המיקום על ציר הזמן, והוא מדויק בשני הצדדים
+    """
+    heard = sorted((s for s in heard if getattr(s, "speaker", "")),
+                   key=lambda s: s.start)
+    if not heard:
+        return 0
+    tagged = 0
+    index = 0
+    for cue in given:
+        # מדלגים על כל מה שנגמר לפני תחילת הכתובית
+        while index < len(heard) and heard[index].end <= cue.start:
+            index += 1
+        best, widest = "", 0.0
+        look = index
+        while look < len(heard) and heard[look].start < cue.end:
+            overlap = (min(cue.end, heard[look].end)
+                       - max(cue.start, heard[look].start))
+            if overlap > widest:
+                best, widest = heard[look].speaker, overlap
+            look += 1
+        if best:
+            cue.speaker = best
+            tagged += 1
+    return tagged
 
 
 async def burn(source: Path, srt_path: Path, work: Path, on_progress=None,

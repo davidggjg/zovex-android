@@ -3650,6 +3650,59 @@ def _harness_scores_translations() -> None:
         assert name == "base" or extra_text.strip(), name
 
 
+@check("מסלול שלישי: קובץ שהובא מתורגם בלי שהתזמונים יזוזו")
+def _given_subtitle_translation_keeps_timing() -> None:
+    from zovexsub import botmenu
+
+    # הכפתור קיים, ושני המסלולים של "יש לי קובץ" נפרדים
+    keys = [row[0][1] for row in botmenu.source_screen(1)[1]]
+    assert "src:translate" in keys, keys
+    assert "src:own" in keys, keys
+
+    flow = inspect.getsource(pipeline.translate_given)
+    # רק הגוף, בלי ה-docstring: הוא מונה בדיוק את השמות האלה כדי
+    # להסביר למה הם אינם רצים, והבדיקה הייתה נתפסת על ההסבר עצמו
+    body = "\n".join(line for line in flow.splitlines()
+                     if not line.strip().startswith("#"))
+    doc = pipeline.translate_given.__doc__ or ""
+    body = body.replace(doc, "")
+    # העיקר: אף פונקציה שמזיזה זמנים אינה נקראת. התזמונים של המשתמש
+    # נכונים, והם בדיוק מה שהכי קשה לנו לייצר
+    for moves_time in ("build_cues(", "split_overlong(", "split_long_cues(",
+                       "snap_to_cuts(", "close_gaps(", "finalize(",
+                       "apply_lead(", "apply_offset(", "drift_fit("):
+        assert moves_time not in body, f"{moves_time} מזיז זמנים"
+    # ‏wrap כן: הוא משנה רק היכן נשברת שורה, לא מתי היא מופיעה
+    assert "srt.wrap(" in flow
+    assert "cue.start" in flow and "cue.end" in flow
+
+    # והאודיו נסרק — אבל רק בשביל מי מדבר
+    assert "_carry_speakers" in flow
+    assert "build_hebrew" in flow
+
+
+@check("דובר מוצמד לפי חפיפה בזמן, ולא היכן שלא דיברו")
+def _speakers_carry_by_overlap() -> None:
+    from zovexsub import stt
+    given = [stt.Segment(index=i, start=a, end=b, text=t)
+             for i, (a, b, t) in enumerate([
+                 (0.0, 2.0, "Hello"), (2.5, 4.5, "How are you"),
+                 (5.0, 6.0, "Fine"), (20.0, 21.0, "Nobody")])]
+    heard = [stt.Segment(index=0, start=0.0, end=2.1, text="x", speaker="A"),
+             stt.Segment(index=1, start=2.4, end=4.6, text="y", speaker="B"),
+             stt.Segment(index=2, start=4.9, end=5.1, text="z", speaker="A"),
+             stt.Segment(index=3, start=5.1, end=6.2, text="w", speaker="B")]
+    tagged = pipeline._carry_speakers(given, heard)
+    assert tagged == 3, tagged
+    # הדובר עם החפיפה הגדולה ביותר מנצח, גם כששניים נוגעים בכתובית
+    assert [g.speaker for g in given[:3]] == ["A", "B", "B"], \
+        [g.speaker for g in given]
+    # והיכן שלא דיברו אין תווית, ולא ניחוש
+    assert not given[3].speaker
+    # בלי תוויות דובר בכלל אין קריסה — התרגום ימשיך בלי מגדר מהאודיו
+    assert pipeline._carry_speakers(given, [stt.Segment(0, 0, 1, "a")]) == 0
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
