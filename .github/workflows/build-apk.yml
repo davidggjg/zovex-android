@@ -17,12 +17,21 @@ on:
         default: 'false'
         type: choice
         options: ['false', 'true']
+      # ברירת המחדל כאן היא 'true', בניגוד לשני הערוצים שמעל, ובכוונה:
+      # ערוץ הבודקים הוא היעד הרגיל של בנייה ידנית — מתקינים, בודקים
+      # שהכול עובד, ורק אז מפרסמים הלאה. היא הייתה 'false', ולכן בנייה
+      # הסתיימה בלי שום APK להתקין ממנו וצריך היה לזכור לסמן תיבה.
+      #
+      # זה לא נוגע באף משתמש: ה-release הזה תמיד --prerelease (ראה למטה),
+      # אין אליו כפתור באתר, ו-/app/version בשרת לא מצביע אליו. הערוץ
+      # הציבורי (latest) מתפרסם רק מ-main או בבחירה מפורשת, ולכן ברירת
+      # המחדל הזאת לא יכולה להוציא גרסה לאיש.
       publish_test:
         description: 'לפרסם לערוץ בודקים (test/zovex-test.apk)? קישור ישיר לבודק, לא נוגע ב-latest ולא ב-Tv'
         required: false
-        default: 'false'
+        default: 'true'
         type: choice
-        options: ['false', 'true']
+        options: ['true', 'false']
 
 permissions:
   contents: write
@@ -352,4 +361,17 @@ jobs:
               --notes "APK לבדיקה בלבד. הכתובת קבועה ומתעדכנת בכל בנייה עם publish_test. אינו מגיע למשתמשים."
           fi
           gh release edit test --repo "$GITHUB_REPOSITORY" --prerelease
-          echo "Tester download URL: https://github.com/$GITHUB_REPOSITORY/releases/download/test/zovex-test.apk"
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/test/zovex-test.apk"
+          echo "Tester download URL: $URL"
+          # גם לסיכום הריצה, כדי שהקישור יהיה מול העיניים כשהבנייה נגמרת
+          # במקום להיות קבור בלוג של שלב אחד מתוך עשרים.
+          {
+            echo "## 📦 גרסת בדיקה מוכנה"
+            echo ""
+            echo "ענף: \`${GITHUB_REF_NAME}\` · commit \`${GITHUB_SHA:0:7}\`"
+            echo ""
+            echo "**קישור ההורדה:** $URL"
+            echo ""
+            echo "הקישור קבוע ונדרס בכל בנייה. זהו ערוץ בדיקות בלבד —"
+            echo "הוא אינו מגיע למשתמשים ואינו משנה את גרסת האפליקציה הציבורית."
+          } >> "$GITHUB_STEP_SUMMARY"
