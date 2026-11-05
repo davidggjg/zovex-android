@@ -29,8 +29,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 def current(cores: int) -> tuple[int, int]:
-    """מה שרץ היום: burn_slots(18)=18 קטעים, שני חוטים כל אחד = 36."""
-    return cores, 2
+    """מה שרץ היום, לפי ההגדרות שבפועל — לא לפי מספר שהונח מראש.
+
+    נמדד על השרת: BURN_SEGMENT_THREADS=3 ב-.env הפך את burn_slots(18)
+    מ-18 ל-12, וכך 12 תהליכים על שלושה חוטים = 36 חוטים על 18 ליבות.
+    בדיוק תור הריצה שנמדד. הגדרה שנקראת מהקובץ ולא מנוחשת
+    """
+    from zovexsub import config
+    return config.burn_slots(cores), config.BURN_SEGMENT_THREADS
 
 
 # התצורות שנבדקות: (כמה קטעים במקביל, כמה חוטי x265 לכל אחד).
@@ -45,7 +51,7 @@ def plans(cores: int) -> list[tuple[int, int]]:
         (cores // 2, 2),         # אותו סך חוטים, חצי מהתהליכים
         (cores // 3, 3),         # אותו סך, שליש מהתהליכים
         (cores * 3 // 4, 2),     # הקצאת-יתר פי 1.5
-        current(cores),          # פי 2 — ההגדרה היום
+        current(cores),          # ההגדרה שרצה היום, מה-.env
     ]
 
 

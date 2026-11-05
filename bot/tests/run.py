@@ -3778,10 +3778,14 @@ def _bench_plans_are_meaningful() -> None:
     cores = 18
     picks = [p for p in bench.plans(cores) if p[0] >= 1]
     # ההגדרה שרצה היום חייבת להיות בין הנבדקות, אחרת אין מול מה
-    # להשוות. היא burn_slots(18)=18 קטעים על שני חוטים = 36 חוטים
-    assert bench.current(cores) in picks, picks
-    assert bench.current(cores) == (cores, 2)
-    assert config.burn_slots(cores) == cores, config.burn_slots(cores)
+    # להשוות. היא נקראת מההגדרות בפועל ולא מונחת מראש: הבדיקה
+    # נשברה על השרת בדיוק מפני שהניחה מספרים, ושם .env מגדיר
+    # BURN_SEGMENT_THREADS=3 — מה שהופך את burn_slots(18) ל-12
+    now = bench.current(cores)
+    assert now in picks, (now, picks)
+    assert now == (config.burn_slots(cores), config.BURN_SEGMENT_THREADS)
+    # וההקצאה הנוכחית היא אכן הקצאת-יתר, שזה מה שנמדד
+    assert now[0] * now[1] > cores, now
 
     totals = sorted({s * t for s, t in picks})
     # יש תצורות בדיוק על מספר הליבות, ויש מעליו — אחרת המדידה
