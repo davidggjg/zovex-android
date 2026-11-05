@@ -583,7 +583,9 @@ async def research_notes(numbered: str, language: str, on_step=None,
 
 
 async def build_hebrew(segments: list[Segment], language: str,
-                       on_step=None, title: str = "") -> tuple[list[str], str]:
+                       on_step=None, title: str = "",
+                       measured: dict[str, str] | None = None
+                       ) -> tuple[list[str], str]:
     """מחזיר את שורות העברית (באורך ובסדר של הסגמנטים) ואת מסמך ההנחיות."""
     numbered = "\n".join(f"[{s.index}] {s.text}" for s in segments)
 
@@ -612,6 +614,23 @@ async def build_hebrew(segments: list[Segment], language: str,
         await on_step("מזהה את מגדר הדוברים", RESEARCH_TO)
     genders, sure = await staged("מגדר דוברים",
                                  speaker_genders(segments, language, notes))
+    if measured:
+        # המדידה האקוסטית גוברת על ההסקה מהטקסט. זה לא עניין של
+        # אמון במודל: תדר היסוד של הקול הוא נתון שנמדד, וההסקה
+        # מהטקסט היא ניחוש מתוך מה שנאמר. היכן שהמדידה שתקה —
+        # מוזיקה, רעש, או התחום שבו גברים ונשים חופפים — היא אינה
+        # מופיעה כאן כלל, ושם ההסקה ממשיכה להכריע לבדה
+        for who, gender in measured.items():
+            was = re.search(rf"\b{re.escape(who)}=(\S+)", genders or "")
+            if was and was.group(1) != gender:
+                log.warning("דובר %s: הטקסט אמר %s, הקול נמדד כ-%s — "
+                            "הולכים אחרי הקול", who, was.group(1), gender)
+        kept = [part for part in (genders or "").split(" · ")
+                if part and part.split("=")[0] not in measured]
+        rows = [f"{who}={gender}" for who, gender in sorted(measured.items())]
+        genders = " · ".join(rows + kept)[:600]
+        log.info("מגדר נעוץ: %d דוברים מהקול, %d מהטקסט",
+                 len(measured), len(kept))
 
     lines = await staged("תרגום",
                          _translate_all(segments, language, notes, on_step,

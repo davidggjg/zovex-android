@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import (align, config, gemini_stt, hebrew, media,
+from . import (align, config, gemini_stt, hebrew, media, voice,
                progress as prog, realign, srt, vad)
 from .stt import (Segment, drop_nonspeech, recover_gaps,
                   title_hint as stt_title_hint, transcribe)
@@ -275,6 +275,7 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
     # סריקת האודיו — רק לדוברים. כשל כאן אינו מפיל את העבודה: בלי
     # תוויות דובר התרגום עדיין רץ, רק שהמגדר חוזר להישען על ההקשר
     language = ""
+    measured: dict[str, str] = {}
     if await media.has_audio(source):
         await progress("🎧 סורק את האודיו כדי לזהות מי מדבר…")
         try:
@@ -289,6 +290,20 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
             tagged = _carry_speakers(segments, spoken.segments)
             log.info("תוויות דובר הוצמדו ל-%d מתוך %d כתוביות",
                      tagged, len(segments))
+            # ומדידת המגדר מהקול עצמו. זה הרכיב שהבדיל אותנו מהכלים
+            # המקצועיים: הם מודדים את תדר היסוד, ואנחנו הסקנו מהטקסט
+            await progress("🎚️ מודד את המגדר מהקול…")
+            heard: dict[str, list[tuple[float, float]]] = {}
+            for seg in spoken.segments:
+                who = getattr(seg, "speaker", "")
+                if who:
+                    heard.setdefault(who, []).append((seg.start, seg.end))
+            try:
+                verdicts = await voice.measure(audio, heard)
+                measured = {v.speaker: v.gender
+                            for v in verdicts.values() if v.sure}
+            except Exception as exc:  # noqa: BLE001
+                log.warning("מדידת המגדר מהקול נכשלה (%s)", exc)
         else:
             log.warning("לא התקבלו דוברים מהאודיו — המגדר יישען על ההקשר")
     else:
@@ -301,7 +316,7 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
 
     lines, _ = await hebrew.build_hebrew(
         segments, language or "auto", on_step=on_step,
-        title=stt_title_hint(source).rstrip("."))
+        title=stt_title_hint(source).rstrip("."), measured=measured)
 
     # אותם זמנים בדיוק, טקסט חדש. wrap משנה רק היכן נשברת השורה
     out = [srt.Cue(index=i + 1, start=cue.start, end=cue.end,

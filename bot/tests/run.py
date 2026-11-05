@@ -3703,6 +3703,62 @@ def _speakers_carry_by_overlap() -> None:
     assert pipeline._carry_speakers(given, [stt.Segment(0, 0, 1, "a")]) == 0
 
 
+@check("תדר היסוד נמדד נכון, ודממה ורעש אינם קול")
+def _pitch_is_measured_not_guessed() -> None:
+    import numpy as np, statistics
+    from zovexsub import voice
+
+    for want in (95, 113, 181, 220):
+        moment = np.arange(int(voice.RATE * 1.2)) / voice.RATE
+        # קול אנושי אינו סינוס טהור: הרמוניות, כמו בדיבור
+        wave = sum(np.sin(2 * np.pi * want * h * moment) / h
+                   for h in (1, 2, 3, 4, 5)).astype("float32")
+        wave = (wave / np.max(np.abs(wave)) * 0.5).astype("float32")
+        track = voice.pitch_track(wave)
+        assert track, want
+        got = statistics.median(track)
+        assert abs(got - want) / want < 0.03, (want, got)
+
+    assert not voice.pitch_track(np.zeros(16000, dtype="float32"))
+    noise = (np.random.default_rng(1).standard_normal(16000) * 0.3)
+    assert not voice.pitch_track(noise.astype("float32"))
+
+
+@check("התפלגות רחבה אינה מכריעה מגדר — זו מוזיקה, לא קול")
+def _wide_spread_refuses_to_decide() -> None:
+    from zovexsub import voice
+
+    # נמדד בפועל: קול של גבר עם מוזיקת רקע החזיר "נקבה" בביטחון מלא.
+    # ההתפלגות הסגירה את הסיבה — שטוחה מ-90 עד 260 הרץ, בלי שום
+    # פסגה. האוטוקורלציה עקבה אחרי המוזיקה, והחציון של רעש הוא
+    # מספר חסר משמעות שנפל במקרה בצד הנשי
+    assert voice.PACKED >= 0.5, voice.PACKED
+    assert 0.1 <= voice.SPREAD <= 0.3, voice.SPREAD
+
+    # תחום החפיפה בין גברים לנשים אמיתי, ושם אין הכרעה
+    assert voice.decide(113.0) == "זכר"
+    assert voice.decide(181.0) == "נקבה"
+    assert voice.decide(150.0) == "", "בתחום החפיפה אסור להכריע"
+    assert voice.MALE_BELOW < voice.FEMALE_ABOVE
+
+    # ושורת הפרומפט נבנית רק ממי שהוכרע
+    sure = voice.Verdict("א", 113.0, 300, "זכר", 0.9)
+    unsure = voice.Verdict("ב", 150.0, 300, "", 0.9)
+    row = voice.table({"א": sure, "ב": unsure})
+    assert "א=זכר" in row and "ב" not in row, row
+    assert voice.table({"ב": unsure}) == "", "בלי הכרעה אין שורה"
+
+
+@check("מדידה מהקול גוברת על הסקה מהטקסט")
+def _measured_gender_wins() -> None:
+    flow = inspect.getsource(hebrew.build_hebrew)
+    assert "measured" in flow
+    # היכן שהמדידה שתקה, ההסקה מהטקסט ממשיכה להכריע לבדה
+    assert "kept" in flow and "speaker_genders" in flow
+    assert "measured" in inspect.signature(hebrew.build_hebrew).parameters
+    assert "voice.measure" in inspect.getsource(pipeline.translate_given)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
