@@ -3771,6 +3771,35 @@ def _measured_gender_wins() -> None:
     assert "voice.measure" in inspect.getsource(pipeline.translate_given)
 
 
+@check("המודד בודק הקצאות אמיתיות, ומסרב לרוץ על מכונה עמוסה")
+def _bench_plans_are_meaningful() -> None:
+    import bench
+
+    cores = 18
+    picks = [p for p in bench.plans(cores) if p[0] >= 1]
+    # ההגדרה שרצה היום חייבת להיות בין הנבדקות, אחרת אין מול מה
+    # להשוות. היא burn_slots(18)=18 קטעים על שני חוטים = 36 חוטים
+    assert bench.current(cores) in picks, picks
+    assert bench.current(cores) == (cores, 2)
+    assert config.burn_slots(cores) == cores, config.burn_slots(cores)
+
+    totals = sorted({s * t for s, t in picks})
+    # יש תצורות בדיוק על מספר הליבות, ויש מעליו — אחרת המדידה
+    # לא יכולה להראות אם הקצאת-היתר עוזרת או מזיקה
+    assert cores in totals, totals
+    assert max(totals) > cores, totals
+    # ושלוש תצורות נותנות אותו סך חוטים בחלוקה שונה: זו השאלה
+    # שהספרות לא עונה עליה — הרבה תהליכים דקים מול מעט עבים
+    same = [(s, t) for s, t in picks if s * t == cores]
+    assert len(same) >= 3, same
+    assert len({t for _, t in same}) >= 3, same
+
+    # והמודד מסרב לרוץ כשיש ffmpeg אחר, אחרת המספרים חסרי ערך
+    flow = inspect.getsource(bench.main)
+    assert "pgrep" in flow and "ffmpeg" in flow
+    assert "return 1" in flow
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
