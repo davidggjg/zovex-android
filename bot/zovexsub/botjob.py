@@ -34,6 +34,9 @@ _given: dict[int, Path] = {}
 # צ'אטים שבחרו "תרגם לעברית" ולא "צרוב כמו שהוא". שני המסלולים
 # ממתינים לקובץ מהמשתמש באותה צורה, ונפרדים רק אחרי שהוא הגיע
 _translating: set[int] = set()
+# רצועת השמע שנבחרה, לכל צ'אט. קובץ הכתוביות מגיע בהודעה נפרדת
+# אחרי הבחירה, ולכן היא חייבת לשרוד עד אז
+_track: dict[int, int] = {}
 
 
 def _brings_own(choice) -> bool:
@@ -505,31 +508,43 @@ async def run(choice) -> None:
             _waiting.pop(int(chat_id), None)
             _given.pop(int(chat_id), None)
             _translating.discard(int(chat_id))
+            _track.pop(int(chat_id), None)
             pipeline.cleanup(work)
             return
 
         if _brings_own(choice):
             _waiting[int(chat_id)] = source
-            early = _given.pop(int(chat_id), None)
-            if early is not None and early.exists():
-                # הקובץ כבר הגיע תוך כדי ההורדה
-                srt_path = work / "given.srt"
-                shutil.move(str(early), srt_path)
-                _waiting.pop(int(chat_id), None)
-                await screen.show("✅ ממשיך עם הכתוביות ששלחת.", force=True)
-                await _after_subtitle(chat_id, source, srt_path, work)
-                return
-            if int(chat_id) in _cover_wait:
-                # התמונה עדיין לא הגיעה. הבקשה לכתוביות תישלח מיד
-                # כשהיא תגיע, ב-take_cover — שתי בקשות פתוחות בבת
-                # אחת הן בדיוק מה שבלבל
-                await screen.show("🖼️ ממתין לתמונה שביקשתי. "
-                                  "אחריה אבקש את קובץ הכתוביות.",
-                                  force=True)
-                return
-            await screen.show("📄 <b>שלב 2 מתוך 2</b> — שלח עכשיו את קובץ "
-                              "הכתוביות." if choice.cover == "כן" else
-                              "📄 שלח עכשיו את קובץ הכתוביות.", force=True)
+
+            async def own_ready(track: int) -> None:
+                # הרצועה נבחרה לפני הכל, ונשמרת לצ'אט: קובץ הכתוביות
+                # מגיע בהודעה נפרדת, ובלי לשמור אותה כאן הבחירה
+                # הייתה אובדת עד שהוא מגיע
+                _track[int(chat_id)] = track
+                early = _given.pop(int(chat_id), None)
+                if early is not None and early.exists():
+                    # הקובץ כבר הגיע תוך כדי ההורדה
+                    srt_path = work / "given.srt"
+                    shutil.move(str(early), srt_path)
+                    _waiting.pop(int(chat_id), None)
+                    await screen.show("✅ ממשיך עם הכתוביות ששלחת.",
+                                      force=True)
+                    await _after_subtitle(chat_id, source, srt_path, work,
+                                          track)
+                    return
+                if int(chat_id) in _cover_wait:
+                    # התמונה עדיין לא הגיעה. הבקשה לכתוביות תישלח מיד
+                    # כשהיא תגיע, ב-take_cover — שתי בקשות פתוחות בבת
+                    # אחת הן בדיוק מה שבלבל
+                    await screen.show("🖼️ ממתין לתמונה שביקשתי. "
+                                      "אחריה אבקש את קובץ הכתוביות.",
+                                      force=True)
+                    return
+                await screen.show(
+                    "📄 <b>שלב 2 מתוך 2</b> — שלח עכשיו את קובץ "
+                    "הכתוביות." if choice.cover == "כן" else
+                    "📄 שלח עכשיו את קובץ הכתוביות.", force=True)
+
+            await _with_track(chat_id, source, work, screen, own_ready)
             return
 
         async def progress(text: str) -> None:
@@ -551,27 +566,7 @@ async def run(choice) -> None:
             await _offer_burn(chat_id, source, Path(result.srt_path), work,
                               track=track)
 
-        # רצועה אחת היא הרוב המוחלט, ואין מה לשאול עליה. רק קובץ עם
-        # כמה רצועות — מקור ודיבוב, או מקור ופרשנות — מקבל שאלה,
-        # אחרת היינו מוסיפים לחיצה לכל סרטון בשביל מקרה נדיר
-        tracks = await media.audio_tracks(source)
-        if len(tracks) > 1:
-            for item in tracks:
-                item["label"] = media.track_label(item)
-            log.info("נמצאו %d רצועות שמע: %s", len(tracks),
-                     ", ".join(t["label"] for t in tracks))
-            await screen.show("🔊 יש כמה רצועות שמע — בחר למעלה.", force=True)
-
-            async def picked(pick) -> None:
-                if pick.cancelled:
-                    pipeline.cleanup(work)
-                    return
-                await go(pick.track)
-
-            await botmenu.offer_track(chat_id, tracks, picked)
-            return
-
-        await go(0)
+        await _with_track(chat_id, source, work, screen, go)
     except asyncio.CancelledError:
         # כפתור עצור. מנקים את תיקיית העבודה ומודיעים, ואז נותנים
         # לביטול להמשיך — תהליך שמתעלם מביטול הוא תהליך שלא נעצר
@@ -691,7 +686,40 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     # הקידוד מוזר המשתמש שומע על כך מיד ולא באמצע הצריבה
     srt_tools.normalize(found, srt_path)
     await localbot.say(chat_id, "✅ קיבלתי את הכתוביות.")
-    await _after_subtitle(chat_id, source, srt_path, work)
+    await _after_subtitle(chat_id, source, srt_path, work,
+                          _track.pop(chat, 0))
+
+
+async def _with_track(chat_id, source: Path, work: Path, screen,
+                      then) -> None:
+    """שואל מאיזו רצועת שמע לעבוד, ואז ממשיך.
+
+    רצועה אחת היא הרוב המוחלט ואין מה לשאול עליה. קובץ עם כמה
+    רצועות — מקור ודיבוב, אנגלית וצרפתית — מקבל שאלה.
+
+    קודם זה ישב בתוך מסלול "תייצר לי כתוביות" בלבד, ולכן מי שהביא
+    קובץ כתוביות משלו נצרב תמיד מהרצועה הראשונה בלי להישאל. הרצועה
+    חשובה בשני המסלולים: היא קובעת איזה שמע נשאר בקובץ הצרוב, וגם
+    ממה מזוהים הדוברים כשמתרגמים
+    """
+    tracks = await media.audio_tracks(source)
+    if len(tracks) <= 1:
+        await then(0)
+        return
+    for item in tracks:
+        item["label"] = media.track_label(item)
+    log.info("נמצאו %d רצועות שמע: %s", len(tracks),
+             ", ".join(t["label"] for t in tracks))
+    await screen.show("🔊 יש כמה רצועות שמע — בחר למעלה.", force=True)
+
+    async def picked(pick) -> None:
+        if pick.cancelled:
+            pipeline.cleanup(work)
+            release(chat_id)
+            return
+        await then(pick.track)
+
+    await botmenu.offer_track(chat_id, tracks, picked)
 
 
 async def _after_subtitle(chat_id, source: Path, srt_path: Path,

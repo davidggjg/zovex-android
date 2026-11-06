@@ -3804,6 +3804,38 @@ def _bench_plans_are_meaningful() -> None:
     assert "return 1" in flow
 
 
+@check("שאלת רצועת השמע נשאלת בכל המסלולים, לא רק ביצירת כתוביות")
+def _track_asked_on_every_path() -> None:
+    from zovexsub import botjob
+
+    # קודם שאלת הרצועה ישבה בתוך מסלול "תייצר לי כתוביות" בלבד,
+    # והענף של "יש לי קובץ" יצא ב-return לפניה. מי שהביא קובץ
+    # כתוביות משלו נצרב תמיד מהרצועה הראשונה בלי להישאל — גם
+    # מטלגרם וגם מקישור
+    run = inspect.getsource(botjob.run)
+    assert run.count("_with_track(") == 2, run.count("_with_track(")
+    # ואין יותר בלוק רצועות מועתק בתוך run עצמו
+    assert "offer_track" not in run, "שאלת הרצועה שוכפלה"
+
+    helper = inspect.getsource(botjob._with_track)
+    assert "audio_tracks" in helper and "offer_track" in helper
+    # רצועה אחת אינה מייצרת שאלה — לחיצה מיותרת בכל סרטון
+    assert "len(tracks) <= 1" in helper and "await then(0)" in helper
+
+    # הבחירה שורדת עד שקובץ הכתוביות מגיע, בהודעה נפרדת אחר כך
+    assert "_track[int(chat_id)] = track" in run
+    intake = inspect.getsource(botjob.take_subtitle)
+    assert "_track.pop(chat, 0)" in intake, intake[-400:]
+
+    # ומשם היא ממשיכה לתרגום ולצריבה
+    after = inspect.getsource(botjob._after_subtitle)
+    assert "track=track" in after and "work, track)" in after
+    assert "track" in inspect.signature(botjob._after_subtitle).parameters
+    # ‏_with_track שואל מה הרצועה ואינו מקבל אותה — הוא מקבל את
+    # ההמשך שירוץ עם התשובה
+    assert "then" in inspect.signature(botjob._with_track).parameters
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
