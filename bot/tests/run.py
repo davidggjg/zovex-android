@@ -2743,10 +2743,62 @@ def _track_question():
     bare = botmenu.track_keys([{"index": 0}])
     assert "רצועה 1" in bare[0][0][0], bare
 
-    # ורק קובץ עם כמה רצועות נשאל — אחרת זו לחיצה מיותרת בכל סרטון
-    body = inspect.getsource(botjob)
-    assert "if len(tracks) > 1:" in body, "השאלה נשאלת גם על רצועה אחת"
-    assert "await go(0)" in body, "המסלול הרגיל חייב להמשיך בלי שאלה"
+    # ורק קובץ עם כמה רצועות נשאל — אחרת זו לחיצה מיותרת בכל סרטון.
+    # נבדק לפי התנהגות ולא לפי מחרוזת מדויקת: הבדיקה אכפה קודם את
+    # הטקסט "if len(tracks) > 1:" ונשברה כשהבלוק עבר ל-_with_track
+    # עם יציאה מוקדמת, אף שההתנהגות לא השתנתה כלל
+    asked: list = []
+    picked: list = []
+
+    async def fake_tracks(_source):
+        return fake_tracks.answer
+
+    async def fake_offer(chat_id, tracks, on_done):
+        asked.append(tracks)
+
+    class _Screen:
+        async def show(self, *a, **k):
+            pass
+
+    async def then(track):
+        picked.append(track)
+
+    real_tracks = botjob.media.audio_tracks
+    real_offer = botjob.botmenu.offer_track
+    botjob.media.audio_tracks = fake_tracks
+    botjob.botmenu.offer_track = fake_offer
+    try:
+        # המבנה זהה למה ש-audio_tracks מחזיר בפועל, אחרת הבדיקה
+        # מאמתת מבנה מומצא ולא את המציאות
+        one = {"index": 0, "language": "eng", "name": "אנגלית",
+               "title": "", "channels": 2}
+        two = {"index": 1, "language": "heb", "name": "עברית",
+               "title": "דיבוב", "channels": 6}
+
+        # רצועה אחת: ממשיכים מיד, בלי שאלה
+        fake_tracks.answer = [dict(one)]
+        asyncio.run(botjob._with_track(1, Path("x.mkv"), Path("/tmp"),
+                                       _Screen(), then))
+        assert not asked, "השאלה נשאלת גם על רצועה אחת"
+        assert picked == [0], picked
+
+        # שתיים: נשאלת, ולא ממשיכים עד שנבחר
+        asked.clear(); picked.clear()
+        fake_tracks.answer = [dict(one), dict(two)]
+        asyncio.run(botjob._with_track(1, Path("x.mkv"), Path("/tmp"),
+                                       _Screen(), then))
+        assert len(asked) == 1, asked
+        assert not picked, "המשיך בלי לחכות לבחירה"
+        # ולכל רצועה יש תווית קריאה
+        assert all(t.get("label") for t in asked[0]), asked[0]
+    finally:
+        botjob.media.audio_tracks = real_tracks
+        botjob.botmenu.offer_track = real_offer
+    # והמסלול הרגיל מוסר את ההמשך שלו לאותו עוזר, במקום לקרוא לו
+    # ישירות. קודם נבדק כאן "await go(0)" כטקסט, וזה נשבר כשהבלוק
+    # אוחד — אף שההתנהגות זהה
+    assert "_with_track(chat_id, source, work, screen, go)" in \
+        inspect.getsource(botjob.run)
 
 
 @check("שפות השמע נקראות מהקישור, אחת לשפה, והתבנית נבנית סביבן")
