@@ -177,6 +177,61 @@ def _number(token: str) -> float:
     return 0.0 if value != value else value
 
 
+# בדיקה שהקוקיז עובדות. סרטון ציבורי ויציב שקיים שנים
+COOKIE_PROBE = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
+
+# העוגיות שיוטיוב באמת נשענת עליהן. תפוגה שלהן היא תפוגת החיבור
+_KEY_COOKIES = ("SID", "SSID", "HSID", "SAPISID", "__Secure-1PSID",
+                "__Secure-3PSID", "LOGIN_INFO")
+
+
+def read_cookie_file(text: str) -> tuple[int, float, list[str]]:
+    """בודק קובץ עוגיות בתבנית Netscape.
+
+    מחזיר (כמה שורות תקפות, מתי התפוגה הקרובה, אילו עוגיות מפתח יש).
+    תפוגה 0 פירושה שאין תאריך — עוגיית סשן, שתמות עם סגירת הדפדפן
+    """
+    rows, soonest, keys = 0, 0.0, []
+    for line in text.splitlines():
+        line = line.rstrip("\n")
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) < 7:
+            continue
+        domain, _, _, _, expiry, name, _ = parts[:7]
+        if "youtube.com" not in domain and "google.com" not in domain:
+            continue
+        rows += 1
+        if name in _KEY_COOKIES:
+            keys.append(name)
+            try:
+                when = float(expiry)
+            except ValueError:
+                continue
+            if when > 0 and (soonest == 0.0 or when < soonest):
+                soonest = when
+    return rows, soonest, sorted(set(keys))
+
+
+async def cookies_work(path: Path, timeout: float = 45.0) -> tuple[bool, str]:
+    """מנסה למשוך סרטון ציבורי עם העוגיות. לא מוריד דבר."""
+    cmd = _command() + ["--cookies", str(path), "--simulate",
+                        "--no-warnings", "--no-playlist",
+                        "--print", "%(title)s", COOKIE_PROBE]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=child_env())
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError) as exc:
+        return False, f"הבדיקה לא הסתיימה: {exc}"
+    if proc.returncode == 0 and out.strip():
+        return True, out.decode("utf-8", "replace").strip()[:80]
+    reason = err.decode("utf-8", "replace").strip().splitlines()
+    return False, (reason[-1][:200] if reason else "yt-dlp נכשל בלי הסבר")
+
+
 async def heights(url: str, timeout: float = 45.0) -> list[int]:
     """הרזולוציות שבאמת קיימות בקישור, מהגבוהה לנמוכה.
 

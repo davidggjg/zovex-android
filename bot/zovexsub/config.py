@@ -419,6 +419,11 @@ FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 8)
 # יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
 # מחשבון מחובר פותר את זה. ריק = בלי עוגיות
 FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")
+# לאן נשמר קובץ עוגיות שנשלח לבוט בטלגרם. ברירת המחדל יושבת ליד
+# ה-.env ולא בתיקיית העבודה, שנמחקת בסוף כל עבודה
+COOKIES_PATH = os.getenv("COOKIES_PATH") or str(
+    (BASE_DIR if "BASE_DIR" in dir() else Path(__file__).resolve().parent.parent)
+    / "cookies.txt")
 # cobalt — שרת הורדה קטן שרץ אצלנו בקונטיינר. יוטיוב חוסמים את yt-dlp
 # משרתים, ו-cobalt מותקן עצמית עוקף את זה. ריק = משתמשים רק ב-yt-dlp
 COBALT_URL = (os.getenv("COBALT_URL") or "").rstrip("/")

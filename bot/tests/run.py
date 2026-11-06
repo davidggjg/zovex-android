@@ -3987,6 +3987,39 @@ def _quality_asked_only_when_real() -> None:
     assert "voice_keys" in after and "source_screen" in after
 
 
+@check("קובץ עוגיות נבדק לפני שסומכים עליו")
+def _cookie_file_is_checked() -> None:
+    good = "\n".join([
+        "# Netscape HTTP Cookie File",
+        "\t".join([".youtube.com", "TRUE", "/", "TRUE", "1793000000",
+                    "SID", "abc123"]),
+        "\t".join([".youtube.com", "TRUE", "/", "TRUE", "1790000000",
+                    "LOGIN_INFO", "xyz"]),
+        "\t".join([".youtube.com", "TRUE", "/", "TRUE", "0",
+                    "YSC", "session"]),
+        # דומיין זר אינו נספר, אחרת קובץ של אתר אחר ייראה תקין
+        "\t".join([".example.com", "TRUE", "/", "FALSE", "1793000000",
+                    "foo", "bar"]),
+    ])
+    rows, soonest, keys = fetch.read_cookie_file(good)
+    assert rows == 3, rows
+    assert "SID" in keys and "LOGIN_INFO" in keys, keys
+    # התפוגה הקרובה היא זו שתקבע מתי החיבור מת
+    assert soonest == 1790000000.0, soonest
+
+    # טקסט שאינו קובץ עוגיות אינו עובר בשקט
+    assert fetch.read_cookie_file("סתם טקסט") == (0, 0.0, [])
+    assert fetch.read_cookie_file("") == (0, 0.0, [])
+    # ושורה קטועה אינה מפילה את הקריאה
+    assert fetch.read_cookie_file(".youtube.com\tTRUE\t/") == (0, 0.0, [])
+
+    # הבדיקה החיה מריצה simulate בלבד ואינה מורידה דבר
+    probe = inspect.getsource(fetch.cookies_work)
+    assert "--simulate" in probe and "--cookies" in probe
+    assert "-o" not in probe, "הבדיקה אסור שתוריד קובץ"
+    assert config.COOKIES_PATH.endswith("cookies.txt"), config.COOKIES_PATH
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
