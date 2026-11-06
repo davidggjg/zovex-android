@@ -3919,6 +3919,48 @@ def _cue_leaves_when_speech_ends() -> None:
     assert flow.index("trim_to_speech") < flow.index("srt.finalize")
 
 
+@check("הערה שזזה היא תנועה, וצריבה בסופה לא נראית תקועה")
+def _note_movement_clears_stall() -> None:
+    from zovexsub import progress as prog
+
+    async def go() -> None:
+        st = prog.Stage.__new__(prog.Stage)
+        st.title = "🔥 צורב"; st.fraction = 0.0; st.note = ""
+        st.total_bytes = 0; st.done_bytes = 0
+        st.started = time.monotonic(); st.step_started = time.monotonic()
+        st.last_edit = 0.0; st.last_text = ""; st._pulse = None
+        st._lock = asyncio.Lock(); st._said_stalled = False; st.card = None
+
+        async def flush(force): pass
+        st._flush = flush
+
+        await st.show(0.95, note="20/53 קטעים")
+        st.step_started -= 300
+        was = st.step_started
+        # אותו אחוז בדיוק, הערה חדשה — זו תנועה אמיתית. נמדד אצל
+        # המשתמש: "95% · אין תזוזה 48:01" בזמן ש-12 מקודדים עבדו,
+        # והוא כמעט עצר עבודה תקינה בגלל זה
+        await st.show(0.95, note="21/53 קטעים")
+        assert st.step_started > was, "שעון התקיעה לא התאפס"
+
+        st.step_started -= 300
+        was = st.step_started
+        # אותו אחוז ואותה הערה — כאן באמת אין תזוזה, והשעון נשאר
+        await st.show(0.95, note="21/53 קטעים")
+        assert st.step_started == was, "השעון התאפס לשווא"
+
+    asyncio.run(go())
+
+    # ובצריבה המקבילית ההערה נושאת את מונה הקטעים, שזז גם כשהאחוז
+    # כמעט עומד — זו ההוכחה היחידה שהעבודה חיה
+    burn = inspect.getsource(media.burn_parallel) \
+        if hasattr(media, "burn_parallel") else inspect.getsource(media)
+    assert "קטעים" in burn and "finished[0]" in burn
+    # וכל קטע תורם לכל היותר את אורכו. בלי החסימה סכום החריגות
+    # הקטנות של 53 קטעים נעל את האחוז על 95
+    assert "min(1.0, max(0.0, fraction)) * length" in burn
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

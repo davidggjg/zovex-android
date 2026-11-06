@@ -1136,6 +1136,8 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     card.write_text(json.dumps(plan), encoding="utf-8")
 
     done = [0.0] * segments
+    # מונה הקטעים הגמורים, ברשימה כדי שהסגור יוכל לעדכן אותו
+    finished = [0]
     lock = asyncio.Lock()
     started = time.monotonic()
 
@@ -1205,7 +1207,13 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
 
         async def progress(fraction: float, speed: str) -> None:
             async with lock:
-                done[index] = fraction * length
+                # חסימה ל-1.0 לכל קטע בנפרד. ‎-t הוא גבול פענוח בלבד
+                # ו--frames:v הוא התקרה האמיתית, ולכן ffmpeg מדווח
+                # לפעמים מעט מעבר לאורך הקטע. חמישים ושלושה קטעים
+                # שכל אחד חורג במעט ניפחו את הסכום מעל אורך הסרט,
+                # האחוז ננעל על 95 ולא זז יותר — וזה מה שנראה
+                # כ"תקוע על 95 אחוז" בזמן ששנים־עשר מקודדים עבדו
+                done[index] = min(1.0, max(0.0, fraction)) * length
                 if not on_progress:
                     return
                 # הקצב שffmpeg מדווח הוא של תהליך בודד. בצריבה מקבילית
@@ -1213,14 +1221,23 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                 # שניות וידאו נצרבו בסך הכל חלקי הזמן שעבר באמת.
                 elapsed = time.monotonic() - started
                 rate = sum(done) / elapsed if elapsed > 1 else 0.0
-                await on_progress(min(1.0, sum(done) / duration) * ASSEMBLE_FROM,
-                                  f"{rate:.1f}x" if rate else speed)
+                # מספר הקטעים הגמורים נאמר במפורש. גם כשהאחוז כמעט
+                # עומד, המונה הזה זז — וזו ההוכחה היחידה שהמשתמש
+                # צריך כדי לדעת שהעבודה חיה ולא לעצור אותה בטעות
+                await on_progress(
+                    min(1.0, sum(done) / duration) * ASSEMBLE_FROM,
+                    f"{finished[0]}/{segments} קטעים"
+                    + (f" · {rate:.1f}x" if rate else f" · {speed}"))
 
         # ממתין למקום פנוי במכונה. זה מה שמחלק את הליבות בין צריבות
         # מקבילות: קטע שמחכה לא צורך כלום
         async with pool.slot(token):
             await _run_progress(cmd, length, progress, timeout=limit)
-        log.info("קטע %d/%d הסתיים", index + 1, segments)
+        async with lock:
+            finished[0] += 1
+            done[index] = length
+        log.info("קטע %d/%d הסתיים (%d גמורים)",
+                 index + 1, segments, finished[0])
         return piece
 
     async with pool.job() as token:

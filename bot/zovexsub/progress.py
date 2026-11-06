@@ -186,12 +186,19 @@ class Stage:
             # ההתקדמות לא חוזרת אחורה כשעדכונים מגיעים לא בסדר — אבל force
             # כן מאפס אותה, כי הוא מסמן שהעבודה באמת התחילה מחדש. בלי זה
             # max היה מקפיא את הפס על האחוז שהניסיון שנפל הספיק להגיע אליו
+            # הערה שהשתנתה היא תנועה ממש כמו אחוז שהשתנה. בלי זה
+            # שלב שהאחוז שלו כמעט עומד — צריבה מקבילית בסופה — נראה
+            # תקוע שעה שלמה אף שמונה הקטעים זז כל דקה. נמדד אצל
+            # המשתמש: "95% · אין תזוזה 48:01" בזמן שהמכונה עבדה
+            # במלוא הכוח, והוא כמעט עצר עבודה תקינה בגלל זה
+            # והשחרור חייב להיות מחוץ לתנאי האחוז, כי בדיוק המקרה
+            # הזה הוא אחוז שאינו עולה בזמן שההערה כן זזה
+            if (fraction > self.fraction) or (note and note != self.note):
+                self.step_started = time.monotonic()
+                if self._said_stalled:
+                    log.info("השלב \"%s\" זז שוב", self.title)
+                    self._said_stalled = False
             if fraction > self.fraction or force:
-                if fraction != self.fraction:
-                    self.step_started = time.monotonic()
-                    if self._said_stalled:
-                        log.info("השלב \"%s\" זז שוב", self.title)
-                        self._said_stalled = False
                 self.fraction = fraction if force else max(self.fraction, fraction)
                 if force:
                     self.started = time.monotonic()   # גם הזמן המשוער מתאפס
