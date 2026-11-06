@@ -3888,6 +3888,37 @@ def _track_asked_on_every_path() -> None:
     assert "then" in inspect.signature(botjob._with_track).parameters
 
 
+@check("כתובית נעלמת עם סוף הדיבור ולא נשארת בשקט")
+def _cue_leaves_when_speech_ends() -> None:
+    # הכלל של ה-BBC: כתובית מופיעה עם תחילת הדיבור, נעלמת בערך עם
+    # סיומו, ואינה נשארת יותר מכשנייה וחצי אחרי שהדובר הפסיק.
+    # ‏finalize חתך עד כה לפי זמן קריאה בלבד ולא ידע מתי הדיבור נגמר
+    cue = srt.Cue(1, 1.0, 9.0, "שלום לך",
+                  words=[(1.0, 1.6), (2.2, 3.0)])
+    assert srt.trim_to_speech([cue]) == 1
+    assert abs(cue.end - (3.0 + config.SRT_LINGER)) < 0.01, cue.end
+
+    # אבל קריאוּת גוברת: שורה צפופה שנאמרה מהר נשארת מספיק זמן
+    dense = srt.Cue(2, 1.0, 9.0, "א" * 60, words=[(1.0, 1.5)])
+    srt.trim_to_speech([dense])
+    needed = 60 / config.SRT_READ_SPEED
+    assert dense.end >= 1.0 + needed - 0.01, (dense.end, needed)
+
+    # בלי תזמוני מילים אין מה לדעת, ולא נוגעים
+    blind = srt.Cue(3, 1.0, 9.0, "טקסט")
+    assert srt.trim_to_speech([blind]) == 0
+    assert blind.end == 9.0
+
+    # והפונקציה רק מקצרת. כתובית קצרה מכדי להיקרא אינה מתארכת כאן
+    short = srt.Cue(4, 1.0, 1.4, "טקסט", words=[(1.0, 1.4)])
+    srt.trim_to_speech([short])
+    assert short.end == 1.4, short.end
+
+    # ובצינור היא רצה לפני finalize, שאחרת היה חותך לפי קריאה בלבד
+    flow = inspect.getsource(pipeline.run)
+    assert flow.index("trim_to_speech") < flow.index("srt.finalize")
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

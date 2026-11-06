@@ -912,6 +912,45 @@ def hush_middle(cue: "Cue") -> tuple[float, float]:
     return best, mid
 
 
+def speech_end(cue: "Cue") -> float:
+    """מתי באמת נגמר הדיבור בכתובית, לפי תזמוני המילים של המקור."""
+    ends = [float(end) for start, end in (cue.words or [])
+            if float(end) > float(start)]
+    return max(ends) if ends else 0.0
+
+
+def trim_to_speech(cues: list["Cue"]) -> int:
+    """מקצר כתובית שנשארת על המסך הרבה אחרי שהדיבור בה נגמר.
+
+    זה הכלל שחסר לנו. ‏finalize חותך לפי זמן קריאה בלבד — אורך
+    הטקסט חלקי מהירות הקריאה — ואף שלב לא שואל מתי הדובר הפסיק
+    לדבר, אף שתזמוני המילים של המקור יושבים לנו ב-cue.words.
+    כתובית שהמילה האחרונה בה נאמרה בשנייה השלישית יכולה להישאר
+    עד השמינית, וזה בדיוק "נשאר על המסך בזמן שתיקות".
+
+    ה-BBC קובע שכתובית מופיעה עם תחילת הדיבור, נעלמת בערך עם
+    סיומו, ואינה נשארת יותר מכשנייה וחצי אחרי שהדובר הפסיק.
+
+    אבל קריאוּת גוברת: שורה צפופה שנאמרה מהר צריכה להישאר מספיק
+    זמן כדי להיקרא, גם אל תוך השקט שאחריה. לכן התקרה היא הגדולה
+    מבין שלוש — סוף הדיבור ועוד שהייה, זמן הקריאה הדרוש, והמינימום
+    — והפונקציה הזאת רק מקצרת, לעולם לא מאריכה
+    """
+    trimmed = 0
+    for cue in cues:
+        spoke = speech_end(cue)
+        if not spoke or spoke >= cue.end:
+            continue            # אין נתוני מילים, או שהדיבור נמשך עד הסוף
+        letters = len(cue.text.replace("\n", " "))
+        readable = cue.start + letters / max(1.0, config.SRT_READ_SPEED)
+        roof = max(spoke + config.SRT_LINGER, readable,
+                   cue.start + config.SRT_MIN_DURATION)
+        if cue.end > roof:
+            cue.end = roof
+            trimmed += 1
+    return trimmed
+
+
 def widest_hush(cue: "Cue") -> float:
     """השקט הארוך ביותר בתוך הכתובית, לפי תזמוני המילים."""
     spoken = getattr(cue, "words", None) or []

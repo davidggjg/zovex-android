@@ -221,6 +221,14 @@ async def run(source: Path, work: Path, *, progress: Progress,
             closed = srt.close_gaps(cues, fps)
             log.info("נסגרו %d מרווחי הבהוב", closed)
 
+    # כתובית שנשארת על המסך אחרי שהדיבור בה נגמר. זה רץ לפני
+    # finalize, שחותך לפי זמן קריאה בלבד ואינו יודע מתי הדובר
+    # הפסיק — בעוד תזמוני המילים של המקור יושבים לנו ב-cue.words
+    lingered = srt.trim_to_speech(cues)
+    if lingered:
+        log.info("קוצרו %d כתוביות שנשארו על המסך אחרי סוף הדיבור",
+                 lingered)
+
     # השער האחרון לפני הכתיבה: כל מה שרץ עד כאן שינה טקסט וזמנים,
     # ואיש לא בדק אותם שוב. ראו srt.finalize
     repaired = srt.finalize(cues, fps)
