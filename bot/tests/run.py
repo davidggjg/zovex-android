@@ -3961,6 +3961,32 @@ def _note_movement_clears_stall() -> None:
     assert "min(1.0, max(0.0, fraction)) * length" in burn
 
 
+@check("שאלת האיכות נשאלת רק כשיש באמת ממה לבחור")
+def _quality_asked_only_when_real() -> None:
+    from zovexsub import botmenu
+
+    flow = inspect.getsource(botmenu.ask_quality) \
+        if hasattr(botmenu, "ask_quality") else inspect.getsource(botmenu)
+
+    # קודם כישלון בקריאת האיכויות הציג רשימה קבועה, וזו הבטחה שאי
+    # אפשר לעמוד בה: המשתמש בחר 1080p מסרטון שאין לו. ביוטיוב
+    # הקריאה נכשלת הרבה, ולכן זו הייתה התנהגות יומיומית
+    assert "if len(tall) <= 1:" in flow, "עדיין נשאלת שאלה בלי איכויות"
+    assert "_after_quality(choice, message_id)" in flow
+
+    # ורזולוציה אחת אינה שאלה — ממשיכים איתה, כמו ברצועת שמע
+    rows = botmenu.quality_keys([1080, 720, 360])
+    picks = [b[1] for row in rows for b in row]
+    assert "q:1080" in picks and "q:360" in picks, picks
+    assert "q:best" in picks and "cancel" in picks, picks
+    # הכפתורים נבנים מהרזולוציות שנמסרו, ולא מרשימה קבועה
+    assert "q:480" not in picks, picks
+
+    # וההמשך אחיד: אותה פונקציה גם כשנבחרה איכות וגם כשלא נשאלה
+    after = inspect.getsource(botmenu._after_quality)
+    assert "voice_keys" in after and "source_screen" in after
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

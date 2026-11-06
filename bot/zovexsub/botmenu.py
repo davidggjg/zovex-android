@@ -302,12 +302,48 @@ async def greet_link(chat_id, url: str) -> None:
     tall, voices = await asyncio.gather(fetch.heights(url),
                                         fetch.audio_options(url))
     choice.voices = voices
-    title = QUALITY
-    if not tall:
-        title += "\n\n<i>לא הצלחתי לקרוא את האיכויות מהקישור — " \
-                 "הרשימה כללית.</i>"
-    await localbot.edit(chat_id, message_id, title,
+
+    # שאלה נשאלת רק כשיש באמת ממה לבחור.
+    #
+    # קודם כישלון בקריאת האיכויות הציג רשימה קבועה, וזו הבטחה שאי
+    # אפשר לעמוד בה: המשתמש בחר 1080p מסרטון שאין לו, וקיבל משהו
+    # אחר. ביוטיוב הקריאה נכשלת הרבה — בלי עוגיות היא נחסמת — ולכן
+    # זו הייתה התנהגות יומיומית ולא מקרה קצה. נמדד אצל המשתמש:
+    # "מביא לי איכויות שבכלל לא קיימות, כל פעם אותן איכויות".
+    #
+    # וגם רזולוציה אחת אינה שאלה. ממשיכים איתה, כמו ברצועת שמע
+    if len(tall) <= 1:
+        picked = str(tall[0]) if tall else "best"
+        choice.quality = picked
+        log.info("בלי שאלת איכות: %s",
+                 f"רק {picked}p בקישור" if tall
+                 else "לא הצלחתי לקרוא את האיכויות — יורד הטוב ביותר")
+        await localbot.edit(
+            chat_id, message_id,
+            f"🎞️ <b>מוריד ב-{picked}p</b>" if tall else
+            "🎞️ <b>מוריד באיכות הטובה ביותר</b>\n"
+            "<i>הקישור לא מסר רשימת איכויות.</i>")
+        await _after_quality(choice, message_id)
+        return
+
+    await localbot.edit(chat_id, message_id, QUALITY,
                         buttons=localbot.keyboard(quality_keys(tall)))
+
+
+async def _after_quality(choice, message_id: int) -> None:
+    """ממשיך משנבחרה האיכות — או משהתברר שאין מה לשאול עליה.
+
+    שפות השמע נקראו מראש, יחד עם האיכויות. אין כאן קריאת רשת
+    בכוונה: ‏_press רץ בלולאה שמושכת עדכונים מטלגרם
+    """
+    if len(choice.voices) > 1:
+        await localbot.edit(choice.chat_id, message_id, VOICE,
+                            buttons=localbot.keyboard(
+                                voice_keys(choice.voices)))
+        return
+    text, keys = source_screen(choice.chat_id)
+    await localbot.edit(choice.chat_id, message_id, text,
+                        buttons=localbot.keyboard(keys))
 
 
 async def _press(query: dict) -> None:
@@ -351,16 +387,7 @@ async def _press(query: dict) -> None:
 
     if data.startswith("q:"):
         choice.quality = data.split(":", 1)[1]
-        # שפות השמע נקראו מראש, יחד עם האיכויות. אין כאן קריאת רשת
-        # בכוונה: ‏_press רץ בלולאה שמושכת עדכונים מטלגרם
-        if len(choice.voices) > 1:
-            await localbot.edit(choice.chat_id, message_id, VOICE,
-                                buttons=localbot.keyboard(
-                                    voice_keys(choice.voices)))
-            return
-        text, keys = source_screen(choice.chat_id)
-        await localbot.edit(choice.chat_id, message_id, text,
-                            buttons=localbot.keyboard(keys))
+        await _after_quality(choice, message_id)
         return
 
     if data.startswith("aud:"):
