@@ -1,0 +1,22 @@
+[Unit]
+Description=Zovex Hebrew subtitle userbot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/zovexsub/bot
+ExecStart=/opt/zovexsub/venv/bin/python -m zovexsub.bot
+Restart=always
+RestartSec=10
+# שומר על שרת עמוס: עדיפות CPU/IO נמוכה ותקרת זיכרון
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=3G
+CPUWeight=30
+StandardOutput=append:/var/log/zovexsub.log
+StandardError=append:/var/log/zovexsub.log
+
+[Install]
+WantedBy=multi-user.target
