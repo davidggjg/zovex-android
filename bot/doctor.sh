@@ -56,27 +56,35 @@ fi
 
 # ── 2. קודק x265 (הצריבה שלנו) ────────────────────────────────
 head_ "קודקים"
-if ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx265; then
-  ok "libx265 — זמין (זו שיטת הצריבה שלנו: x265 + CRF)"
-else
-  bad "libx265 חסר! הצריבה תיפול. צריך build של ffmpeg עם --enable-libx265"
-fi
-ffmpeg -hide_banner -filters 2>/dev/null | grep -q " subtitles " \
-  && ok "פילטר subtitles — זמין" \
-  || bad "פילטר subtitles חסר — אי אפשר לצרוב כתוביות"
+# הפלט נקרא למשתנה ולא נבדק בצינור. עם pipefail, ‏grep -q יוצא
+# ברגע שהוא מוצא, שולח SIGPIPE ל-ffmpeg, ו-ffmpeg מת עם קוד שגיאה —
+# ואז הצינור כולו נחשב כישלון. נמדד: הבדיקה דיווחה "libx265 חסר"
+# בכל הרצה, בזמן ששנים־עשר מקודדי x265 רצו על אותה מכונה
+ENCODERS=$(ffmpeg -hide_banner -encoders 2>/dev/null || true)
+FILTERS=$(ffmpeg -hide_banner -filters 2>/dev/null || true)
+
+case "$ENCODERS" in
+  *libx265*) ok "libx265 — זמין (זו שיטת הצריבה שלנו: x265 + CRF)" ;;
+  *) bad "libx265 חסר! הצריבה תיפול. צריך ffmpeg עם --enable-libx265" ;;
+esac
+case "$FILTERS" in
+  *" subtitles "*) ok "פילטר subtitles — זמין" ;;
+  *) bad "פילטר subtitles חסר — אי אפשר לצרוב כתוביות" ;;
+esac
 
 # ── 3. פונט עברי ──────────────────────────────────────────────
 head_ "פונט עברי"
-if command -v fc-list >/dev/null 2>&1 && \
-   fc-list :lang=he 2>/dev/null | grep -q .; then
-  ok "יש פונט עברי ($(fc-list :lang=he 2>/dev/null | wc -l) גרסאות)"
+HEBREW_FONTS=$(fc-list :lang=he 2>/dev/null | wc -l || echo 0)
+if command -v fc-list >/dev/null 2>&1 && [ "${HEBREW_FONTS:-0}" -gt 0 ]; then
+  ok "יש פונט עברי ($HEBREW_FONTS גרסאות)"
 else
   warn "אין פונט עברי — הכתוביות הצרובות ייצאו ריבועים"
   if [[ $MODE != check ]] && command -v apt-get >/dev/null 2>&1; then
     apt-get install -y -qq fonts-noto-core fonts-dejavu >/dev/null 2>&1
     apt-get install -y -qq fonts-noto-hebrew >/dev/null 2>&1 || true
     fc-cache -f >/dev/null 2>&1
-    fc-list :lang=he 2>/dev/null | grep -q . \
+    HEBREW_FONTS=$(fc-list :lang=he 2>/dev/null | wc -l || echo 0)
+    [ "${HEBREW_FONTS:-0}" -gt 0 ] \
       && ok "פונט עברי הותקן" || bad "עדיין אין פונט עברי"
   fi
 fi
