@@ -29,6 +29,8 @@ ETA_AFTER_SECONDS = 90.0
 # על 0% דקות ארוכות בלי שאיש יידע אם הוא עובד או מת, וזו הייתה התלונה
 # החוזרת ביותר. כאן זה נאמר על המסך ונרשם בלוג, במקום להישאר ניחוש
 STALL_AFTER = 120.0
+# ירידה באחוז שמעליה זו התחלה מחדש ולא עדכון שהגיע לא בסדר
+RESTART_DROP = 0.2
 
 
 def bar(fraction: float) -> str:
@@ -198,10 +200,25 @@ class Stage:
                 if self._said_stalled:
                     log.info("השלב \"%s\" זז שוב", self.title)
                     self._said_stalled = False
-            if fraction > self.fraction or force:
-                self.fraction = fraction if force else max(self.fraction, fraction)
-                if force:
+            # ירידה גדולה אינה עדכון שהגיע לא בסדר — היא התחלה מחדש.
+            #
+            # ‏max שמר על האחוז הגבוה ביותר שנראה, כדי שעדכונים שמגיעים
+            # לא בסדר לא יקפיצו את הפס אחורה. אבל כשהצריבה המקבילית
+            # נופלת ומתחילה ניסיון שני, היא דוחפת 95% ואז חוזרת לאפס —
+            # והפס נשאר תקוע על 95 לכל אורך הניסיון השני. נמדד אצל
+            # המשתמש: "95% · 0/87 קטעים" בזמן שהצריבה רצה מההתחלה.
+            #
+            # רעש של עדכונים לא מסודרים הוא אחוזים בודדים; ירידה של
+            # חמישית מהסרגל היא אירוע אחר לגמרי
+            restart = fraction + RESTART_DROP < self.fraction
+            if fraction > self.fraction or force or restart:
+                self.fraction = (fraction if (force or restart)
+                                 else max(self.fraction, fraction))
+                if force or restart:
                     self.started = time.monotonic()   # גם הזמן המשוער מתאפס
+                if restart:
+                    log.info("השלב \"%s\" התחיל מחדש (%.0f%% ⇠ %.0f%%)",
+                             self.title, self.fraction * 100, fraction * 100)
             if done_bytes:
                 self.done_bytes = max(self.done_bytes, done_bytes)
             if note:

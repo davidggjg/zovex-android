@@ -4215,6 +4215,42 @@ def _broken_segment_is_removed() -> None:
     assert "for attempt in (1, 2):" in outer, "אין תקרה לניסיונות"
 
 
+@check("ירידה גדולה באחוז היא התחלה מחדש, ורעש קטן אינו")
+def _big_drop_is_a_restart() -> None:
+    from zovexsub import progress as prog
+
+    async def go() -> None:
+        st = prog.Stage.__new__(prog.Stage)
+        st.title = "🔥 צורב"; st.fraction = 0.0; st.note = ""
+        st.total_bytes = 0; st.done_bytes = 0
+        st.started = time.monotonic(); st.step_started = time.monotonic()
+        st.last_edit = 0.0; st.last_text = ""; st._pulse = None
+        st._lock = asyncio.Lock(); st._said_stalled = False; st.card = None
+
+        async def flush(force): pass
+        st._flush = flush
+
+        # נמדד אצל המשתמש: "95% · 0/87 קטעים". הצריבה המקבילית נפלה,
+        # דחפה 95% לפס, והניסיון השני רץ מאפס מתחת לפס תקוע
+        await st.show(0.95, note="82/87 קטעים")
+        assert st.fraction == 0.95
+        await st.show(0.0, note="מתחיל ניסיון שני")
+        assert st.fraction == 0.0, st.fraction
+        await st.show(0.03, note="2/87 קטעים")
+        assert abs(st.fraction - 0.03) < 1e-9, st.fraction
+        # אבל עדכון שהגיע לא בסדר עדיין אינו מקפיץ אחורה
+        await st.show(0.01)
+        assert abs(st.fraction - 0.03) < 1e-9, st.fraction
+
+    asyncio.run(go())
+    assert 0.05 <= prog.RESTART_DROP <= 0.5, prog.RESTART_DROP
+
+    # והניסיון החוזר מדווח אפס, ולא "כמעט סיימתי"
+    outer = inspect.getsource(media.burn)
+    assert 'on_progress(0.0, "מתחיל ניסיון שני")' in outer, outer[-500:]
+    assert 'on_progress(ASSEMBLE_FROM, "מרכיב שוב")' not in outer
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

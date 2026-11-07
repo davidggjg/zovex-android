@@ -965,7 +965,9 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
                                 "על הקטעים שכבר נצרבו",
                                 type(failure).__name__, failure)
                     if on_progress:
-                        await on_progress(ASSEMBLE_FROM, "מרכיב שוב")
+                        # קודם נדחף כאן 95%, והניסיון השני רץ מאפס
+                        # מתחת לפס שתקוע על 95. אפס הוא האמת
+                        await on_progress(0.0, "מתחיל ניסיון שני")
         if exc is not None:
             # B10: קודם נרשמה כאן שורה אחת בלי עקבות, והמסלול המקבילי
             # נזנח בשקט. צריבה שלמה רצה אז פי שלושה לאט בלי שאיש ידע
