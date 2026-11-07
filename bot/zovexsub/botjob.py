@@ -512,6 +512,29 @@ async def run(choice) -> None:
             pipeline.cleanup(work)
             return
 
+        if choice.source == "linked":
+            # הכתוביות כבר קיימות בקישור, והתזמונים שלהן נכונים.
+            # אין כאן תמלול בכלל: לא Groq, לא ג'מיני, ואף אחת
+            # מההזיות שהתמלול מביא איתו — רק תרגום
+            async def linked_ready(track: int) -> None:
+                await screen.show("📥 מוריד את הכתוביות מהקישור…",
+                                  force=True)
+                given = await fetch.grab_subtitles(
+                    choice.url, work, choice.sub_code, choice.sub_auto)
+                if given is None:
+                    # נפילה למסלול הרגיל עדיפה על עבודה שמתה: המשתמש
+                    # יקבל כתוביות, רק בדרך הארוכה
+                    await screen.show("⚠️ לא הצלחתי למשוך את הכתוביות "
+                                      "מהקישור — מתמלל במקום.", force=True)
+                    await _make_subtitles(chat_id, source, work, screen,
+                                          track)
+                    return
+                _translating.add(int(chat_id))
+                await _after_subtitle(chat_id, source, given, work, track)
+
+            await _with_track(chat_id, source, work, screen, linked_ready)
+            return
+
         if _brings_own(choice):
             _waiting[int(chat_id)] = source
 
@@ -547,26 +570,8 @@ async def run(choice) -> None:
             await _with_track(chat_id, source, work, screen, own_ready)
             return
 
-        async def progress(text: str) -> None:
-            await screen.show(text)
-
-        async def go(track: int) -> None:
-            result = await pipeline.run(source, work, progress=progress,
-                                        track=track)
-            await screen.show(
-                f"✅ <b>{result.cues} כתוביות</b> · "
-                f"{result.duration / 60:.1f} דק׳ · "
-                f"שפת מקור: {result.language}", force=True)
-            srt_file = Path(result.srt_path)
-            try:
-                await localbot.call("sendDocument", chat_id=str(chat_id),
-                                    document=localbot._to_container(srt_file))
-            finally:
-                localbot.clear_outbox(srt_file.name)
-            await _offer_burn(chat_id, source, Path(result.srt_path), work,
-                              track=track)
-
-        await _with_track(chat_id, source, work, screen, go)
+        await _make_subtitles(chat_id, source, work, screen,
+                              getattr(choice, "track", 0) or 0)
     except asyncio.CancelledError:
         # כפתור עצור. מנקים את תיקיית העבודה ומודיעים, ואז נותנים
         # לביטול להמשיך — תהליך שמתעלם מביטול הוא תהליך שלא נעצר
@@ -688,6 +693,38 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
     await localbot.say(chat_id, "✅ קיבלתי את הכתוביות.")
     await _after_subtitle(chat_id, source, srt_path, work,
                           _track.pop(chat, 0))
+
+
+async def _make_subtitles(chat_id, source: Path, work: Path, screen,
+                          track: int = 0) -> None:
+    """המסלול המלא: תמלול, תרגום, ואז הצעת צריבה.
+
+    הוצא מתוך run כדי שגם מסלול הכתוביות-מהקישור יוכל ליפול לכאן
+    כשהמשיכה נכשלת. נפילה למסלול הארוך עדיפה על עבודה שמתה
+    """
+    async def progress(text: str) -> None:
+        await screen.show(text)
+
+    async def go(picked: int) -> None:
+        result = await pipeline.run(source, work, progress=progress,
+                                    track=picked)
+        await screen.show(
+            f"✅ <b>{result.cues} כתוביות</b> · "
+            f"{result.duration / 60:.1f} דק׳ · "
+            f"שפת מקור: {result.language}", force=True)
+        srt_file = Path(result.srt_path)
+        try:
+            await localbot.call("sendDocument", chat_id=str(chat_id),
+                                document=localbot._to_container(srt_file))
+        finally:
+            localbot.clear_outbox(srt_file.name)
+        await _offer_burn(chat_id, source, srt_file, work, track=picked)
+
+    # הרצועה כבר נבחרה כשנפלנו לכאן ממסלול אחר, ואין לשאול פעמיים
+    if track:
+        await go(track)
+        return
+    await _with_track(chat_id, source, work, screen, go)
 
 
 async def _with_track(chat_id, source: Path, work: Path, screen,

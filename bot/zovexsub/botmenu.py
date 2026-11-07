@@ -46,6 +46,9 @@ class Choice:
     track: int = 0               # רצועת השמע שנבחרה, במספור של ffmpeg
     audio: str = ""              # מזהה תבנית השמע מקישור, כשנבחרה שפה
     voices: list = field(default_factory=list)   # שפות השמע שבקישור
+    subs: list = field(default_factory=list)     # הכתוביות שקיימות בקישור
+    sub_code: str = ""           # שפת הכתוביות שנבחרה מהקישור
+    sub_auto: bool = False       # האם היא אוטומטית (תמלול מכונה)
 
 
 # כל שלב: כותרת, שורות כפתורים, והשדה שנשמר
@@ -158,7 +161,8 @@ ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
 ASK_KEYS = [[("✅ כן", "burn:yes"), ("❌ לא", "burn:no")]]
 
 # השאלה הראשונה, מיד אחרי שהסרטון מתקבל ולפני שמתחיל עיבוד כלשהו
-def source_screen(chat_id, note: str = "") -> tuple[str, list]:
+def source_screen(chat_id, note: str = "",
+                  subs: list | None = None) -> tuple[str, list]:
     """מסך הפתיחה: מה נבחר, ושתי דרכים להתחיל.
 
     קודם נשאלו חמש שאלות בכל פרק, באותן תשובות בדיוק. ההגדרות
@@ -174,7 +178,16 @@ def source_screen(chat_id, note: str = "") -> tuple[str, list]:
             "<b>ההגדרות שלך:</b>\n"
             f"{prefs.summary(saved)}\n\n"
             "מה לעשות עם הכתוביות?")
-    keys = [[("🤖 תייצר לי כתוביות", "src:make")],
+    keys = []
+    # כתוביות שכבר קיימות בקישור קודמות לכל השאר: התזמונים שלהן
+    # נכונים, וזה הדבר שהכי קשה לנו לייצר. קישור שיש לו כתוביות
+    # אינו צריך תמלול בכלל — ואיתו גם אף אחת מההזיות שלו
+    best = (subs or [None])[0]
+    if best:
+        tag = " (אוטומטי)" if best["auto"] else ""
+        keys.append([(f"📥 כתוביות מהקישור · {best['name']}{tag} — תרגם",
+                      "src:linked")])
+    keys += [[("🤖 תייצר לי כתוביות", "src:make")],
             [("📄 יש לי קובץ — צרוב כמו שהוא", "src:own")],
             # המסלול השלישי: הקובץ של המשתמש מסונכרן, והתזמונים שלו
             # הם בדיוק הדבר שהכי קשה לנו לייצר. כאן הם נשמרים כמו
@@ -303,9 +316,14 @@ async def greet_link(chat_id, url: str) -> None:
                             buttons=localbot.keyboard(keys))
         return
 
-    tall, voices = await asyncio.gather(fetch.heights(url),
-                                        fetch.audio_options(url))
+    tall, voices, subs = await asyncio.gather(fetch.heights(url),
+                                              fetch.audio_options(url),
+                                              fetch.subtitle_tracks(url))
     choice.voices = voices
+    choice.subs = subs
+    if subs:
+        choice.sub_code = subs[0]["code"]
+        choice.sub_auto = bool(subs[0]["auto"])
 
     # שאלה נשאלת רק כשיש באמת ממה לבחור.
     #
@@ -344,7 +362,8 @@ async def _after_quality(choice, message_id: int, note: str = "") -> None:
                             buttons=localbot.keyboard(
                                 voice_keys(choice.voices)))
         return
-    text, keys = source_screen(choice.chat_id, note)
+    text, keys = source_screen(choice.chat_id, note,
+                               getattr(choice, "subs", None))
     await localbot.edit(choice.chat_id, message_id, text,
                         buttons=localbot.keyboard(keys))
 

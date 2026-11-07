@@ -2801,8 +2801,10 @@ def _track_question():
     # והמסלול הרגיל מוסר את ההמשך שלו לאותו עוזר, במקום לקרוא לו
     # ישירות. קודם נבדק כאן "await go(0)" כטקסט, וזה נשבר כשהבלוק
     # אוחד — אף שההתנהגות זהה
+    # ‏go חי ב-_make_subtitles מאז שהמסלול המלא הוצא לשם, כדי
+    # שמסלול הכתוביות-מהקישור יוכל ליפול אליו כשהמשיכה נכשלת
     assert "_with_track(chat_id, source, work, screen, go)" in \
-        inspect.getsource(botjob.run)
+        inspect.getsource(botjob._make_subtitles)
 
 
 @check("שפות השמע נקראות מהקישור, אחת לשפה, והתבנית נבנית סביבן")
