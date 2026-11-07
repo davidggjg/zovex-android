@@ -1178,6 +1178,11 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                          index + 1, segments, have)
                 async with lock:
                     done[index] = length
+                    # גם קטע שדולג הוא קטע גמור. בלי זה המונה סופר רק
+                    # את מה שנצרב בריצה הזאת, והמשתמש רואה "25/87"
+                    # לצד "95%" — שני מספרים נכונים שמודדים דברים
+                    # שונים, ונראים כסתירה
+                    finished[0] += 1
                 return piece
             log.warning("קטע %d/%d קיים אבל אורכו %.1f במקום %.1f — נצרב מחדש",
                         index + 1, segments, have, length)
