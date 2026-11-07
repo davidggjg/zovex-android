@@ -4020,6 +4020,37 @@ def _cookie_file_is_checked() -> None:
     assert config.COOKIES_PATH.endswith("cookies.txt"), config.COOKIES_PATH
 
 
+@check("יוטיוב מקבלת את פותר האתגר, ואתרים אחרים לא")
+def _youtube_gets_challenge_solver() -> None:
+    # יוטיוב דורשת פתרון אתגר JavaScript לפני שהיא מוסרת פורמטים.
+    # בלי הסקריפט הפותר היא מחזירה "No video formats found" — שגיאה
+    # שנראית כמו חסימה או כמו עוגיות פגות ואינה לא זה ולא זה. נמדד
+    # אצל המשתמש עם עוגיות תקינות לגמרי
+    was = config.YTDLP_COMPONENTS
+    try:
+        config.YTDLP_COMPONENTS = "ejs:github"
+        for link in ("https://www.youtube.com/watch?v=x",
+                     "https://youtu.be/x"):
+            args = fetch._browser_args(link)
+            assert "--remote-components" in args, (link, args)
+            assert "ejs:github" in args, args
+            # וביוטיוב לא נוגעים ב-User-Agent: הוא חלק מזרימת ה-PO token
+            assert "--user-agent" not in args, args
+
+        other = fetch._browser_args("https://example.com/v.mp4")
+        assert "--remote-components" not in other, other
+        assert "--user-agent" in other, other
+
+        # וריק מכבה לגמרי, למי שמתקין את הפותר ידנית
+        config.YTDLP_COMPONENTS = ""
+        assert fetch._browser_args("https://youtu.be/x") == []
+    finally:
+        config.YTDLP_COMPONENTS = was
+
+    # והקוד כבר יודע לאתר deno גם כשה-PATH של systemd לא כולל אותו
+    assert hasattr(fetch, "deno_ready") and hasattr(fetch, "child_env")
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

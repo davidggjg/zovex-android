@@ -112,6 +112,17 @@ def _browser_args(url: str) -> list[str]:
         # השרת ולא על האתר הספציפי
         args += ["--proxy", config.FETCH_PROXY]
     if _is_youtube(url):
+        # יוטיוב דורשת פתרון אתגר JavaScript ("n challenge") לפני
+        # שהיא מוסרת פורמטים, ו-yt-dlp צריך לכך סקריפט פותר שהוא
+        # מוריד בנפרד. בלעדיו הוא מדווח "No video formats found" —
+        # שגיאה שנראית כמו חסימה או כמו עוגיות פגות, ואינה לא זה
+        # ולא זה. נמדד אצל המשתמש עם עוגיות תקינות לגמרי:
+        #   "n challenge solving failed ... solver script (deno)
+        #    were skipped ... enable with --remote-components"
+        #
+        # הדגל אינו חל על קישורים אחרים: רק יוטיוב מציבה את האתגר
+        if config.YTDLP_COMPONENTS:
+            args += ["--remote-components", config.YTDLP_COMPONENTS]
         return args
     where = urllib.parse.urlsplit(url)
     origin = (config.FETCH_REFERER

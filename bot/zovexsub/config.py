@@ -418,6 +418,10 @@ FETCH_FORMAT_DRIVE = os.getenv("FETCH_FORMAT_DRIVE", "source/best")
 FETCH_CONNECTIONS = _int("FETCH_CONNECTIONS", 8)
 # יוטיוב חוסם הורדות משרתים ודורש התחברות. קובץ עוגיות בפורמט Netscape
 # מחשבון מחובר פותר את זה. ריק = בלי עוגיות
+# רכיבים מרוחקים של yt-dlp לפתרון אתגר ה-JavaScript של יוטיוב.
+# בלעדיהם יוטיוב מחזירה "No video formats found" גם עם עוגיות תקינות.
+# ריק מכבה לגמרי, למי שמעדיף להתקין את הפותר ידנית
+YTDLP_COMPONENTS = os.getenv("YTDLP_COMPONENTS", "ejs:github")
 FETCH_COOKIES = os.getenv("FETCH_COOKIES", "")
 # לאן נשמר קובץ עוגיות שנשלח לבוט בטלגרם. ברירת המחדל יושבת ליד
 # ה-.env ולא בתיקיית העבודה, שנמחקת בסוף כל עבודה
