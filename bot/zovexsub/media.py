@@ -1081,7 +1081,15 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     frames = round(duration * fps) if fps > 0 else 0
     per_segment = frames // segments if frames else 0
     span = (per_segment * step) if per_segment else (duration / segments)
-    limit = config.burn_timeout(span)
+    # התקרה מתחשבת במקביליות. קטע בודד שרץ לבדו מקבל מכונה שלמה,
+    # אבל תשעה קטעים שרצים יחד חולקים אותה — וכל אחד מתקדם בתשיעית
+    # מהקצב. התקרה חושבה לקטע בודד ולכן נחתכה באמצע עבודה תקינה.
+    #
+    # נמדד אצל המשתמש: "הצריבה עברה את תקרת הזמן (30 דקות) ונעצרה",
+    # ואחריה 89 ניסיונות חוזרים בלוג. זה היה השורש של כל הלולאה —
+    # לא הקטעים הפגומים ולא האימות, אלא שעון שלא ידע שיש תשעה
+    busy = max(1, config.burn_slots(os.cpu_count() or 2))
+    limit = config.burn_timeout(span * busy)
     pool = core_pool()
     log.info("צריבה מקבילית: %d קטעים של %.1f דקות, %d חוטים לקטע, "
              "עד %d קטעים בו-זמנית",
@@ -1257,29 +1265,13 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         # מקבילות: קטע שמחכה לא צורך כלום
         async with pool.slot(token):
             await _run_progress(cmd, length, progress, timeout=limit)
-        # אימות מיד אחרי הצריבה — אבל בלי לזרוק שגיאה.
+        # כאן היה אימות אורך שהוספתי, והוא הוסר.
         #
-        # כאן הייתה raise, וזו הייתה טעות קשה: כישלון של קטע אחד הפיל
-        # את כל הצריבה המקבילית והתחיל ניסיון שני בזמן שיתר הקטעים
-        # עדיין נצרבו. הניסיון החדש ראה את הקבצים שלהם באמצע כתיבה,
-        # מדד אורך 0.0, ומחק אותם מתחת לרגליהם. נמדד אצל המשתמש:
-        # ארבעים דקות בלי שאף קטע נרשם כגמור, בזמן שתשעה מקודדים
-        # עבדו וזמני הריצה שלהם היו מדורגים.
-        #
-        # קטע פגום נרשם ונמחק, וההרכבה תיכשל עליו ממילא — ואז הניסיון
-        # החוזר יצרוב אותו לבדו. זה הנזק הקטן ביותר
-        try:
-            wrote = await duration_seconds(piece)
-        except Exception:  # noqa: BLE001
-            wrote = 0.0
-        if abs(wrote - length) > 1.0:
-            log.warning("קטע %d/%d יצא באורך %.1f במקום %.1f — נמחק",
-                        index + 1, segments, wrote, length)
-            try:
-                piece.unlink()
-            except OSError:
-                pass
-            return piece
+        # הוא מדד קטעים מיד אחרי הצריבה וזרק שגיאה כשהאורך לא תאם.
+        # בפועל הוא מדד גם קבצים שעדיין נכתבו — ‏ffprobe מחזיר עליהם
+        # "moov atom not found" או את אורך המקור שנותר — ומחק קטעים
+        # תקינים לגמרי. ההרכבה כבר מאמתת את מספר הפריימים בסוף, וזה
+        # המקום הנכון לבדוק: אחרי שכל הקבצים נסגרו
         async with lock:
             finished[0] += 1
             done[index] = length
