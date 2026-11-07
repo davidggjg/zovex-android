@@ -4257,6 +4257,34 @@ def _big_drop_is_a_restart() -> None:
     assert 'on_progress(ASSEMBLE_FROM, "מרכיב שוב")' not in outer
 
 
+@check("קובץ מעל שני ג'יגה עולה מקבילית ולא בחיבור יחיד")
+def _big_upload_goes_parallel() -> None:
+    from zovexsub import fastio
+
+    # נמדד אצל המשתמש: 1.6MB/s על קובץ של 3.1GB, בזמן ששישה־עשר
+    # חיבורים ישבו בטלים. MAX_PARTS היה 4000 קשיח — ערך החשבון
+    # הרגיל — ולכן כל קובץ מעל 1.95GB חרג, והמסלול המקבילי ויתר
+    assert fastio.MAX_PARTS == config.TG_MAX_PARTS
+    assert config.TG_MAX_PARTS >= 8000, config.TG_MAX_PARTS
+
+    def parallel(gb: float) -> bool:
+        size = int(gb * 1073741824)
+        return -(-size // fastio.PART) <= fastio.MAX_PARTS
+
+    # בתיעוד של טלגרם התקרה אינה מתחשבת בגודל החלק, ולכן הגודל
+    # המרבי מושג רק עם חלקים של 512KB: 8000 חלקים הם 4GB
+    assert fastio.PART == 512 * 1024, fastio.PART
+    for gb in (1.5, 2.5, 3.1, 3.9):
+        assert parallel(gb), f"{gb}GB עדיין נופל לחיבור יחיד"
+    # ומעבר לתקרת הפרימיום טלגרם ממילא דוחה
+    assert not parallel(4.5)
+
+    # והמסלול המקבילי פותח חיבורים אמיתיים, לא אחד
+    assert config.TG_CONNECTIONS > 1, config.TG_CONNECTIONS
+    assert fastio._connections(3 * 1073741824, config.TG_CONNECTIONS) \
+        == config.TG_CONNECTIONS
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
