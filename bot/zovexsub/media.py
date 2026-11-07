@@ -1184,8 +1184,25 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
                     # שונים, ונראים כסתירה
                     finished[0] += 1
                 return piece
-            log.warning("קטע %d/%d קיים אבל אורכו %.1f במקום %.1f — נצרב מחדש",
+            # הקובץ הפגום נמחק לפני הצריבה מחדש, ולא רק נדרס.
+            #
+            # נמדד אצל המשתמש אחרי שהצריבה נהרגה באמצע: קטעים שנשארו
+            # על הדיסק דיווחו אורך של כל מה שנשאר בסרט מנקודתם והלאה
+            # (8332.8, 8213.8, 8094.8 — כל אחד פחות 119.0 בדיוק
+            # מקודמו), ואחרים דיווחו 0.0. שמונים ושבעה קטעים נפסלו
+            # ונצרבו מחדש בכל סבב, והצריבה הגיעה ל-82/87 ואז חזרה
+            # לאפס.
+            #
+            # ‏ffmpeg רץ עם -y ודורס ממילא, אבל קובץ שנשאר על הדיסק
+            # אחרי צריבה שנפלה באמצע נבדק שוב בסבב הבא ונפסל שוב.
+            # מחיקה מפורשת שוברת את המעגל הזה
+            log.warning("קטע %d/%d קיים אבל אורכו %.1f במקום %.1f — "
+                        "נמחק ונצרב מחדש",
                         index + 1, segments, have, length)
+            try:
+                piece.unlink()
+            except OSError as exc:
+                log.warning("מחיקת הקטע הפגום נכשלה: %s", exc)
 
         cmd = [
             "ffmpeg", "-nostdin", "-y",
@@ -1238,6 +1255,20 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         # מקבילות: קטע שמחכה לא צורך כלום
         async with pool.slot(token):
             await _run_progress(cmd, length, progress, timeout=limit)
+        # אימות מיד אחרי הצריבה, ולא רק בסבב הבא. קטע שיצא פגום
+        # ייפסל כאן פעם אחת במקום להיבדק שוב בכל ניסיון חוזר
+        try:
+            wrote = await duration_seconds(piece)
+        except Exception:  # noqa: BLE001
+            wrote = 0.0
+        if abs(wrote - length) > 1.0:
+            try:
+                piece.unlink()
+            except OSError:
+                pass
+            raise FFmpegError(
+                f"קטע {index + 1}/{segments} יצא באורך {wrote:.1f} "
+                f"במקום {length:.1f}")
         async with lock:
             finished[0] += 1
             done[index] = length

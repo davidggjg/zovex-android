@@ -4190,6 +4190,31 @@ def _geo_block_is_explained() -> None:
         assert "_explain(" in flow, f"{name} עדיין שותק על כישלון"
 
 
+@check("קטע פגום נמחק, וקטע שנצרב מאומת מיד")
+def _broken_segment_is_removed() -> None:
+    flow = inspect.getsource(media._burn_parallel)
+
+    # נמדד אצל המשתמש אחרי שהצריבה נהרגה באמצע: קטעים שנשארו על
+    # הדיסק דיווחו אורך של כל מה שנשאר בסרט מנקודתם והלאה — 8332.8,
+    # 8213.8, 8094.8, כל אחד פחות 119.0 בדיוק מקודמו — ואחרים 0.0.
+    # שמונים ושבעה קטעים נפסלו ונצרבו מחדש בכל סבב, הצריבה הגיעה
+    # ל-82/87 וחזרה לאפס
+    assert "piece.unlink()" in flow, "קטע פגום נשאר על הדיסק"
+    assert flow.count("piece.unlink()") >= 2, \
+        "צריך למחוק גם בפסילה מראש וגם בכישלון אחרי צריבה"
+
+    # ואימות מיד אחרי הצריבה, ולא רק בסבב הבא
+    after = flow[flow.index("_run_progress(cmd, length"):]
+    assert "duration_seconds(piece)" in after, "הקטע לא מאומת אחרי צריבה"
+    assert "abs(wrote - length) > 1.0" in after, after[:200]
+    # והמונה מתקדם רק אחרי שהאימות עבר
+    assert after.index("abs(wrote - length)") < after.index("finished[0] += 1")
+
+    # הניסיון החוזר חסום במספר, ואינו לולאה
+    outer = inspect.getsource(media.burn)
+    assert "for attempt in (1, 2):" in outer, "אין תקרה לניסיונות"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
