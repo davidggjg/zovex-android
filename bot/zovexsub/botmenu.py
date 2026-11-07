@@ -158,7 +158,7 @@ ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
 ASK_KEYS = [[("✅ כן", "burn:yes"), ("❌ לא", "burn:no")]]
 
 # השאלה הראשונה, מיד אחרי שהסרטון מתקבל ולפני שמתחיל עיבוד כלשהו
-def source_screen(chat_id) -> tuple[str, list]:
+def source_screen(chat_id, note: str = "") -> tuple[str, list]:
     """מסך הפתיחה: מה נבחר, ושתי דרכים להתחיל.
 
     קודם נשאלו חמש שאלות בכל פרק, באותן תשובות בדיוק. ההגדרות
@@ -166,7 +166,11 @@ def source_screen(chat_id) -> tuple[str, list]:
     והשינוי נשאר זמין למי שבאמת רוצה לשנות משהו
     """
     saved = prefs.get(chat_id)
-    text = ("🎬 <b>הסרטון התקבל</b>\n\n"
+    # ההערה נכנסת לתוך המסך הזה ולא כהודעה נפרדת לפניו: הודעה נפרדת
+    # נדרסת תוך שבריר שנייה על ידי המסך, והמשתמש לא רואה אותה בכלל.
+    # נמדד: "זה לא שואל איזו איכות, רק רושם שהסרטון התקבל"
+    text = ((f"{note}\n\n" if note else "")
+            + "🎬 <b>הסרטון התקבל</b>\n\n"
             "<b>ההגדרות שלך:</b>\n"
             f"{prefs.summary(saved)}\n\n"
             "מה לעשות עם הכתוביות?")
@@ -318,19 +322,18 @@ async def greet_link(chat_id, url: str) -> None:
         log.info("בלי שאלת איכות: %s",
                  f"רק {picked}p בקישור" if tall
                  else "לא הצלחתי לקרוא את האיכויות — יורד הטוב ביותר")
-        await localbot.edit(
-            chat_id, message_id,
-            f"🎞️ <b>מוריד ב-{picked}p</b>" if tall else
-            "🎞️ <b>מוריד באיכות הטובה ביותר</b>\n"
-            "<i>הקישור לא מסר רשימת איכויות.</i>")
-        await _after_quality(choice, message_id)
+        await _after_quality(
+            choice, message_id,
+            f"🎞️ <b>איכות: {picked}p</b> — היחידה שיש בקישור" if tall
+            else "🎞️ <b>איכות: הטובה ביותר</b>\n"
+                 "<i>הקישור לא מסר רשימת איכויות.</i>")
         return
 
     await localbot.edit(chat_id, message_id, QUALITY,
                         buttons=localbot.keyboard(quality_keys(tall)))
 
 
-async def _after_quality(choice, message_id: int) -> None:
+async def _after_quality(choice, message_id: int, note: str = "") -> None:
     """ממשיך משנבחרה האיכות — או משהתברר שאין מה לשאול עליה.
 
     שפות השמע נקראו מראש, יחד עם האיכויות. אין כאן קריאת רשת
@@ -341,7 +344,7 @@ async def _after_quality(choice, message_id: int) -> None:
                             buttons=localbot.keyboard(
                                 voice_keys(choice.voices)))
         return
-    text, keys = source_screen(choice.chat_id)
+    text, keys = source_screen(choice.chat_id, note)
     await localbot.edit(choice.chat_id, message_id, text,
                         buttons=localbot.keyboard(keys))
 

@@ -285,6 +285,92 @@ async def heights(url: str, timeout: float = 45.0) -> list[int]:
     return ordered
 
 
+async def subtitle_tracks(url: str, timeout: float = 45.0) -> list[dict]:
+    """הכתוביות שקיימות בקישור, הידניות לפני האוטומטיות.
+
+    זה הקיצור הגדול ביותר שיש לנו. כתוביות שהועלו לסרטון נושאות
+    תזמונים נכונים — בדיוק הדבר שהכי קשה לנו לייצר — ולכן קישור שיש
+    לו כתוביות אינו צריך תמלול בכלל: לא Groq, לא ג'מיני, ואף אחת
+    מההזיות שהתמלול מביא איתו. נשאר רק לתרגם.
+
+    כתוביות ידניות קודמות לאוטומטיות תמיד: האוטומטיות הן תמלול מכונה
+    של יוטיוב, ואין להן יתרון על התמלול שלנו — חוץ מהתזמון
+    """
+    cmd = _command() + _browser_args(url) + [
+        "-J", "--no-warnings", "--no-playlist", url]
+    if config.FETCH_COOKIES:
+        cmd += ["--cookies", config.FETCH_COOKIES]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL, env=child_env())
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError) as exc:
+        log.warning("בדיקת כתוביות נכשלה (%s)", exc)
+        return []
+    if proc.returncode != 0 or not out:
+        return []
+    try:
+        info = json.loads(out.decode("utf-8", "replace"))
+    except ValueError:
+        return []
+
+    found: list[dict] = []
+    seen: set[str] = set()
+    for store, made in (("subtitles", False), ("automatic_captions", True)):
+        for code, items in (info.get(store) or {}).items():
+            if code in seen or not items:
+                continue
+            seen.add(code)
+            found.append({
+                "code": code,
+                "name": media.LANGUAGE_NAMES.get(code.split("-")[0], code),
+                "auto": made,
+            })
+    # ידניות קודם, ובתוך כל קבוצה לפי שם
+    found.sort(key=lambda t: (t["auto"], t["name"]))
+    log.info("כתוביות בקישור: %s", ", ".join(
+        f"{t['name']}{' (אוטומטי)' if t['auto'] else ''}"
+        for t in found) or "אין")
+    return found
+
+
+async def grab_subtitles(url: str, work: Path, code: str,
+                         auto: bool = False,
+                         timeout: float = 120.0) -> Path | None:
+    """מוריד את קובץ הכתוביות מהקישור וממיר ל-SRT. ללא הווידאו."""
+    work.mkdir(parents=True, exist_ok=True)
+    target = work / "linked"
+    cmd = _command() + _browser_args(url) + [
+        "--skip-download", "--no-playlist", "--no-warnings",
+        "--write-auto-subs" if auto else "--write-subs",
+        "--sub-langs", code, "--convert-subs", "srt",
+        "-o", str(target) + ".%(ext)s", url,
+    ]
+    if config.FETCH_COOKIES:
+        cmd += ["--cookies", config.FETCH_COOKIES]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE, env=child_env())
+        _, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, OSError) as exc:
+        log.warning("הורדת הכתוביות נכשלה (%s)", exc)
+        return None
+    if proc.returncode != 0:
+        log.warning("הורדת הכתוביות נכשלה: %s",
+                    err.decode("utf-8", "replace").strip()[-200:])
+        return None
+    # ‏yt-dlp מוסיף את קוד השפה לשם, ולא תמיד בדיוק כפי שביקשנו
+    hits = sorted(work.glob("linked*.srt"))
+    if not hits:
+        log.warning("הורדת הכתוביות הסתיימה בלי קובץ SRT")
+        return None
+    log.info("כתוביות הורדו מהקישור: %s (%d בתים)",
+             hits[0].name, hits[0].stat().st_size)
+    return hits[0]
+
+
 async def audio_options(url: str, timeout: float = 45.0) -> list[dict]:
     """שפות השמע שקיימות בקישור, אחת לכל שפה.
 

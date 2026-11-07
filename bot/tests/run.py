@@ -4055,6 +4055,54 @@ def _youtube_gets_challenge_solver() -> None:
     assert hasattr(fetch, "deno_ready") and hasattr(fetch, "child_env")
 
 
+@check("כתוביות הקישור נקראות, וידניות קודמות לאוטומטיות")
+def _linked_subtitles_are_listed() -> None:
+    import json
+
+    # זה הקיצור הגדול ביותר שיש לנו: כתוביות שהועלו לסרטון נושאות
+    # תזמונים נכונים — הדבר שהכי קשה לנו לייצר — ולכן קישור שיש לו
+    # כתוביות אינו צריך תמלול בכלל, על כל ההזיות שבא איתו
+    fake = json.dumps({
+        "subtitles": {"en": [{"ext": "vtt"}], "he": [{"ext": "vtt"}]},
+        "automatic_captions": {"en": [{"ext": "vtt"}],
+                               "es": [{"ext": "vtt"}],
+                               "he": [{"ext": "vtt"}]},
+    }).encode()
+
+    class _Proc:
+        returncode = 0
+
+        async def communicate(self):
+            return fake, b""
+
+    async def _fake_exec(*a, **k):
+        return _Proc()
+
+    real = fetch.asyncio.create_subprocess_exec
+    fetch.asyncio.create_subprocess_exec = _fake_exec
+    try:
+        out = asyncio.run(fetch.subtitle_tracks("https://youtu.be/x"))
+    finally:
+        fetch.asyncio.create_subprocess_exec = real
+
+    # ידניות ראשונות: האוטומטיות הן תמלול מכונה של יוטיוב, ואין להן
+    # שום יתרון על התמלול שלנו חוץ מהתזמון
+    assert [t["code"] for t in out][:2] == ["en", "he"], out
+    assert all(not t["auto"] for t in out[:2]), out
+    assert out[2]["code"] == "es" and out[2]["auto"], out
+    # ושפה שיש לה ידנית אינה נספרת שוב כאוטומטית
+    assert len(out) == 3, out
+    # והשמות מתורגמים ולא נשארים קודים
+    assert out[1]["name"] == "עברית", out[1]
+
+    # ההורדה מבקשת SRT ואינה מורידה את הווידאו
+    grab = inspect.getsource(fetch.grab_subtitles)
+    assert "--skip-download" in grab and "--convert-subs" in grab
+    assert "srt" in grab
+    # ומסלול אוטומטי ומסלול ידני אינם אותו דגל
+    assert "--write-auto-subs" in grab and "--write-subs" in grab
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
