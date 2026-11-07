@@ -45,6 +45,16 @@ def current(cores: int) -> tuple[int, int]:
 # שלוש הראשונות נותנות בדיוק חוט לליבה, ונבדלות רק בחלוקה בין
 # תהליכים: הרבה תהליכים דקים מול מעט עבים. זו שאלה אמיתית, כי
 # x265 לא מתרחב ליניארית עם מספר החוטים בתוך תהליך אחד
+def quick_plans(cores: int) -> list[tuple[int, int]]:
+    """הבדיקה הקצרה: רק השאלה שבאמת מכריעה.
+
+    ההקצאה שרצה היום מול חוט אחד לכל ליבה, בשתי חלוקות. זה עונה על
+    "האם הקצאת-היתר מזיקה" — השאלה היחידה שמשנה — בלי לבדוק גם את
+    הגוונים שביניהן
+    """
+    return [(cores, 1), (cores // 2, 2), current(cores)]
+
+
 def plans(cores: int) -> list[tuple[int, int]]:
     return [
         (cores, 1),              # חוט לכל ליבה, תהליך לכל חוט
@@ -98,6 +108,8 @@ async def main() -> int:
     ap.add_argument("source", type=Path)
     ap.add_argument("--seconds", type=float, default=15.0,
                     help="אורך כל קטע במדידה (ברירת מחדל 15)")
+    ap.add_argument("--quick", action="store_true",
+                    help="שלוש תצורות וקטעים קצרים — כשליש מהזמן")
     ap.add_argument("--at", type=float, default=300.0,
                     help="מאיזו שנייה בסרט להתחיל (ברירת מחדל 300)")
     args = ap.parse_args()
@@ -117,7 +129,12 @@ async def main() -> int:
     work = Path("/tmp/zovexbench")
     shutil.rmtree(work, ignore_errors=True)
 
-    tried = [(s, t) for s, t in plans(cores) if s >= 1]
+    picks = quick_plans(cores) if args.quick else plans(cores)
+    if args.quick:
+        # קטעים קצרים יותר: המדידה היא יחס בין תצורות, ולכן אורך
+        # הקטע אינו חייב להיות מלא — רק זהה בין כולן
+        args.seconds = min(args.seconds, 8.0)
+    tried = [(s, t) for s, t in picks if s >= 1]
     seen: set[tuple[int, int]] = set()
     tried = [p for p in tried if not (p in seen or seen.add(p))]
 
