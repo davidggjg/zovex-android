@@ -512,7 +512,7 @@ async def run(choice) -> None:
             pipeline.cleanup(work)
             return
 
-        if choice.source == "linked":
+        if choice.source in ("linked", "linked_raw"):
             # הכתוביות כבר קיימות בקישור, והתזמונים שלהן נכונים.
             # אין כאן תמלול בכלל: לא Groq, לא ג'מיני, ואף אחת
             # מההזיות שהתמלול מביא איתו — רק תרגום
@@ -529,7 +529,24 @@ async def run(choice) -> None:
                     await _make_subtitles(chat_id, source, work, screen,
                                           track)
                     return
-                _translating.add(int(chat_id))
+                # כתוביות אוטומטיות נושאות חותמת זמן לכל מילה בתוך
+                # הטקסט, ושורה שחוזרת מהכתובית הקודמת. בלי ניקוי זה
+                # נכנס ישר לתרגום ומופיע על המסך
+                if choice.sub_auto:
+                    cues = srt_tools.parse(srt_tools.read_subtitle(given))
+                    washed = srt_tools.clean_auto_captions(cues)
+                    cues = [c for c in cues if c.text.strip()]
+                    given.write_text(srt_tools.render(cues),
+                                     encoding="utf-8")
+                    log.info("נוקו %d כתוביות אוטומטיות, נשארו %d",
+                             washed, len(cues))
+                if choice.source == "linked":
+                    _translating.add(int(chat_id))
+                else:
+                    # כבר בעברית, או שהמשתמש ביקש כמו שהן
+                    _translating.discard(int(chat_id))
+                    log.info("הכתוביות מהקישור נצרבות כמו שהן (%s)",
+                             choice.sub_code)
                 await _after_subtitle(chat_id, source, given, work, track)
 
             await _with_track(chat_id, source, work, screen, linked_ready)

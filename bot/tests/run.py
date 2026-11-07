@@ -4105,6 +4105,67 @@ def _linked_subtitles_are_listed() -> None:
     assert "--write-auto-subs" in grab and "--write-subs" in grab
 
 
+@check("כתוביות אוטומטיות מנוקות מתגיות ומחזרה מתגלגלת")
+def _auto_captions_are_cleaned() -> None:
+    # יוטיוב מציגה כתובית אוטומטית כשתי שורות שנעות מלמטה למעלה,
+    # ולכן כל כתובית חוזרת על השורה האחרונה של קודמתה. היא גם נושאת
+    # חותמת זמן לכל מילה בתוך הטקסט. בלי ניקוי הכל נכנס לתרגום
+    raw = "\n\n".join([
+        "1\n00:00:01,000 --> 00:00:03,000\n"
+        "hello<00:00:01.500> there<00:00:02.100> friend",
+        "2\n00:00:03,000 --> 00:00:05,000\n"
+        "hello there friend\nhow are<00:00:04.200> you",
+        "3\n00:00:05,000 --> 00:00:07,000\n"
+        "how are you\n<c.colorE5E5E5>fine thanks</c>",
+    ])
+    cues = srt.parse(raw)
+    assert srt.clean_auto_captions(cues) == 3
+    assert cues[0].text == "hello there friend", cues[0].text
+    # השורה שכבר הוצגה אינה מוצגת שוב
+    assert cues[1].text == "how are you", cues[1].text
+    assert cues[2].text == "fine thanks", cues[2].text
+    # והתזמונים לא זזו — זו כל הסיבה שלקחנו את הכתוביות האלה
+    assert cues[0].start == 1.0 and cues[2].end == 7.0
+
+    # טקסט נקי אינו משתנה
+    clean = srt.parse("1\n00:00:01,000 --> 00:00:03,000\nשלום לך")
+    assert srt.clean_auto_captions(clean) == 0
+    assert clean[0].text == "שלום לך"
+
+
+@check("כתוביות עברית מהקישור אינן מתורגמות, ואחרות נשאלות")
+def _hebrew_subs_are_not_translated() -> None:
+    from zovexsub import botmenu
+
+    assert botmenu.is_hebrew_code("he")
+    assert botmenu.is_hebrew_code("iw"), "iw הוא הקוד הישן של עברית"
+    assert botmenu.is_hebrew_code("he-IL")
+    assert not botmenu.is_hebrew_code("en")
+    assert not botmenu.is_hebrew_code("")
+
+    def offered(code: str) -> list:
+        _, keys = botmenu.source_screen(
+            1, "", [{"code": code, "name": "שפה", "auto": False}])
+        # כל כפתור הוא (תווית, מזהה), והמזהה הוא b[1]
+        return [b[1] for row in keys for b in row
+                if b[1].startswith("src:linked")]
+
+    # עברית: אין מה לתרגם, ולכן אין בכלל אפשרות כזאת
+    assert offered("he") == ["src:linked_raw"], offered("he")
+    assert offered("iw") == ["src:linked_raw"], offered("iw")
+    # שפה אחרת: שתי האפשרויות מוצגות במפורש
+    assert set(offered("en")) == {"src:linked", "src:linked_raw"}, offered("en")
+
+    # ובצד המבצע, רק "linked" מסומן לתרגום
+    from zovexsub import botjob
+    flow = inspect.getsource(botjob.run)
+    assert 'choice.source in ("linked", "linked_raw")' in flow
+    assert 'if choice.source == "linked":' in flow
+    assert "_translating.add" in flow and "_translating.discard" in flow
+    # וכתוביות אוטומטיות מנוקות לפני שהן ממשיכות
+    assert "clean_auto_captions" in flow
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

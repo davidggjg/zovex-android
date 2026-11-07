@@ -912,6 +912,44 @@ def hush_middle(cue: "Cue") -> tuple[float, float]:
     return best, mid
 
 
+# תגיות שכתוביות אוטומטיות של יוטיוב נושאות בתוך הטקסט: חותמת זמן
+# לכל מילה, ותגיות צבע של WebVTT
+_INLINE_TIME = re.compile(r"<\d{2}:\d{2}:\d{2}[.,]\d{3}>")
+_VTT_TAG = re.compile(r"</?c[^>]*>|</?v[^>]*>|</?i>|</?b>|</?u>")
+
+
+def clean_auto_captions(cues: list["Cue"]) -> int:
+    """מנקה את מה שכתוביות אוטומטיות של יוטיוב נושאות איתן.
+
+    שתי בעיות, ושתיהן היו נכנסות ישר לתרגום:
+
+    האחת, חותמת זמן לכל מילה בתוך הטקסט עצמו. המודל היה מתרגם אותן
+    או נחנק מהן, ובכל מקרה הן מופיעות על המסך.
+
+    השנייה, חזרה מתגלגלת: יוטיוב מציגה כתובית אוטומטית כשתי שורות
+    שנעות מלמטה למעלה, ולכן כל כתובית חוזרת על השורה האחרונה של
+    קודמתה. בלי ניקוי כל משפט מתורגם פעמיים ומופיע פעמיים.
+
+    מחזיר כמה כתוביות שונו
+    """
+    touched = 0
+    previous = ""
+    for cue in cues:
+        was = cue.text
+        text = _INLINE_TIME.sub("", cue.text)
+        text = _VTT_TAG.sub("", text)
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        # השורה שכבר הוצגה בכתובית הקודמת אינה מוצגת שוב
+        if previous and lines and lines[0] == previous:
+            lines = lines[1:]
+        if lines:
+            previous = lines[-1]
+        cue.text = "\n".join(lines)
+        if cue.text != was:
+            touched += 1
+    return touched
+
+
 def speech_end(cue: "Cue") -> float:
     """מתי באמת נגמר הדיבור בכתובית, לפי תזמוני המילים של המקור."""
     ends = [float(end) for start, end in (cue.words or [])

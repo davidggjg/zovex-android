@@ -161,6 +161,16 @@ ASK = ("❓ <b>לצרוב את הכתוביות על הסרטון?</b>\n\n"
 ASK_KEYS = [[("✅ כן", "burn:yes"), ("❌ לא", "burn:no")]]
 
 # השאלה הראשונה, מיד אחרי שהסרטון מתקבל ולפני שמתחיל עיבוד כלשהו
+# קודי השפה שיוטיוב משתמשת בהם לעברית. iw הוא הקוד הישן, והוא עדיין
+# חוזר מחלק מהסרטונים
+_HEBREW_CODES = ("he", "iw")
+
+
+def is_hebrew_code(code: str) -> bool:
+    """האם קוד השפה הזה הוא עברית. ‏he-IL ו-iw נחשבים גם הם."""
+    return (code or "").split("-")[0].lower() in _HEBREW_CODES
+
+
 def source_screen(chat_id, note: str = "",
                   subs: list | None = None) -> tuple[str, list]:
     """מסך הפתיחה: מה נבחר, ושתי דרכים להתחיל.
@@ -185,8 +195,17 @@ def source_screen(chat_id, note: str = "",
     best = (subs or [None])[0]
     if best:
         tag = " (אוטומטי)" if best["auto"] else ""
-        keys.append([(f"📥 כתוביות מהקישור · {best['name']}{tag} — תרגם",
-                      "src:linked")])
+        if is_hebrew_code(best["code"]):
+            # כתוביות שכבר בעברית אין מה לתרגם, ולא נוגעים בהן
+            keys.append([(f"📥 כתוביות עברית מהקישור{tag} — צרוב",
+                          "src:linked_raw")])
+        else:
+            # לא בעברית: שתי האפשרויות מוצגות במפורש, כדי שהמשתמש
+            # יראה מה יקרה במקום לגלות אחרי חמש דקות
+            keys.append([(f"🌐 כתוביות {best['name']}{tag} — תרגם לעברית",
+                          "src:linked")])
+            keys.append([(f"📥 כתוביות {best['name']}{tag} — צרוב כמו שהן",
+                          "src:linked_raw")])
     keys += [[("🤖 תייצר לי כתוביות", "src:make")],
             [("📄 יש לי קובץ — צרוב כמו שהוא", "src:own")],
             # המסלול השלישי: הקובץ של המשתמש מסונכרן, והתזמונים שלו
@@ -437,11 +456,14 @@ async def _press(query: dict) -> None:
         for name, value in saved.items():
             if not getattr(choice, name, ""):
                 setattr(choice, name, value)
-        label = ("מייצר כתוביות…" if choice.source == "make"
-                 else "שלח עכשיו את קובץ הכתוביות (SRT)."
-                 if choice.source == "own"
-                 else "שלח עכשיו את קובץ הכתוביות — אתרגם אותו "
-                      "לעברית והתזמונים שלו יישמרו.")
+        label = {
+            "make": "מייצר כתוביות…",
+            "own": "שלח עכשיו את קובץ הכתוביות (SRT).",
+            "translate": "שלח עכשיו את קובץ הכתוביות — אתרגם אותו "
+                         "לעברית והתזמונים שלו יישמרו.",
+            "linked": "מושך את הכתוביות מהקישור ומתרגם לעברית…",
+            "linked_raw": "מושך את הכתוביות מהקישור וצורב כמו שהן…",
+        }.get(choice.source, "ממשיך…")
         # הסיכום נשאר על המסך: אחרת אי אפשר לדעת באילו הגדרות זה רץ
         await localbot.edit(
             choice.chat_id, message_id,
