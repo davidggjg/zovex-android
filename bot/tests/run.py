@@ -2468,11 +2468,15 @@ def _browser_headers():
     # ה-Referer נגזר מהקישור עצמו כשלא הוגדר אחר
     assert "https://s1.cdnmvs.online/" in args, args
 
-    # ביוטיוב לא נוגעים: שם ה-UA חלק מזרימת ה-PO token
+    # ביוטיוב לא נוגעים בכותרות: שם ה-UA חלק מזרימת ה-PO token.
+    # נבדק לפי מה שאסור להופיע, ולא לפי רשימה ריקה בדיוק — יוטיוב כן
+    # מקבלת את דגל פותר האתגר, שאינו כותרת דפדפן
     for site in ("https://www.youtube.com/watch?v=x",
                  "https://youtu.be/x",
                  "https://www.youtube-nocookie.com/embed/x"):
-        assert fetch._browser_args(site) == [], site
+        head = fetch._browser_args(site)
+        assert "--user-agent" not in head, (site, head)
+        assert "--referer" not in head, (site, head)
 
     # ושני מסלולי הקריאה ל-yt-dlp מקבלים אותן — גם בדיקת האיכויות
     # וגם ההורדה. אחרת התפריט יוצא ריק וההורדה נחסמת
