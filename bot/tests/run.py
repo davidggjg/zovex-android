@@ -4211,6 +4211,12 @@ def _broken_segment_is_removed() -> None:
     assert "abs(wrote - length) > 1.0" in after, after[:200]
     # והמונה מתקדם רק אחרי שהאימות עבר
     assert after.index("abs(wrote - length)") < after.index("finished[0] += 1")
+    # אבל האימות אינו זורק שגיאה: כישלון של קטע אחד הפיל את כל
+    # הצריבה והתחיל ניסיון שני בזמן שהשאר עדיין נצרבו, והניסיון
+    # החדש מחק את הקבצים שלהם באמצע כתיבה
+    verify = after[after.index("abs(wrote - length)"):]
+    verify = verify[:verify.index("finished[0] += 1")]
+    assert "raise" not in verify, "אימות שזורק שגיאה מפיל את כל הצריבה"
 
     # הניסיון החוזר חסום במספר, ואינו לולאה
     outer = inspect.getsource(media.burn)

@@ -1257,20 +1257,29 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         # מקבילות: קטע שמחכה לא צורך כלום
         async with pool.slot(token):
             await _run_progress(cmd, length, progress, timeout=limit)
-        # אימות מיד אחרי הצריבה, ולא רק בסבב הבא. קטע שיצא פגום
-        # ייפסל כאן פעם אחת במקום להיבדק שוב בכל ניסיון חוזר
+        # אימות מיד אחרי הצריבה — אבל בלי לזרוק שגיאה.
+        #
+        # כאן הייתה raise, וזו הייתה טעות קשה: כישלון של קטע אחד הפיל
+        # את כל הצריבה המקבילית והתחיל ניסיון שני בזמן שיתר הקטעים
+        # עדיין נצרבו. הניסיון החדש ראה את הקבצים שלהם באמצע כתיבה,
+        # מדד אורך 0.0, ומחק אותם מתחת לרגליהם. נמדד אצל המשתמש:
+        # ארבעים דקות בלי שאף קטע נרשם כגמור, בזמן שתשעה מקודדים
+        # עבדו וזמני הריצה שלהם היו מדורגים.
+        #
+        # קטע פגום נרשם ונמחק, וההרכבה תיכשל עליו ממילא — ואז הניסיון
+        # החוזר יצרוב אותו לבדו. זה הנזק הקטן ביותר
         try:
             wrote = await duration_seconds(piece)
         except Exception:  # noqa: BLE001
             wrote = 0.0
         if abs(wrote - length) > 1.0:
+            log.warning("קטע %d/%d יצא באורך %.1f במקום %.1f — נמחק",
+                        index + 1, segments, wrote, length)
             try:
                 piece.unlink()
             except OSError:
                 pass
-            raise FFmpegError(
-                f"קטע {index + 1}/{segments} יצא באורך {wrote:.1f} "
-                f"במקום {length:.1f}")
+            return piece
         async with lock:
             finished[0] += 1
             done[index] = length
