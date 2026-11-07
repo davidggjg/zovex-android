@@ -4166,6 +4166,30 @@ def _hebrew_subs_are_not_translated() -> None:
     assert "clean_auto_captions" in flow
 
 
+@check("חסימה גיאוגרפית מוסברת, ואינה נראית כמו תקלה אצלנו")
+def _geo_block_is_explained() -> None:
+    # נמדד אצל המשתמש: heights ו-subtitle_tracks חזרו ריקים, הוא חיפש
+    # את התקלה בקוד שלנו שעה שלמה, והסיבה הייתה שהמעלה חסם את ישראל
+    raw = ("ERROR: [youtube] X: The uploader has not made this video "
+           "available in your country")
+    said = fetch._explain(raw, "https://youtu.be/X")
+    assert "חסום" in said and "ישראל" in said, said
+    assert "FETCH_PROXY" in said, said
+    # ואומרים במפורש מה לא יעזור, כדי שלא ירדוף אחרי הפתרון הלא נכון
+    assert "עוגיות" in said and "לא יעזרו" in said, said
+
+    # הסבר אחר לא נגרר לכאן
+    other = fetch._explain("ERROR: Sign in to confirm you are not a bot",
+                           "https://youtu.be/X")
+    assert "חסום לצפייה מישראל" not in other, other
+
+    # והקריאות שבדקו את הקישור כבר אינן בולעות את השגיאה
+    for name in ("heights", "subtitle_tracks", "audio_options"):
+        flow = inspect.getsource(getattr(fetch, name))
+        assert "stderr=asyncio.subprocess.PIPE" in flow, name
+        assert "_explain(" in flow, f"{name} עדיין שותק על כישלון"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -259,12 +259,18 @@ async def heights(url: str, timeout: float = 45.0) -> list[int]:
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env=child_env())
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stderr=asyncio.subprocess.PIPE, env=child_env())
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except (asyncio.TimeoutError, OSError) as exc:
         log.warning("בדיקת איכויות נכשלה (%s)", exc)
         return []
     if proc.returncode != 0 or not out:
+        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
+        # שום רמז למה. סרטון שחסום גיאוגרפית נראה בדיוק כמו סרטון
+        # בלי איכויות, והמשתמש חיפש את התקלה אצלנו. נמדד: שעה שלמה
+        if err:
+            log.warning("קריאת הקישור נכשלה — %s",
+                        _explain(err.decode("utf-8", "replace"), url))
         return []
     try:
         info = json.loads(out.decode("utf-8", "replace"))
@@ -303,12 +309,18 @@ async def subtitle_tracks(url: str, timeout: float = 45.0) -> list[dict]:
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env=child_env())
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stderr=asyncio.subprocess.PIPE, env=child_env())
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except (asyncio.TimeoutError, OSError) as exc:
         log.warning("בדיקת כתוביות נכשלה (%s)", exc)
         return []
     if proc.returncode != 0 or not out:
+        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
+        # שום רמז למה. סרטון שחסום גיאוגרפית נראה בדיוק כמו סרטון
+        # בלי איכויות, והמשתמש חיפש את התקלה אצלנו. נמדד: שעה שלמה
+        if err:
+            log.warning("קריאת הקישור נכשלה — %s",
+                        _explain(err.decode("utf-8", "replace"), url))
         return []
     try:
         info = json.loads(out.decode("utf-8", "replace"))
@@ -390,12 +402,18 @@ async def audio_options(url: str, timeout: float = 45.0) -> list[dict]:
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL, env=child_env())
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            stderr=asyncio.subprocess.PIPE, env=child_env())
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except (asyncio.TimeoutError, OSError) as exc:
         log.warning("בדיקת שפות השמע נכשלה (%s)", exc)
         return []
     if proc.returncode != 0 or not out:
+        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
+        # שום רמז למה. סרטון שחסום גיאוגרפית נראה בדיוק כמו סרטון
+        # בלי איכויות, והמשתמש חיפש את התקלה אצלנו. נמדד: שעה שלמה
+        if err:
+            log.warning("קריאת הקישור נכשלה — %s",
+                        _explain(err.decode("utf-8", "replace"), url))
         return []
     try:
         info = json.loads(out.decode("utf-8", "replace"))
@@ -819,6 +837,21 @@ def _explain(stderr: str, url: str = "") -> str:
                 "     brainicism/bgutil-ytdlp-pot-provider\n"
                 "   FETCH_POT_URL=http://127.0.0.1:4416\n"
                 "3. לייצא עוגיות מדפדפן מחובר ולהצביע ב-FETCH_COOKIES")
+    # חסימה גיאוגרפית: המעלה בחר באילו מדינות הסרטון זמין, וישראל
+    # אינה ביניהן. זו אינה חסימה של יוטיוב על השרת ואינה תקלה אצלנו,
+    # ולכן גם לא עוגיות ולא PO token יעזרו — רק יציאה ממדינה אחרת.
+    # נמדד אצל המשתמש: heights ו-subtitle_tracks חזרו ריקים, והוא
+    # חיפש את התקלה אצלנו שעה שלמה
+    if "available in your country" in low or "geo restrict" in low:
+        if config.FETCH_PROXY:
+            return ("הסרטון חסום לצפייה מישראל, והפרוקסי שהוגדר "
+                    f"({config.FETCH_PROXY}) לא עקף את זה — כנראה שגם "
+                    "הוא יושב במדינה חסומה.")
+        return ("הסרטון הזה חסום לצפייה מישראל. המעלה הגביל את "
+                "המדינות שבהן הוא זמין.\n"
+                "זו אינה תקלה אצלנו: עוגיות ו-PO token לא יעזרו כאן.\n"
+                "הפתרון היחיד הוא לצאת ממדינה מותרת — "
+                "הגדר FETCH_PROXY לשרת במדינה כזו.")
     if tube and ("429" in low or "too many requests" in low):
         return ("יוטיוב חוסם זמנית את כתובת השרת (429). נסה שוב בעוד "
                 "כמה דקות, או הוסף קובץ עוגיות ב-FETCH_COOKIES.")
