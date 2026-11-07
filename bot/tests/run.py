@@ -4285,6 +4285,29 @@ def _big_upload_goes_parallel() -> None:
         == config.TG_CONNECTIONS
 
 
+@check("מודד הרשת מסרב לרוץ מול הבוט, ואינו שולח דבר")
+def _netbench_is_safe() -> None:
+    import netbench
+
+    flow = inspect.getsource(netbench)
+    # הבוט מחזיק את אותו סשן, ושתי התחברויות במקביל שוברות אותו
+    assert "bot_running()" in flow and "is-active" in flow
+    assert "systemctl stop zovexsub" in flow
+
+    # החלקים מועלים ואינם נשלחים: טלגרם זורקת חלקים שלא הורכבו,
+    # ולכן שום הודעה אינה נוצרת ושום מקום אחסון אינו נתפס
+    assert "send_file" not in flow and "send_message" not in flow
+    assert "_parallel_upload" in flow
+
+    # נתונים אקראיים, אחרת דחיסה ברשת מזייפת את הקצב
+    assert "os.urandom" in flow
+    # וקובץ המבחן נמחק גם כשהמדידה נפלה
+    assert "finally:" in flow and "unlink" in flow
+
+    # ההגדרה שרצה היום נמדדת יחד עם השאר, אחרת אין מול מה להשוות
+    assert "config.TG_CONNECTIONS" in flow
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
