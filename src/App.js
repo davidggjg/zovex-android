@@ -1,7 +1,8 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   Alert,
   Animated,
+  AppState,
   Easing,
   Linking,
   PermissionsAndroid,
@@ -25,6 +26,8 @@ import SavedUploadScreen from './screens/SavedUploadScreen';
 import LegalScreen from './screens/LegalScreen';
 import ZovexIntro from './components/ZovexIntro';
 import {initUserId} from './api/userStore';
+import BlockedScreen from './components/BlockedScreen';
+import {checkAccess, loadStoredEmail, subscribeEmail} from './api/access';
 
 const Stack = createNativeStackNavigator();
 
@@ -175,6 +178,49 @@ export default function App() {
   const [dialogConfig, setDialogConfig] = useState(null);
   const glowAnim = useRef(new Animated.Value(0)).current;
 
+  // ── חסימת גישה ───────────────────────────────────────────────────────────
+  // יושב ב-App ולא ב-HomeScreen בכוונה: מסך החסימה חייב להיות *לפני* כל
+  // תוכן אחר, ואילו הוא היה בתוך מסך הבית הוא היה מצויר אחרי שהקטלוג כבר
+  // נטען והוצג.
+  //
+  // ברירת המחדל היא "לא חסום", ולכן כל מסלול שלא הגיע לתשובה חיובית
+  // מהשרת — אורח, כשל רשת, בדיקה שעוד רצה — פשוט ממשיך הלאה. זו הדרישה:
+  // עדיף לתת גישה מאשר לנעול משתמש תקין.
+  const [blocked, setBlocked] = useState(null); // null = לא חסום / טרם נבדק
+  const emailRef = useRef(null);
+
+  const runAccessCheck = useCallback(async email => {
+    if (!email) { setBlocked(null); return; }   // אורח — אין את מי לחסום
+    const res = await checkAccess(email);
+    // המייל השתנה בזמן שהבקשה רצה (התנתקות, החלפת חשבון) — התשובה
+    // מתייחסת למשתמש אחר ואסור להחיל אותה.
+    if (emailRef.current !== email) return;
+    setBlocked(res.blocked ? (res.message || '') : null);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    // קריאה ראשונה מהאחסון: HomeScreen עוד לא הורכב ולכן הוא לא יכול
+    // לדווח על המשתמש השמור, ובלי זה חסימה הייתה מתגלה רק בחזרה מהרקע.
+    loadStoredEmail().then(email => {
+      if (!alive) return;
+      emailRef.current = email;
+      runAccessCheck(email);
+    });
+    // כניסה/יציאה מחשבון באמצע ריצה.
+    const unsub = subscribeEmail(email => {
+      emailRef.current = email;
+      if (!email) setBlocked(null);
+      runAccessCheck(email);
+    });
+    // חזרה מהרקע. בדיקה בעלייה בלבד פירושה שמי שמשאיר את האפליקציה
+    // פתוחה לא נחסם עד שיסגור אותה.
+    const sub = AppState.addEventListener('change', st => {
+      if (st === 'active') runAccessCheck(emailRef.current);
+    });
+    return () => { alive = false; unsub(); sub.remove(); };
+  }, [runAccessCheck]);
+
   useEffect(() => {
     let timer;
     const boot = async () => {
@@ -301,6 +347,11 @@ export default function App() {
         <Text style={styles.splashText}>ZOVEX</Text>
       </View>
     );
+  }
+
+  // לפני כל תוכן אחר — גם לפני דיאלוג העדכון. לנחסם אין מה לעדכן.
+  if (blocked !== null) {
+    return <BlockedScreen message={blocked} />;
   }
 
   if (dialogConfig) {

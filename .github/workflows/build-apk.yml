@@ -90,6 +90,13 @@ jobs:
             || npm install --no-save @babel/parser
           node scripts/check-hooks.js src
 
+      # חסימת גישה: שלושת הכללים (אורח עובר, כשל רשת עובר, אין כפתור
+      # במסך החסימה) אפשר לשבור בלי לשים לב, ושני כיווני השבירה גרועים —
+      # "נחסם ממשיך לצפות" מצד אחד, ו"משתמש תקין נעול" מצד שני. בדיקה
+      # ידנית מול הפרודקשן לא מכסה את השני בכלל.
+      - name: Check email access blocking
+        run: node scripts/test-ban.js
+
       # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
       # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)

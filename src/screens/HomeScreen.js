@@ -22,6 +22,7 @@ import {
   PanResponder,
 } from 'react-native';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
+import {setCurrentEmail} from '../api/access';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   fetchMovies,
@@ -1397,6 +1398,9 @@ export default function HomeScreen({navigation, route}) {
         picture: u.photo || u.photoUrl || '',
       };
       setUser(info);
+      // מדווחים ל-App כדי שבדיקת החסימה תרוץ מיד. בלי זה מי שנחסם היה
+      // נכנס לחשבון וממשיך לצפות עד ההפעלה הבאה.
+      setCurrentEmail(info.email);
       setShowSignIn(false);
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(info)).catch(() => {});
       await AsyncStorage.setItem(SEEN_LOGIN_KEY, '1').catch(() => {});
@@ -1417,13 +1421,19 @@ export default function HomeScreen({navigation, route}) {
       AsyncStorage.getItem(USER_KEY),
       AsyncStorage.getItem(SEEN_LOGIN_KEY),
     ]).then(([saved, seen]) => {
-      if (saved) { setUser(JSON.parse(saved)); return; }
+      if (saved) {
+        const info = JSON.parse(saved);
+        setUser(info);
+        setCurrentEmail(info?.email || null);
+        return;
+      }
       if (!seen) setShowSignIn(true);
     }).catch(() => { setShowSignIn(true); });
   }, []);
 
   const signOut = useCallback(async () => {
     setUser(null);
+    setCurrentEmail(null);
     setHistory([]);
     await AsyncStorage.removeItem(USER_KEY).catch(() => {});
     try { await GoogleSignin.signOut(); } catch {}
