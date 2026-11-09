@@ -201,6 +201,22 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
     if not indexed:
         return lines
 
+    # רק השורות של הדוברים שזיהוי המגדר לא הכריע עליהם.
+    #
+    # עד כה דובר משני אחד שלא הוכרע — שומר שאומר משפט — גרר מעבר
+    # על כל הסרט. נמדד אצל המשתמש: עשרים דקות על 656 כתוביות.
+    #
+    # ההיצרות חלה רק כשיש תוויות דובר ורק כשחלק מהן הוכרעו: בלי
+    # תוויות אין לפי מה לצמצם, וכשאיש לא הוכרע הצמצום היה משאיר הכל
+    if _UNRESOLVED:
+        narrowed = [i for i in indexed
+                    if getattr(segments[i], "speaker", "") in _UNRESOLVED]
+        if narrowed and len(narrowed) < len(indexed):
+            log.info("מגדר פנייה: %d שורות מתוך %d — רק הדוברים שלא "
+                     "הוכרעו (%s)", len(narrowed), len(indexed),
+                     ", ".join(sorted(_UNRESOLVED)))
+            indexed = narrowed
+
     schema = {
         "type": "object",
         "properties": {
@@ -1164,6 +1180,11 @@ SPEAKER_SYSTEM = (
 SPEAKER_SAMPLE = 12
 
 
+# הדוברים שזיהוי המגדר לא הכריע עליהם. מעבר מגדר הפנייה מטפל
+# בשורות שלהם בלבד, במקום לסרוק את כל הסרט בגלל דובר משני אחד
+_UNRESOLVED: set[str] = set()
+
+
 async def speaker_genders(segments: list[Segment], language: str,
                           notes: str = "") -> tuple[str, bool]:
     """טבלת דובר→מגדר מתוך זיהוי הדוברים. מחזיר (שורה לנעיצה, ודאי?).
@@ -1215,6 +1236,7 @@ async def speaker_genders(segments: list[Segment], language: str,
         return gender_table(notes), False
 
     rows, sure = [], True
+    unresolved: set[str] = set()
     for item in (answer or {}).get("speakers", []) if isinstance(answer, dict) else []:
         who = str(item.get("id", "")).strip()
         mine = str(item.get("gender", "")).strip()
@@ -1222,12 +1244,21 @@ async def speaker_genders(segments: list[Segment], language: str,
         if not who or not mine:
             continue
         if mine == "לא ידוע" or theirs == "לא ידוע":
+            # דובר אחד שלא הוכרע הפך את sure ל-False, ואז מעבר מגדר
+            # הפנייה רץ על **כל** הכתוביות. נמדד אצל המשתמש: עשרים
+            # דקות על 656 כתוביות, בגלל שומר שאומר משפט אחד.
+            # הדובר נרשם, והמעבר יטפל בשורות שלו בלבד
+            unresolved.add(who)
             sure = False
         rows.append(f"דובר {who}: מדבר כ{mine}, פונה ל{theirs}")
     if not rows:
         return gender_table(notes), False
-    log.info("מגדר הדוברים נקבע מזיהוי הדוברים: %d דוברים, %s",
-             len(rows), "ודאי" if sure else "חלקי")
+    log.info("מגדר הדוברים נקבע מזיהוי הדוברים: %d דוברים, %s%s",
+             len(rows), "ודאי" if sure else "חלקי",
+             f" (לא הוכרעו: {', '.join(sorted(unresolved))})"
+             if unresolved else "")
+    _UNRESOLVED.clear()
+    _UNRESOLVED.update(unresolved)
     return " · ".join(rows)[:600], sure
 
 

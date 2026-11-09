@@ -4308,6 +4308,48 @@ def _netbench_is_safe() -> None:
     assert "config.TG_CONNECTIONS" in flow
 
 
+@check("מעבר מגדר הפנייה מטפל רק בדוברים שלא הוכרעו")
+def _addressee_pass_is_narrowed() -> None:
+    # נמדד אצל המשתמש: עשרים דקות על 656 כתוביות. הסיבה הייתה דובר
+    # משני אחד — שומר שאומר משפט — שזיהוי המגדר לא הכריע עליו,
+    # ו-sure הפך ל-False, ואז המעבר רץ על כל הסרט
+    flow = inspect.getsource(hebrew.enforce_addressee)
+    assert "_UNRESOLVED" in flow, "המעבר עדיין סורק הכל"
+    assert "narrowed" in flow
+
+    table = inspect.getsource(hebrew.speaker_genders)
+    assert "unresolved.add(who)" in table, "הדוברים שלא הוכרעו אינם נרשמים"
+
+    # ההיצרות חלה רק כשיש ממה לצמצם: בלי תוויות דובר אין לפי מה,
+    # וכשאיש לא הוכרע הצמצום היה משאיר את הקובץ ריק
+    assert "narrowed and len(narrowed) < len(indexed)" in flow, flow[:200]
+
+    segs = [stt.Segment(index=i, start=i, end=i + 1, text=f"line {i}",
+                        speaker="A" if i < 90 else "B")
+            for i in range(100)]
+    hebrew._UNRESOLVED.clear()
+    try:
+        hebrew._UNRESOLVED.update({"B"})
+        kept = [i for i in range(100)
+                if getattr(segs[i], "speaker", "") in hebrew._UNRESOLVED]
+        assert len(kept) == 10, len(kept)
+    finally:
+        hebrew._UNRESOLVED.clear()
+
+
+@check("קצב הקריאה הוא של מבוגרים, לא של ילדים")
+def _reading_speed_matches_the_standards() -> None:
+    # שלושה מקורות בלתי תלויים: נטפליקס 20 למבוגרים ו-17 לילדים,
+    # IWSLT 2024 הגבילו ל-21, ומדריכי כתוביות נוקבים ב-17. כאן ישב
+    # 13 — מתחת לכולם, קצב של ילדים — ולכן כל כתובית נמתחה מעבר
+    # לנדרש, והחציון שלנו יצא קצר ברבע מתרגום אולפן באותו סרט
+    assert 17.0 <= config.SRT_READ_SPEED <= 21.0, config.SRT_READ_SPEED
+
+    # ובפועל: שורה של 34 תווים דורשת שתי שניות ולא שתיים ושלושה רבעים
+    need = 34 / config.SRT_READ_SPEED
+    assert abs(need - 2.0) < 0.1, need
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
