@@ -4351,6 +4351,49 @@ def _reading_speed_matches_the_standards() -> None:
     assert abs(need - 2.0) < 0.1, need
 
 
+@check("זיכרון התרגום שומר רק מה שאושר, ומתאים לפי מילים")
+def _translation_memory_works() -> None:
+    import tempfile
+    from zovexsub import memory
+
+    was = config.MEMORY_PATH
+    config.MEMORY_PATH = tempfile.mktemp(suffix=".jsonl")
+    try:
+        added = memory.add([
+            ("You should go home now, Sarah.",
+             "כדאי שתלכי הביתה עכשיו, שרה."),
+            ("Come here, my friend.", "בוא הנה, חבר שלי."),
+            ("I am not going anywhere.", "אני לא הולך לשום מקום."),
+            # אותו מקור פעמיים אינו מוסיף מידע, ורק מגדיל את הסיכוי
+            # שדוגמה אחת תשתלט על הפרומפט
+            ("You should go home now, Sarah.", "כפילות"),
+            # שורה בלי מילות תוכן אינה יכולה להיות מותאמת לכלום
+            ("...", "ריק"),
+        ], source="he_12.srt")
+        assert added == 3, added
+
+        # התאמה לפי מילים, כפי שנמדד עדיף על התאמה לפי משמעות
+        hits = memory.find(["You should go home, Sarah"])
+        assert hits, "לא נמצאה התאמה קרובה"
+        assert "Sarah" in hits[0]["src"], hits[0]
+        assert hits[0]["score"] > 0.5, hits[0]
+
+        # דוגמה רחוקה גרועה מאין דוגמה, ולכן יש סף
+        assert memory.find(["Quantum entanglement physics lecture"]) == []
+        assert config.MEMORY_FLOOR > 0
+
+        # והפרומפט מבקש לחקות סגנון ולא תוכן
+        text = memory.as_prompt(hits)
+        assert "סגנון" in text and "לא את התוכן" in text, text
+        assert memory.as_prompt([]) == ""
+
+        # מעט דוגמאות וטובות, ולא הרבה ורחוקות
+        assert 1 <= config.MEMORY_EXAMPLES <= 8, config.MEMORY_EXAMPLES
+    finally:
+        Path(config.MEMORY_PATH).unlink(missing_ok=True)
+        config.MEMORY_PATH = was
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
