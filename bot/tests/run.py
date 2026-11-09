@@ -4802,6 +4802,20 @@ def _guide_reaches_both_prompts() -> None:
         "idiom.remember_ours(lines")
 
 
+@check("סימן סיום שהופיע בתחילת שורה עברית מועבר לסופה")
+def _leading_marks_move_to_end() -> None:
+    from zovexsub import cleanup
+    assert cleanup.fix_leading_marks("?מה שלומך") == "מה שלומך?"
+    assert cleanup.fix_leading_marks("!בוא הנה") == "בוא הנה!"
+    # מקף דו-שיח ושלוש נקודות שפותחות שורה נשארים כמו שהם
+    assert cleanup.fix_leading_marks("- תשמע אותי") == "- תשמע אותי"
+    assert cleanup.fix_leading_marks("...אני לא יודע") == "...אני לא יודע"
+    # שורה שאינה עברית לא נוגעים בה
+    assert cleanup.fix_leading_marks("?ABC") == "?ABC"
+    # וסימן שכבר בסוף נשאר שם
+    assert cleanup.fix_leading_marks("מה שלומך?") == "מה שלומך?"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

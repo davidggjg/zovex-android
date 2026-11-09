@@ -102,6 +102,25 @@ def foreign_lines(lines: list[str]) -> list[int]:
     return [i for i, line in enumerate(lines) if line and has_foreign(line)]
 
 
+# סימן סיום משפט שהמודל הניח בתחילת השורה. בעברית הוא שייך לסוף —
+# "מה שלומך?" — ואם הוא בתחילה הוא נראה כאילו נדחף מהצד הלא נכון.
+# נמדד אצל המשתמש: "?" בתחילת השורה. ‏מתקנים רק כשהשורה אכן עברית
+# ורק אם הסימן ישב בתחילה ממש ואחריו מיד אות, כדי לא לגעת במקפי
+# דו-שיח ("- תשמע") ובשלוש נקודות שפותחות שורה
+_LEAD_MARK = re.compile(r"^\s*([?!.])\s*(?=[א-ת])")
+
+
+def fix_leading_marks(line: str) -> str:
+    """מעביר סימן סיום משפט מתחילת שורה עברית לסופה."""
+    if not line or not HEBREW.search(line):
+        return line
+    match = _LEAD_MARK.match(line)
+    if not match:
+        return line
+    rest = line[match.end():].rstrip()
+    return f"{rest}{match.group(1)}"
+
+
 def clean(lines: list[str]) -> tuple[list[str], list[int]]:
     """מנקה ניקוד ומחזיר גם את האינדקסים שעדיין מכילים אותיות זרות."""
     out = []
@@ -112,5 +131,8 @@ def clean(lines: list[str]) -> tuple[list[str], list[int]]:
         # האות הערבית מוחזרת כאן, לפני שמחליטים שהשורה "זרה". רוב
         # המקרים נפתרים כך בלי שום קריאה למודל, ומה שנשאר לתיקון
         # הוא באמת מה שאין לו מיפוי
-        out.append(mend_arabic(cleaned))
+        fixed = fix_leading_marks(mend_arabic(cleaned))
+        if fixed != cleaned:
+            log.info("סימן סיום הועבר לסוף השורה: %s", fixed[:40])
+        out.append(fixed)
     return out, foreign_lines(out)
