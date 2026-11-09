@@ -352,6 +352,21 @@ def photo_of(message: dict) -> tuple[str, int]:
     return largest.get("file_id", ""), int(largest.get("file_size", 0) or 0)
 
 
+def looks_like_bundle(message: dict) -> bool:
+    """האם ההודעה נושאת חבילת ZIP של כתוביות.
+
+    זו הדרך היחידה להכניס עשרות קבצי אולפן מטלפון, בלי מחשב
+    """
+    item = message.get("document")
+    if not item:
+        return False
+    name = (item.get("file_name") or "").lower()
+    if name.endswith(".zip"):
+        return True
+    mime = (item.get("mime_type") or "").lower()
+    return mime in ("application/zip", "application/x-zip-compressed")
+
+
 def looks_like_subtitle(message: dict) -> bool:
     """האם ההודעה נושאת קובץ כתוביות.
 

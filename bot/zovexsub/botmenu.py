@@ -231,6 +231,9 @@ on_waiting = None
 # לדעת אם מחכים לאחת
 on_cover = None
 on_wanting_cover = None
+# on_studio כשהמנהל שלח כתוביות אולפן בלי וידאו, כדי שהבוט יתאמן
+# עליהן. גם קובץ בודד וגם חבילת ZIP
+on_studio = None
 
 
 def _applies(index: int, choice: "Choice") -> bool:
@@ -708,6 +711,15 @@ async def _incoming(message: dict) -> None:
     # עבודה שממתינה לכתוביות גוברת על כל זיהוי: אם המשתמש ביקש לצרוב
     # קובץ משלו ושלח מסמך, זה הקובץ — גם כשהשם חסר או מטעה
     expected = bool(on_waiting and on_waiting(chat) and message.get("document"))
+    # כתוביות אולפן שנשלחו בלי וידאו, כדי שהבוט יתאמן עליהן. רק
+    # המנהל, וכמובן רק כשאין עבודה שממתינה דווקא לקובץ הזה: שם
+    # הכתוביות הן לצריבה ולא ללימוד
+    if (not expected and on_studio and allowlist.owner()
+            and (message.get("from") or {}).get("id") == allowlist.owner()
+            and (localbot.looks_like_bundle(message)
+                 or localbot.looks_like_subtitle(message))):
+        _detach(on_studio(chat, file_id, name), "כתוביות אולפן")
+        return
     if expected or localbot.looks_like_subtitle(message):
         if on_subtitle:
             _detach(on_subtitle(chat, file_id, name), "קובץ כתוביות")

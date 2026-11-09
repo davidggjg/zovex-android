@@ -15,10 +15,11 @@ import logging
 import shutil
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 from . import (allowlist, botapi, botmenu, config, fastio, fetch, fileid,
-               localbot, media, memory, pipeline)
+               learn, localbot, media, memory, pipeline)
 from . import progress as prog
 from . import srt as srt_tools
 
@@ -712,6 +713,45 @@ async def take_subtitle(chat_id, file_id: str, name: str) -> None:
                           _track.pop(chat, 0))
 
 
+async def take_studio(chat_id, file_id: str, name: str) -> None:
+    """כתוביות אולפן שהמנהל שלח בלי וידאו, כדי שהבוט יתאמן עליהן.
+
+    קובץ בודד או חבילת ZIP — אותו מנוע. כל מה שנשלח נשמר בספרייה
+    שעל השרת, ולא רק נקרא: קובץ מקור שהגיע בלי העברית שלו ממתין שם
+    לה, ואם נשפר את שיטת הלימוד נוכל ללמוד מחדש מהכל בלי לבקש
+    מהמשתמש לשלוח שוב
+    """
+    if int(chat_id) != allowlist.owner():
+        return
+    found, why = await localbot.locate(file_id)
+    if found is None:
+        await localbot.say(chat_id, "לא הצלחתי לקרוא את הקובץ.\n"
+                           + localbot.code(why))
+        return
+    note = await localbot.say(chat_id, "📚 קולט לספרייה…")
+    screen = Screen(chat_id, note.get("message_id", 0))
+    work = config.WORK_DIR / f"studio-{uuid.uuid4().hex[:8]}"
+    try:
+        # הלימוד הוא קריאת קבצים וחישוב חפיפות — עבודת מעבד שחוסמת.
+        # בלולאה היחידה שמושכת עדכונים מטלגרם היא הופכת את הבוט
+        # לאילם, ובחבילה של עשרות קבצים זה דקות
+        if zipfile.is_zipfile(found):
+            report = await asyncio.to_thread(learn.absorb_zip, found, work)
+        else:
+            report = await asyncio.to_thread(learn.absorb, found, name)
+    except Exception as exc:  # noqa: BLE001 — קובץ פגום אינו מפיל בוט
+        log.exception("לימוד מכתוביות אולפן נכשל")
+        await screen.show("❌ הלימוד נכשל.\n" + localbot.code(str(exc)),
+                          force=True)
+        return
+    finally:
+        pipeline.cleanup(work)
+    await screen.show(
+        f"📚 <b>נקלט לספרייה</b>\n\n{report.text()}\n\n"
+        f"<i>ספרייה: {learn.shelf()} · זיכרון: {memory.stats()}</i>",
+        force=True)
+
+
 async def _make_subtitles(chat_id, source: Path, work: Path, screen,
                           track: int = 0) -> None:
     """המסלול המלא: תמלול, תרגום, ואז הצעת צריבה.
@@ -1124,3 +1164,4 @@ def install() -> None:
     botmenu.on_waiting = waiting_for
     botmenu.on_cover = take_cover
     botmenu.on_wanting_cover = wanting_cover
+    botmenu.on_studio = take_studio

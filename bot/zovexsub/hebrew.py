@@ -16,7 +16,7 @@ import logging
 import re
 import time
 
-from . import cleanup, config, gemini, memory
+from . import cleanup, config, gemini, memory, studio
 from .stt import Segment
 
 log = logging.getLogger(__name__)
@@ -772,8 +772,15 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         # חיפוש פר-חלון ולא פעם אחת לכל הסרט, כי התאמה רלוונטית לקטע
         # אחד היא דוגמה רחוקה לקטע אחר — ודוגמה רחוקה מזיקה
         examples = memory.as_prompt(memory.find([s.text for s in window]))
+        # ‫ובנק הסגנון — קבצים עבריים של אולפן שאין להם צד מקור.
+        # משבצת נפרדת ומסומנת בכוונה: מדידות מראות שדוגמאות בשפת
+        # המטרה לבד מועילות לסגנון ולהתפלגות הפלט, אבל אינן מלמדות
+        # מיפוי מקור→מטרה. לערבב אותן עם זוגות אמיתיים היה שולח את
+        # המודל לקחת מהן תוכן. ‏start מחליף את הקטע בין חלונות, כדי
+        # שהוא לא יראה את אותן שורות שוב ושוב ויתחיל להחזיר אותן
+        manner = studio.style_prompt(seed=start + 1)
 
-        prompt = f"""{pinned}{examples}מסמך הנחיות לסרטון הזה:
+        prompt = f"""{pinned}{examples}{manner}מסמך הנחיות לסרטון הזה:
 ---
 {_cap(notes, 20_000)}
 ---

@@ -4498,6 +4498,213 @@ def _memory_reaches_the_prompt() -> None:
 
 
 
+def _fake_film(count: int, even: bool, seed: int, scale: float,
+               offset: float, drop: int = 0):
+    """בונה שני קבצי כתוביות של "אותו סרט", מוסטים זה מזה.
+
+    הצד העברי הוא ציר הזמן הנכון, והמקור מוסט בהיסט ובהפרש קצב —
+    בדיוק מה שקורה בין שני קבצים שירדו ממקומות שונים. כל שורה נושאת
+    את המספר שלה, ולכן אפשר לבדוק אם ההצמדה אמיתית או רק נראית טוב
+    """
+    import random
+    random.seed(seed)
+    raw, at = [], 10.0
+    for i in range(count):
+        span = 2.2 if even else max(1.0, random.randint(1, 9) * 0.45)
+        raw.append((at, at + span, i, random.randint(3, 60)))
+        at += span + (0.4 if even else random.uniform(0.1, 2.5))
+    source = [srt.Cue(index=k + 1, start=(s - offset) / scale,
+                      end=(e - offset) / scale, text=f"S{i} " + "x" * w)
+              for k, (s, e, i, w) in enumerate(raw)]
+    hebrew = [srt.Cue(index=k + 1, start=s, end=e, text=f"H{i} " + "ש" * w)
+              for k, (s, e, i, w) in enumerate(raw)]
+    if drop:
+        # האולפן דילג על שורות, כמו שמתרגם אמיתי עושה
+        hebrew = [c for k, c in enumerate(hebrew) if k % drop != 5]
+    return source, hebrew
+
+
+def _misaligned(pairs) -> int:
+    wrong = 0
+    for said, heb in pairs:
+        want = heb.split()[0][1:]
+        got = [p[1:] for p in said.split() if p.startswith("S")]
+        if want not in got:
+            wrong += 1
+    return wrong
+
+
+@check("הצמדת כתוביות אולפן עומדת בהיסט, בהפרש קצב ובהשמטות")
+def _studio_alignment_is_exact() -> None:
+    from zovexsub import studio
+
+    # המקרה שהפיל את הגרסה הראשונה: כתוביות בקצב קבוע לגמרי, שבהן
+    # הזזה בכתובית אחת נותנת כמעט אותו ציון חפיפה. 54 מתוך 54 הזוגות
+    # יצאו אז שגויים בעוד הציון נראה מושלם
+    source, hebrew = _fake_film(60, True, 3, 25 / 23.976, 7.3)
+    pairs = studio.align(source, hebrew)
+    assert len(pairs) == 60, len(pairs)
+    assert _misaligned(pairs) == 0, _misaligned(pairs)
+
+    # וקובץ שנראה כמו קובץ אמיתי: אורכים משתנים, והאולפן השמיט שורות
+    source, hebrew = _fake_film(400, False, 7, 25 / 23.976, 7.3, drop=17)
+    pairs = studio.align(source, hebrew)
+    assert _misaligned(pairs) == 0, _misaligned(pairs)
+    assert studio.aligned_well(pairs, len(hebrew))
+
+    # היסט שלילי גדול, והכיוון ההפוך של הפרש הקצב
+    for scale, offset in ((1.0, -43.5), (23.976 / 25, 2.0)):
+        source, hebrew = _fake_film(200, False, 23, scale, offset)
+        pairs = studio.align(source, hebrew)
+        assert _misaligned(pairs) == 0, (scale, offset, _misaligned(pairs))
+
+    # ושני קבצים של סרטים שונים אינם מצטמדים — ונזרקים
+    one, _ = _fake_film(200, False, 31, 1.0, 0.0)
+    _, two = _fake_film(200, False, 41, 1.0, 0.0)
+    assert not studio.aligned_well(studio.align(one, two), len(two))
+
+
+@check("כתוביות אולפן נשמרות בספרייה, ומזדווגות גם כשהגיעו בנפרד")
+def _studio_library_learns() -> None:
+    import tempfile
+    from zovexsub import learn, memory, studio
+
+    was = config.MEMORY_PATH
+    folder = tempfile.mkdtemp()
+    config.MEMORY_PATH = str(Path(folder) / "memory.jsonl")
+    drop = Path(folder) / "incoming"
+    drop.mkdir()
+    try:
+        source, hebrew = _fake_film(120, False, 5, 25 / 23.976, 6.0)
+        src_file = drop / "The.Movie.2019.1080p.BluRay.x264-GRP.en.srt"
+        heb_file = drop / "The Movie 2019 BluRay heb.srt"
+        src_file.write_text(srt.render(source), encoding="utf-8")
+        heb_file.write_text(srt.render(hebrew), encoding="utf-8")
+
+        # קובץ מקור לבד אינו מלמד דבר על עברית — וגם אינו נזרק
+        first = learn.absorb(src_file, src_file.name)
+        assert first.waiting and not first.pairs, first.text()
+        assert not first.style_blocks
+
+        # ואז העברית של אותו סרט מגיעה, והזוגות נוצרים. שמות הקבצים
+        # שונים לגמרי — הזיווג הוא לפי גלעין השם, בלי רעש המפיצים
+        second = learn.absorb(heb_file, heb_file.name)
+        assert second.pairs > 100, second.text()
+        assert len(memory.load()) == second.pairs
+        # הזוגות אמיתיים, ולא רק קיימים
+        assert _misaligned([(i["src"], i["he"]) for i in memory.load()]) == 0
+        # זווג, ולכן אינו נכנס גם לבנק הסגנון
+        assert second.style_blocks == 0, second.text()
+
+        # אותו קובץ שוב אינו מוסיף דבר. בלי הרישום, קטעי הסגנון היו
+        # נכנסים שוב ומקבלים משקל כפול בלי שאיש החליט על כך
+        again = learn.absorb(heb_file, heb_file.name)
+        assert again.pairs == 0 and again.style_blocks == 0, again.text()
+        assert len(memory.load()) == second.pairs
+
+        # ועברית לבד, בלי מקור: סגנון ולא זוגות
+        _, alone = _fake_film(80, False, 9, 1.0, 0.0)
+        solo = drop / "Another Film 2021 hebrew.srt"
+        solo.write_text(srt.render(alone), encoding="utf-8")
+        third = learn.absorb(solo, solo.name)
+        assert third.style_blocks > 0 and third.pairs == 0, third.text()
+        assert len(memory.load()) == second.pairs
+
+        # הסגנון נכנס לפרומפט במשבצת משלו, מסומן כסגנון ולא כתרגום
+        text = studio.style_prompt(seed=1)
+        assert "סגנון" in text and "אל תיקח ממנה מילים" in text, text
+
+        # והמדידה: תקרות אמיתיות מתוך הקבצים, בלי מודל ובלי רשת
+        stats = studio.profile(alone)
+        assert stats["cues"] == len(alone), stats
+        assert stats["cps_p90"] >= stats["cps_median"], stats
+        assert learn.merge_profiles([stats])["files"] == 1
+    finally:
+        config.MEMORY_PATH = was
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@check("כתוביות שנשלחו בלי וידאו מגיעות ללימוד, ורק מהמנהל")
+def _studio_files_route_to_learning() -> None:
+    import asyncio
+    from zovexsub import botmenu, learn, localbot
+
+    was_owner = config.BOT_OWNER
+    config.BOT_OWNER = 8658294616
+    was_studio = botmenu.on_studio
+    was_subtitle = botmenu.on_subtitle
+    was_waiting = botmenu.on_waiting
+    was_greet = botmenu.greet
+    was_say = localbot.say
+    seen: list[str] = []
+
+    async def to_studio(chat, file_id, name):
+        seen.append(f"studio:{name}")
+
+    async def to_subtitle(chat, file_id, name):
+        seen.append(f"subtitle:{name}")
+
+    async def to_greet(chat, file_id, size, name, message_id):
+        seen.append(f"greet:{name}")
+
+    async def quiet(*a, **kw):
+        return {}
+
+    botmenu.on_studio = to_studio
+    botmenu.on_subtitle = to_subtitle
+    botmenu.greet = to_greet
+    localbot.say = quiet
+    try:
+        def send(user_id, name, mime="", waiting=False):
+            seen.clear()
+            botmenu.on_waiting = (lambda chat: waiting)
+            asyncio.run(botmenu._incoming({
+                "message_id": 1,
+                "chat": {"id": user_id},
+                "from": {"id": user_id, "first_name": "x"},
+                "document": {"file_id": "f", "file_name": name,
+                             "file_size": 40_000, "mime_type": mime},
+            }))
+            return list(seen)
+
+        owner = config.BOT_OWNER
+        # המנהל שולח כתוביות בלי וידאו — זה לימוד, לא צריבה
+        assert send(owner, "film.heb.srt") == ["studio:film.heb.srt"]
+        # וחבילה שלמה, שהיא הדרך היחידה להכניס עשרות קבצים מטלפון
+        assert send(owner, "pack.zip") == ["studio:pack.zip"]
+        assert send(owner, "pack", mime="application/zip") \
+            == ["studio:pack"]
+        # אבל כשיש עבודה שממתינה דווקא לקובץ הזה, הוא לצריבה
+        assert send(owner, "film.srt", waiting=True) == ["subtitle:film.srt"]
+        # ומשתמש רגיל אינו מלמד את הבוט. שים לב ש-123 אינו מורשה
+        # בכלל, ולכן הוא נעצר כבר בשער ההרשאות
+        assert send(123, "film.heb.srt") == []
+        # גם משתמש מורשה אינו מלמד: הספרייה מנחה כל תרגום עתידי
+        was_ids = config.ALLOW_IDS
+        config.ALLOW_IDS = tuple(was_ids) + (123,)
+        try:
+            assert send(123, "film.heb.srt") == ["subtitle:film.heb.srt"]
+        finally:
+            config.ALLOW_IDS = was_ids
+        # וסרטון נשאר סרטון
+        assert send(owner, "film.mp4", mime="video/mp4") == ["greet:film.mp4"]
+
+        # וזיווג לפי גלעין השם עומד בשמות של קבוצות הפצה שונות
+        assert learn.same_film("the movie 2019 grp", "the movie 2019")
+        assert learn.same_film("the dark house 2012 yify",
+                               "the dark house 2012 ctrlhd")
+        # שנה אחרת היא סרט אחר, גם כששאר השם זהה
+        assert not learn.same_film("the movie 2019", "the movie 2021")
+        assert not learn.same_film("the movie 2019", "another film 2019")
+    finally:
+        botmenu.on_studio = was_studio
+        botmenu.on_subtitle = was_subtitle
+        botmenu.on_waiting = was_waiting
+        botmenu.greet = was_greet
+        localbot.say = was_say
+        config.BOT_OWNER = was_owner
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
