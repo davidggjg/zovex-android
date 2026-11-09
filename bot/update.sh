@@ -21,8 +21,11 @@ BOT="$REPO/bot"
 VENV="$ROOT/venv"
 PY="$VENV/bin/python"
 PIP="$VENV/bin/pip"
-ENV_FILE="$ROOT/.env"
-[[ -f "$ENV_FILE" ]] || ENV_FILE="$(dirname "$BOT")/.env"
+# בדיוק כפי ש-config.py טוען אותו: load_dotenv(parent.parent/".env")
+# מתוך zovexsub/config.py, כלומר bot/.env. נמדד אצל המשתמש —
+# הסקריפט בדק /opt/zovexsub/.env, שהוא קובץ אחר לגמרי, ולכן
+# "כל הכוונונים מוגדרים" התייחס ל-.env שהבוט אינו קורא בכלל
+ENV_FILE="$BOT/.env"
 SERVICE=${ZOVEX_SERVICE:-zovexsub}
 
 MODE=fix
@@ -54,7 +57,14 @@ fi
 head_ "קוד"
 if [[ -d "$REPO/.git" ]]; then
   BRANCH=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
-  DIRTY=$(git -C "$REPO" status --porcelain 2>/dev/null | wc -l)
+  # רק קבצים **מנוהלים** שהשתנו. נמדד אצל המשתמש: אחד-עשר קבצי
+  # ריצה לא-מנוהלים (גיבויי .env, prefs.json, הספרייה, deno.lock)
+  # נספרו כ"שינוי מקומי", והסקריפט סירב לעשות pull בגללם. ‏pull
+  # אינו דורך על קובץ לא-מנוהל, ולכן הם אינם סיכון כלל
+  DIRTY=$(git -C "$REPO" status --porcelain --untracked-files=no \
+          2>/dev/null | wc -l)
+  LOOSE=$(git -C "$REPO" ls-files --others --exclude-standard \
+          2>/dev/null | wc -l)
   git -C "$REPO" fetch --quiet origin "$BRANCH" 2>/dev/null || \
     echo "   (fetch נכשל — אולי אין רשת. ממשיכים עם מה שיש)"
   BEHIND=$(git -C "$REPO" rev-list --count "HEAD..origin/$BRANCH" 2>/dev/null || echo 0)
@@ -62,8 +72,9 @@ if [[ -d "$REPO/.git" ]]; then
 
   if (( DIRTY > 0 )); then
     # שינוי מקומי שלא נשמר ייעלם ב-pull, ולכן לא נוגעים בו בלי שתדע
-    old "$DIRTY קבצים שונו מקומית ולא נשמרו בגיט"
-    git -C "$REPO" status --short | head -8 | sed 's/^/     /'
+    old "$DIRTY קבצים מנוהלים שונו מקומית ולא נשמרו בגיט"
+    git -C "$REPO" status --short --untracked-files=no | head -8 \
+      | sed 's/^/     /'
     echo "     ⚠️  לא עושה pull כדי לא לדרוך עליהם."
     echo "     לשמור:  git -C $REPO stash"
     echo "     לזרוק:  git -C $REPO checkout -- ."
@@ -81,6 +92,24 @@ if [[ -d "$REPO/.git" ]]; then
   else
     ok "הקוד מעודכן ($BRANCH, $(git -C "$REPO" log -1 --format=%h))"
     (( AHEAD > 0 )) && echo "     ($AHEAD קומיטים מקומיים שלא נדחפו)"
+  fi
+  if (( LOOSE > 0 )); then
+    echo "   ($LOOSE קבצי ריצה לא-מנוהלים — תקין, pull אינו נוגע בהם)"
+    # גיבויי .env מחזיקים את הטוקן ואת ה-api_hash בטקסט גלוי, עותק
+    # לכל גיבוי. זה לא שינוי שצריך לשמור, זו ערימה שכדאי לנקות
+    BAKS=$(git -C "$REPO" ls-files --others --exclude-standard \
+           2>/dev/null | grep -c '\.env\.bak' || true)
+    if (( BAKS > 1 )); then
+      echo "   ⚠️  $BAKS גיבויי .env, וכל אחד מחזיק את הטוקן בטקסט גלוי."
+      echo "      לנקות (שומר את האחרון):  ls -t $BOT/.env.bak* |"
+      echo "        tail -n +2 | xargs -r shred -u"
+    fi
+    # תיקיה או קישור בשם bot בתוך bot הוא כמעט תמיד תקלה, והוא
+    # יכול להכניס find ללופ
+    if [[ -e "$BOT/bot" ]]; then
+      echo "   ⚠️  יש $BOT/bot — בדוק מה זה:  ls -ld $BOT/bot"
+      echo "      אם זה קישור חוזר לעצמו, מחק אותו."
+    fi
   fi
 else
   echo "   אין גיט כאן — מדלג על בדיקת הקוד"
@@ -199,7 +228,17 @@ KEYSCAN
   fi
 fi
 if [[ ! -f "$ENV_FILE" ]]; then
-  bad "לא מצאתי .env (חיפשתי ב-$ENV_FILE)"
+  bad "לא מצאתי .env (הבוט קורא $ENV_FILE)"
+else
+  # ‫קובץ .env נוסף במקום אחר הוא מלכודת: עורכים אותו, מפעילים
+  # מחדש, ושום דבר לא משתנה — כי הבוט קורא את השני
+  for other in "$ROOT/.env" "$REPO/.env"; do
+    if [[ -f "$other" && "$(readlink -f "$other")" != \
+          "$(readlink -f "$ENV_FILE")" ]]; then
+      echo "⚠️  יש גם $other, והבוט **אינו** קורא אותו."
+      echo "   מה שמשנה הוא רק $ENV_FILE"
+    fi
+  done
 fi
 
 # ── 4b. הקוד שהשירות באמת מריץ ─────────────────────────────────
