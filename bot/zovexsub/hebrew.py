@@ -42,7 +42,16 @@ PEOPLE_SYSTEM = """אתה עורך לשוני ראשי באולפן כתוביו
 את כל צורות הזכר והנקבה בתרגום, וזה החלק שמכריע אם הכתוביות נשמעות
 נכון או שבורות. אל תחפש באינטרנט, הכל נמצא בתמליל עצמו."""
 
-PEOPLE_USER = """להלן תמליל גולמי (שפת מקור: {language}).
+# שם הסרטון נכנס למיפוי הדמויות, ולא רק לחילוץ המונחים. בלעדיו
+# החיפוש ברשת חסר עוגן: אי אפשר לחפש "רשימת שחקנים" בלי לדעת של מה
+PEOPLE_TITLE = """שם הסרטון: {title}
+לפני שאתה כותב משהו — חפש ברשת את רשימת הדמויות והשחקנים של
+הסרטון הזה. זהו הנתון החשוב ביותר כאן, והוא אינו נמצא בתמליל:
+רשימה רשמית אומרת מי גבר ומי אישה בוודאות, בעוד התמליל מאפשר רק
+לנחש. בסס עליה את שורת @דמויות.
+"""
+
+PEOPLE_USER = """{titled}להלן תמליל גולמי (שפת מקור: {language}).
 כתוב מסמך הנחיות בעברית, בסעיפים הבאים בדיוק:
 
 1. נושא והקשר: על מה הסרטון, סוג התוכן (שיעור / פודקאסט / חדשות / סרטון שיווקי / שיחה פרטית / הרצאה), ורמת המשלב הנדרשת בעברית.
@@ -489,10 +498,21 @@ async def research_notes(numbered: str, language: str, on_step=None,
                 await refresh()
 
     async def people() -> str:
+        # החיפוש היה כבוי תמיד, בעוד הפרומפט מורה למודל לבסס את
+        # טבלת הדמויות על "רשימת השחקנים שחיפשת ברשת". ביקשנו ממנו
+        # להסתמך על חיפוש שמעולם לא הרשינו לו לעשות, והתוצאה הייתה
+        # שהשורה נשמטה — "אין שורת @דמויות במסמך החקר" — והמגדר
+        # נפל חזרה לניחוש מהטקסט.
+        #
+        # עם שם הסרטון יש מה לחפש, ורשימה רשמית אומרת מי גבר ומי
+        # אישה בוודאות. בלי שם אין עוגן לחיפוש, והוא רק מאט
         return await gemini.research(
             PEOPLE_SYSTEM,
-            PEOPLE_USER.format(language=language, transcript=_cap(numbered, 120_000)),
-            grounded=False,
+            PEOPLE_USER.format(
+                titled=(PEOPLE_TITLE.format(title=title) if title else ""),
+                language=language,
+                transcript=_cap(numbered, config.PEOPLE_CHARS, "מיפוי דמויות")),
+            grounded=bool(title),
         )
 
     async def facts(index: int, chunk: str) -> str:
@@ -1267,5 +1287,17 @@ def cast_table(notes: str) -> str:
     return " ".join(found.group(1).split())[:400]
 
 
-def _cap(text: str, limit: int) -> str:
-    return text if len(text) <= limit else text[:limit] + "\n…[נחתך]"
+def _cap(text: str, limit: int, what: str = "") -> str:
+    """חותך טקסט ארוך מדי — ואומר זאת.
+
+    החיתוך היה שקט לגמרי. בסרט ארוך זה אומר שמיפוי הדמויות אינו
+    רואה את הסוף, ולכן דמות שמופיעה רק במערכה השלישית אינה מקבלת
+    מגדר כלל — בדיוק הסימפטום שדווח: טעויות מגדר בסצנת הסיום
+    """
+    if len(text) <= limit:
+        return text
+    if what:
+        log.warning("%s: התמליל נחתך ל-%d תווים מתוך %d (%.0f%% ממנו "
+                    "לא נראה)", what, limit, len(text),
+                    (1 - limit / len(text)) * 100)
+    return text[:limit] + "\n…[נחתך]"
