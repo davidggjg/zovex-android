@@ -4705,6 +4705,103 @@ def _studio_files_route_to_learning() -> None:
         config.BOT_OWNER = was_owner
 
 
+@check("מדריך העברית נמדד מהאולפן, ואינו מחושב בזמן תרגום")
+def _hebrew_guide_is_measured() -> None:
+    import random
+    import tempfile
+    from zovexsub import idiom, studio
+
+    was_path = config.MEMORY_PATH
+    was_floor = config.IDIOM_MIN_LINES
+    folder = tempfile.mkdtemp()
+    config.MEMORY_PATH = str(Path(folder) / "memory.jsonl")
+    config.IDIOM_MIN_LINES = 100
+    try:
+        random.seed(5)
+        # "אולפן": עברית מדוברת, כתיב מלא, גרשיים עבריים, מקף דו-שיח
+        theirs = ["אין מצב שהוא דיבר ככה", "בוא נזוז מפה, יאללה",
+                  "מה הולך כאן בכלל", "תקשיבי, זה לא עובד ככה",
+                  "- תשמע אותי רגע\n- אין לי זמן",
+                  'הוא קרא לזה \u05f4הפרויקט\u05f4', "אוקיי, הבנתי אותך"]
+        cues = [srt.Cue(index=i + 1, start=i * 3.0, end=i * 3.0 + 2.0,
+                        text=random.choice(theirs)) for i in range(400)]
+        studio.add_style(cues, "studio.srt")
+        # "אנחנו": נכון דקדוקית, אבל נשמע מתורגם — וכתיב חסר
+        mine = ["זה בלתי אפשרי שהוא דבר בצורה הזאת",
+                "הבה נעזוב את המקום הזה", "מה בדיוק מתרחש כאן",
+                "הקשיבי, זה אינו עובד בצורה הזאת",
+                'הוא קרא לזה "הפרויקט"', "אוקי, הבנתי אותך",
+                "אינו יכול להיות"]
+        idiom.remember_ours([random.choice(mine) for _ in range(400)],
+                            "ours")
+
+        data = idiom.cached_compare()
+        studio_side = [row["gram"] for row in data["studio"]]
+        ours_side = [row["gram"] for row in data["ours"]]
+        # הכלי מוצא את ההבדל האמיתי בין השניים
+        assert "ככה" in studio_side, studio_side
+        assert "בצורה הזאת" in ours_side, ours_side
+        # וחיתוכים חופפים של אותו ביטוי אינם מציפים את הרשימה.
+        # נמדד: שמונה-עשר המקומות התמלאו בשלושה ביטויים בפועל
+        assert not ("מה הולך" in studio_side
+                    and "מה הולך כאן" in studio_side), studio_side
+
+        # כתיב מלא וחסר, בלי רשימה ידנית
+        forms = {row["use"]: row["not"] for row in idiom.spelling()}
+        assert forms.get("אוקיי") == "אוקי", forms
+        assert forms.get("דיבר") == "דבר", forms
+        # ולא כל שתי מילים שנראות דומות הן אותה מילה. נמדד:
+        # "אני" ו"אינו" קיבלו אותו מפתח, והמדריך יצא עם כלל שגוי
+        assert "אני" not in forms, forms
+        assert not idiom._same_word("אני", "אינו")
+        assert idiom._same_word("דבר", "דיבר")
+        assert idiom._same_word("אוקי", "אוקיי")
+
+        # סימנים שאנגלית אינה מכירה כלל
+        rules = " ".join(idiom.conventions())
+        assert "גרשיים" in rules, rules
+        assert "דובר שני" in rules, rules
+
+        # והעיקר: המדריך נבנה פעם אחת ונשמר כטקסט. בזמן תרגום זו
+        # קריאת קובץ ולא חישוב, כי חלון תרגום נקרא עשרות פעמים
+        chars, gender = idiom.build_guide()
+        assert chars > 200 and gender > 0, (chars, gender)
+        assert idiom.guide_path().exists()
+        guide = idiom.guide()
+        assert "ככה" in guide and "אוקיי" in guide, guide
+        assert "גרשיים" in guide, guide
+        # הקריאה אינה תלויה בקורפוסים כלל — הם יכולים להיעלם
+        studio.style_path().unlink()
+        idiom.ours_path().unlink()
+        assert idiom.guide() == guide
+
+        # וכיבוי מוציא את המדריך מהפרומפט בלי למחוק דבר
+        config.IDIOM_GUIDE = 0
+        try:
+            assert idiom.guide() == "" and idiom.gender_guide() == ""
+        finally:
+            config.IDIOM_GUIDE = 1
+        assert idiom.guide_path().exists()
+    finally:
+        config.MEMORY_PATH = was_path
+        config.IDIOM_MIN_LINES = was_floor
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@check("מדריך העברית מגיע לשני הפרומפטים — לתרגום ולמגדר הפנייה")
+def _guide_reaches_both_prompts() -> None:
+    source = Path("zovexsub/hebrew.py").read_text(encoding="utf-8")
+    assert "rules = idiom.guide()" in source
+    assert "{manner}{rules}" in source
+    # ולמעבר מגדר הפנייה, שהוא הנקודה שבה צורה נכונה דקדוקית עדיין
+    # יכולה להישמע כמו ספר לימוד
+    assert "idiom.gender_guide()" in source
+    # והפלט שלנו נשמר, אחרת אין מול מה להשוות בכלל
+    flow = Path("zovexsub/pipeline.py").read_text(encoding="utf-8")
+    assert flow.count("idiom.remember_ours(lines") == 2, flow.count(
+        "idiom.remember_ours(lines")
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import (align, config, gemini_stt, hebrew, media, memory,
-               voice, progress as prog, realign, srt, vad)
+from . import (align, config, gemini_stt, hebrew, idiom, media,
+               memory, voice, progress as prog, realign, srt, vad)
 from .stt import (Segment, drop_nonspeech, recover_gaps,
                   title_hint as stt_title_hint, transcribe)
 
@@ -246,6 +246,10 @@ async def run(source: Path, work: Path, *, progress: Progress,
     memory.write_pairs(work, [(seg.text, lines[seg.index])
                               for seg in transcript.segments
                               if seg.index < len(lines)])
+    # והפלט שלנו נשמר לקורפוס ההשוואה. בלי הצד הזה אין keyness
+    # בכלל: רשימת תדירות אחת אינה אומרת דבר. הקורפוס הזה אינו
+    # "תרגומים טובים" ואינו נכנס לשום פרומפט כדוגמה — הוא החשוד
+    idiom.remember_ours(lines, source=source.name)
 
     return Result(
         srt_path=srt_path, duration=duration, cues=len(cues),
@@ -342,6 +346,7 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
     memory.write_pairs(work, [(seg.text, lines[i])
                               for i, seg in enumerate(segments)
                               if i < len(lines)])
+    idiom.remember_ours(lines, source=source.name)
     return target
 
 

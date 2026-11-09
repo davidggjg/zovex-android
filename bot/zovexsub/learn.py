@@ -17,7 +17,7 @@ import re
 import zipfile
 from pathlib import Path
 
-from . import memory, srt, studio
+from . import idiom, memory, srt, studio
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +112,9 @@ class Report:
         # קובץ שכבר נלמד בעבר. גם זה לא כשל
         self.already: list[str] = []
         self.profiles: list[dict] = []
+        # אורך מדריך העברית שנבנה בסוף הקליטה, לדיווח
+        self.guide_chars = 0
+        self.gender_chars = 0
 
     @property
     def learned(self) -> bool:
@@ -139,6 +142,12 @@ class Report:
             shown = ", ".join(self.skipped[:4])
             more = f" ועוד {len(self.skipped) - 4}" if len(self.skipped) > 4 else ""
             rows.append(f"\n⚠️ דילגתי על: {shown}{more}")
+        if self.guide_chars or self.gender_chars:
+            rows.append(f"\n🧠 <b>מדריך העברית נבנה מחדש</b> · "
+                        f"{self.guide_chars} תווים של כתיב, לקסיקון "
+                        f"וסימני פיסוק, ועוד {self.gender_chars} של "
+                        f"צורות פנייה.\n<i>מחושב פעם אחת כאן, ולא "
+                        f"בזמן תרגום — זה לא מוסיף שנייה לעבודה.</i>")
         merged = merge_profiles(self.profiles)
         if merged:
             rows.append("\n<b>מה שמדדתי בקבצים האולפניים:</b>\n"
@@ -192,6 +201,7 @@ def from_folder(folder: Path) -> Report:
             log.warning("%s לא נשמר לספרייה (%s)", path.name, exc)
     for stem in _films(kept):
         _learn_group(stem, family_of(stem), report)
+    _refresh_guide(report)
     return report
 
 
@@ -255,7 +265,9 @@ def absorb(given: Path, name: str) -> Report:
     """
     kept = keep(given, name)
     stem = stem_of(kept.name)
-    return _learn_group(stem, family_of(stem))
+    report = _learn_group(stem, family_of(stem))
+    _refresh_guide(report)
+    return report
 
 
 def absorb_zip(archive: Path, work: Path) -> Report:
@@ -282,7 +294,24 @@ def absorb_zip(archive: Path, work: Path) -> Report:
     report = Report()
     for stem in _films(taken):
         _learn_group(stem, family_of(stem), report)
+    _refresh_guide(report)
     return report
+
+
+def _refresh_guide(report: "Report") -> None:
+    """בונה מחדש את מדריך העברית, פעם אחת בסוף הקליטה.
+
+    כאן ולא בזמן התרגום, וזו ההחלטה המרכזית: ספירת הצירופים היא על
+    עשרות אלפי שורות, וחלון תרגום נקרא עשרות פעמים לכל סרט. אם זה
+    היה רץ שם, כל סרט היה משלם על החישוב הזה שוב ושוב בלי שום
+    תמורה — הקורפוסים אינם משתנים באמצע עבודה
+    """
+    if not report.learned:
+        return
+    try:
+        report.guide_chars, report.gender_chars = idiom.build_guide()
+    except Exception as exc:  # noqa: BLE001 — מדריך הוא שיפור, לא תנאי
+        log.warning("בניית מדריך הסגנון נכשלה (%s)", exc)
 
 
 def _films(paths: list[Path]) -> list[str]:

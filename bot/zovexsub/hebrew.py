@@ -16,7 +16,7 @@ import logging
 import re
 import time
 
-from . import cleanup, config, gemini, memory, studio
+from . import cleanup, config, gemini, idiom, memory, studio
 from .stt import Segment
 
 log = logging.getLogger(__name__)
@@ -256,7 +256,10 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
         after = indexed[start + ADDRESSEE_WINDOW:start + ADDRESSEE_WINDOW + ADDRESSEE_CONTEXT]
 
         genders = gender_table(notes)
-        prompt = pinned_genders(notes) + f"""מסמך הנחיות:
+        # שורות אולפן אמיתיות שבהן פונים לאשה ולגבר. ההחלטה למי
+        # פונים נעשית מההקשר וזה עובד; מה שחסר היה **איך** צורה
+        # כזאת נשמעת כשמקצוען כותב אותה, ולא כמו ספר לימוד
+        prompt = pinned_genders(notes) + idiom.gender_guide() + f"""מסמך הנחיות:
 ---
 {_cap(notes, 12_000)}
 ---
@@ -779,8 +782,13 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         # המודל לקחת מהן תוכן. ‏start מחליף את הקטע בין חלונות, כדי
         # שהוא לא יראה את אותן שורות שוב ושוב ויתחיל להחזיר אותן
         manner = studio.style_prompt(seed=start + 1)
+        # ‫ומדריך העברית: לקסיקון קולנועי, העדפות כתיב וסימני פיסוק
+        # עבריים. הכל נמדד מהספרייה האולפנית **בעת קליטת הקבצים**
+        # ונשמר כטקסט מוכן, ולכן כאן זו קריאת קובץ ולא חישוב — הוא
+        # ביקש במפורש שזה לא יוסיף זמן לתרגום
+        rules = idiom.guide()
 
-        prompt = f"""{pinned}{examples}{manner}מסמך הנחיות לסרטון הזה:
+        prompt = f"""{pinned}{examples}{manner}{rules}מסמך הנחיות לסרטון הזה:
 ---
 {_cap(notes, 20_000)}
 ---
