@@ -16,7 +16,7 @@ import logging
 import re
 import time
 
-from . import cleanup, config, gemini
+from . import cleanup, config, gemini, memory
 from .stt import Segment
 
 log = logging.getLogger(__name__)
@@ -768,8 +768,12 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
         after = segments[start + WINDOW:start + WINDOW + CONTEXT]
 
         pinned = pinned_genders(notes)
+        # זיכרון התרגום: ההתאמות הקרובות לשורות של החלון הזה בלבד.
+        # חיפוש פר-חלון ולא פעם אחת לכל הסרט, כי התאמה רלוונטית לקטע
+        # אחד היא דוגמה רחוקה לקטע אחר — ודוגמה רחוקה מזיקה
+        examples = memory.as_prompt(memory.find([s.text for s in window]))
 
-        prompt = f"""{pinned}מסמך הנחיות לסרטון הזה:
+        prompt = f"""{pinned}{examples}מסמך הנחיות לסרטון הזה:
 ---
 {_cap(notes, 20_000)}
 ---

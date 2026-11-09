@@ -14,7 +14,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
-from . import allowlist, config, fetch, localbot, prefs
+from . import allowlist, config, fetch, localbot, memory, prefs
 
 log = logging.getLogger(__name__)
 
@@ -402,6 +402,44 @@ async def _press(query: dict) -> None:
     if data.startswith("stop:"):
         if on_stop:
             _detach(on_stop(int(data.split(":", 1)[1] or 0)), "עצירת עבודה")
+        return
+
+    # הזיכרון המובחר יושב על הודעה משל עצמו, שאינה רשומה ב-_open —
+    # ולכן, כמו "עצור", הוא חייב להיות לפני ה-return שלמטה
+    if data.startswith("mem:") or data.startswith("memno:"):
+        owner = allowlist.owner()
+        who, _, _ = _who(query)
+        # שער שני, מעל _permitted: הקטגוריה הזאת היא של המנהל בלבד,
+        # ומי שהורשה להשתמש בבוט אינו מורשה לזרוע את הזיכרון שמנחה
+        # את כל התרגומים הבאים
+        if not owner or who != owner:
+            return
+        token = data.split(":", 1)[1]
+        chat = (message.get("chat") or {}).get("id", who)
+        if data.startswith("memno:"):
+            try:
+                memory._token_path(token).unlink(missing_ok=True)
+            except (OSError, ValueError):
+                pass
+            await localbot.edit(chat, message_id,
+                                "לא נשמר. הזיכרון לא השתנה.")
+            return
+        try:
+            added = memory.accept(token)
+        except (OSError, ValueError) as exc:  # noqa: BLE001
+            log.warning("אישור הזיכרון המובחר נכשל (%s)", exc)
+            await localbot.edit(chat, message_id,
+                                "❌ לא הצלחתי לשמור. נסה שוב.")
+            return
+        if not added:
+            await localbot.edit(chat, message_id,
+                                "לא נוסף דבר — או שזה נשמר כבר, "
+                                "או שהקובץ הממתין פג.")
+            return
+        await localbot.edit(
+            chat, message_id,
+            f"⭐ <b>נשמר</b> · {added} שורות נכנסו לזיכרון המובחר.\n"
+            f"<i>{memory.stats()}</i>")
         return
 
     if choice is None:

@@ -17,8 +17,8 @@ import time
 import uuid
 from pathlib import Path
 
-from . import (botapi, botmenu, config, fastio, fetch, fileid,
-               localbot, media, pipeline)
+from . import (allowlist, botapi, botmenu, config, fastio, fetch, fileid,
+               localbot, media, memory, pipeline)
 from . import progress as prog
 from . import srt as srt_tools
 
@@ -735,6 +735,7 @@ async def _make_subtitles(chat_id, source: Path, work: Path, screen,
                                 document=localbot._to_container(srt_file))
         finally:
             localbot.clear_outbox(srt_file.name)
+        await _offer_memory(chat_id, work, source.name)
         await _offer_burn(chat_id, source, srt_file, work, track=picked)
 
     # הרצועה כבר נבחרה כשנפלנו לכאן ממסלול אחר, ואין לשאול פעמיים
@@ -815,7 +816,41 @@ async def _after_subtitle(chat_id, source: Path, srt_path: Path,
                             document=localbot._to_container(hebrew_srt))
     finally:
         localbot.clear_outbox(hebrew_srt.name)
+    await _offer_memory(chat_id, work, srt_path.name)
     await _offer_burn(chat_id, source, hebrew_srt, work, track)
+
+
+async def _offer_memory(chat_id, work: Path, label: str) -> None:
+    """מציע למנהל לשמור את התרגום הזה כדוגמה לתרגומים הבאים.
+
+    רק למנהל, ורק כהצעה: דוגמה אחת גרועה בפרומפט מקלקלת את התוצאה
+    בכל הסרטים שאחריה, ולכן השער הוא לחיצה שלו ולא "כל תרגום שיצא".
+    הזוגות עוברים עכשיו לתיקיית ההמתנה, כי תיקיית העבודה נמחקת
+    בסוף העבודה — והלחיצה עשויה לבוא שעות אחר כך
+    """
+    owner = allowlist.owner()
+    if not owner or int(chat_id) != owner:
+        return
+    pairs = memory.read_pairs(work)
+    if not pairs:
+        return
+    try:
+        token = memory.stage(pairs, source=label)
+    except OSError as exc:  # noqa: BLE001 — זיכרון הוא שיפור, לא תנאי
+        log.warning("שמירת התרגום להמתנה נכשלה (%s)", exc)
+        return
+    if not token:
+        return
+    await localbot.say(
+        chat_id,
+        f"⭐ <b>תרגום מובחר?</b>\n"
+        f"אם התרגום הזה ברמה שאתה רוצה שהמודל יחקה — שמור אותו, "
+        f"ו-{len(pairs)} השורות שלו ישמשו דוגמה בתרגומים הבאים.\n"
+        f"<i>{memory.stats()}</i>",
+        buttons=localbot.keyboard([
+            [("⭐ הוסף לזיכרון המובחר", f"mem:{token}")],
+            [("לא, תודה", f"memno:{token}")],
+        ]))
 
 
 async def _offer_burn(chat_id, source: Path, srt_path: Path, work: Path,

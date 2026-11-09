@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from . import (align, config, gemini_stt, hebrew, media, voice,
-               progress as prog, realign, srt, vad)
+from . import (align, config, gemini_stt, hebrew, media, memory,
+               voice, progress as prog, realign, srt, vad)
 from .stt import (Segment, drop_nonspeech, recover_gaps,
                   title_hint as stt_title_hint, transcribe)
 
@@ -240,6 +240,12 @@ async def run(source: Path, work: Path, *, progress: Progress,
     srt_path = work / f"{source.stem}.he.srt"
     srt_path.write_text(srt.render(cues), encoding="utf-8")
     (work / "notes.md").write_text(notes, encoding="utf-8")
+    # segments ו-lines מיושרים לפי אינדקס — זו הנקודה היחידה שבה
+    # שורת המקור והעברית שלה יושבות זו לצד זו. נכתב לתיקיית העבודה
+    # כדי שכפתור "הוסף לזיכרון המובחר" יוכל לקרוא אותן אחר כך
+    memory.write_pairs(work, [(seg.text, lines[seg.index])
+                              for seg in transcript.segments
+                              if seg.index < len(lines)])
 
     return Result(
         srt_path=srt_path, duration=duration, cues=len(cues),
@@ -333,6 +339,9 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
     target = work / f"{source.stem}.he.srt"
     target.write_text(srt.render(out), encoding="utf-8")
     log.info("תורגמו %d כתוביות, התזמונים נשמרו כפי שהיו", len(out))
+    memory.write_pairs(work, [(seg.text, lines[i])
+                              for i, seg in enumerate(segments)
+                              if i < len(lines)])
     return target
 
 

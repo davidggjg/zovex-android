@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 import unicodedata
 from pathlib import Path
 
@@ -139,3 +140,128 @@ def stats() -> str:
         return "זיכרון התרגום ריק"
     sources = {item.get("from", "") for item in bank}
     return (f"{len(bank)} זוגות מ-{len(sources)} קבצים")
+
+
+# ───────── המתנה לאישור המנהל ─────────
+#
+# תרגום אינו נכנס לזיכרון רק מפני שיצא. הוא נשמר בצד, והמנהל לוחץ
+# על כפתור כשהתרגום באמת ברמה שהוא רוצה שהמודל יחקה. זה בדיוק
+# האזהרה שחוזרת בספרות: דוגמה אחת גרועה מקלקלת את כל הפרומפט,
+# ולכן השער הוא אדם ולא אוטומט.
+#
+# הזוגות נשמרים לקובץ ולא בזיכרון התהליך, כי בין סוף העבודה לבין
+# הלחיצה יכולות לעבור שעות — וגם כי תיקיית העבודה נמחקת מיד
+
+
+def pending_dir() -> Path:
+    return path().parent / "pending"
+
+
+def _token_path(token: str) -> Path:
+    # שם הקובץ מגיע מכפתור, כלומר מרשת. בלי השער הזה "../../etc"
+    # היה קריא כקובץ ממתין
+    if not re.fullmatch(r"[0-9a-z]{1,40}", token):
+        raise ValueError("מפתח ממתין לא חוקי")
+    return pending_dir() / f"{token}.jsonl"
+
+
+def stage(pairs: list[tuple[str, str]], source: str = "") -> str:
+    """שומר זוגות בצד ומחזיר מפתח לכפתור. מחרוזת ריקה כשאין מה לשמור."""
+    rows = [{"src": " ".join(s.split()), "he": " ".join(h.split())}
+            for s, h in pairs]
+    rows = [r for r in rows if r["src"] and r["he"]]
+    if not rows:
+        return ""
+    folder = pending_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    token = f"{int(time.time())}{len(rows) % 1000:03d}"
+    store = _token_path(token)
+    with store.open("w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"from": source}, ensure_ascii=False) + "\n")
+        for row in rows:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    log.info("זיכרון התרגום: %d זוגות ממתינים לאישור (%s)", len(rows), token)
+    return token
+
+
+def waiting(token: str) -> int:
+    """כמה זוגות ממתינים תחת המפתח הזה, או 0 כשאין."""
+    try:
+        store = _token_path(token)
+    except ValueError:
+        return 0
+    if not store.exists():
+        return 0
+    return max(0, len(store.read_text(encoding="utf-8").splitlines()) - 1)
+
+
+def accept(token: str) -> int:
+    """מעביר את הממתינים לזיכרון עצמו. מחזיר כמה נוספו בפועל."""
+    store = _token_path(token)
+    if not store.exists():
+        return 0
+    lines = [l for l in store.read_text(encoding="utf-8").splitlines() if l.strip()]
+    if not lines:
+        return 0
+    try:
+        head = json.loads(lines[0])
+        source = str(head.get("from", ""))
+    except ValueError:
+        source = ""
+    pairs = []
+    for line in lines[1:]:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("src") and row.get("he"):
+            pairs.append((row["src"], row["he"]))
+    added = add(pairs, source=source)
+    # הקובץ נמחק בין כה וכה: אישור כפול אינו מוסיף דבר (add דוחה
+    # כפילויות), אבל כפתור שנשאר חי לנצח מבלבל
+    store.unlink(missing_ok=True)
+    return added
+
+
+def pairs_file(work) -> Path:
+    return Path(work) / "pairs.jsonl"
+
+
+def write_pairs(work, pairs: list[tuple[str, str]]) -> int:
+    """שומר את זוגות המקור→עברית בתיקיית העבודה.
+
+    שני מסלולי התרגום כותבים לכאן, כדי שהכפתור שאחרי המשלוח לא
+    יצטרך לדעת מאיזה מסלול הקובץ בא. כשל כאן אינו מפיל עבודה:
+    זיכרון התרגום הוא שיפור, לא תנאי
+    """
+    rows = [(s, h) for s, h in pairs
+            if (s or "").strip() and (h or "").strip()]
+    if not rows:
+        return 0
+    try:
+        with pairs_file(work).open("w", encoding="utf-8") as fh:
+            for src, heb in rows:
+                fh.write(json.dumps({"src": " ".join(src.split()),
+                                     "he": " ".join(heb.split())},
+                                    ensure_ascii=False) + "\n")
+    except OSError as exc:
+        log.warning("שמירת זוגות התרגום נכשלה (%s)", exc)
+        return 0
+    return len(rows)
+
+
+def read_pairs(work) -> list[tuple[str, str]]:
+    store = pairs_file(work)
+    if not store.exists():
+        return []
+    out = []
+    for line in store.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if row.get("src") and row.get("he"):
+            out.append((row["src"], row["he"]))
+    return out

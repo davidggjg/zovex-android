@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -4392,6 +4393,109 @@ def _translation_memory_works() -> None:
     finally:
         Path(config.MEMORY_PATH).unlink(missing_ok=True)
         config.MEMORY_PATH = was
+
+
+
+
+@check("הזיכרון המובחר ממתין לאישור, ורק המנהל יכול לאשר")
+def _curated_memory_is_owner_only() -> None:
+    import asyncio
+    import tempfile
+    from zovexsub import allowlist, botmenu, localbot, memory
+
+    was_path = config.MEMORY_PATH
+    was_owner = config.BOT_OWNER
+    folder = tempfile.mkdtemp()
+    config.MEMORY_PATH = str(Path(folder) / "memory.jsonl")
+    config.BOT_OWNER = 8658294616
+    edits: list[str] = []
+
+    async def fake_edit(chat, message_id, text, **kw):
+        edits.append(text)
+        return {}
+
+    was_edit = localbot.edit
+    was_tap = localbot.tap
+    was_call = localbot.call
+
+    async def fake_call(method, **kw):
+        return {}
+
+    async def fake_tap(*a, **kw):
+        return {}
+
+    localbot.edit = fake_edit
+    localbot.tap = fake_tap
+    localbot.call = fake_call
+    try:
+        # שני מסלולי התרגום כותבים את הזוגות לתיקיית העבודה
+        work = Path(folder) / "work"
+        work.mkdir()
+        assert memory.write_pairs(work, [
+            ("Come here, my friend.", "בוא הנה, חבר שלי."),
+            ("You should go home, Sarah.", "כדאי שתלכי הביתה, שרה."),
+            # שורה בלי תרגום אינה זוג
+            ("Nothing", ""),
+        ]) == 2
+        pairs = memory.read_pairs(work)
+        assert len(pairs) == 2, pairs
+
+        token = memory.stage(pairs, source="movie.mkv")
+        assert token and memory.waiting(token) == 2, token
+        # הזוגות עברו לתיקיית ההמתנה, כי תיקיית העבודה נמחקת
+        assert memory.pending_dir().exists()
+
+        def press(user_id: int, data: str):
+            return botmenu._press({
+                "id": "1", "data": data,
+                "from": {"id": user_id, "first_name": "x"},
+                "message": {"message_id": 7, "chat": {"id": user_id}},
+            })
+
+        # מי שמורשה להשתמש בבוט אינו מורשה לזרוע את הזיכרון שמנחה
+        # את כל התרגומים הבאים. 123 מורשה במפורש, כדי שהבדיקה
+        # תעבור את שער ההרשאות הכללי ותגיע לשער של הקטגוריה
+        was_ids = config.ALLOW_IDS
+        config.ALLOW_IDS = tuple(was_ids) + (123,)
+        try:
+            asyncio.run(press(123, f"mem:{token}"))
+        finally:
+            config.ALLOW_IDS = was_ids
+        assert memory.load() == [], memory.load()
+        assert not edits, edits
+
+        assert allowlist.owner() == 8658294616
+        asyncio.run(press(8658294616, f"mem:{token}"))
+        bank = memory.load()
+        assert len(bank) == 2, bank
+        assert bank[0]["from"] == "movie.mkv", bank[0]
+        assert edits and "נשמר" in edits[-1], edits
+        # הקובץ הממתין נעלם, כדי שהכפתור לא יישאר חי לנצח
+        assert memory.waiting(token) == 0
+
+        # ושם קובץ שמגיע מרשת אינו נקרא כנתיב
+        try:
+            memory._token_path("../../etc/passwd")
+            raise AssertionError("מפתח לא חוקי התקבל")
+        except ValueError:
+            pass
+    finally:
+        localbot.edit = was_edit
+        localbot.tap = was_tap
+        localbot.call = was_call
+        config.MEMORY_PATH = was_path
+        config.BOT_OWNER = was_owner
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+@check("חלון התרגום מקבל את ההתאמות מהזיכרון המובחר")
+def _memory_reaches_the_prompt() -> None:
+    source = Path("zovexsub/hebrew.py").read_text(encoding="utf-8")
+    # ‫החיפוש הוא פר-חלון: התאמה רלוונטית לקטע אחד היא דוגמה רחוקה
+    # לקטע אחר, ודוגמה רחוקה מזיקה
+    assert "memory.find([s.text for s in window])" in source
+    assert "{pinned}{examples}" in source
+
 
 
 def main() -> int:
