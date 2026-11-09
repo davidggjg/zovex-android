@@ -783,8 +783,11 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
                     gemini.ask_json(TRANSLATE_SYSTEM, prompt, schema=schema),
                     timeout=config.GEMINI_WINDOW_TIMEOUT)
             except asyncio.TimeoutError:
-                log.warning("חלון תרגום עבר %.0f שניות — השורות שלו "
-                            "יטופלו אחת-אחת",
+                # ההודעה אמרה "יטופלו אחת-אחת", וזה כבר לא מה שקורה:
+                # חלון שחזר ריק מקבל ניסיון שני על החלון כולו. שורה
+                # שמתארת התנהגות שאינה קיימת שולחת לחפש במקום הלא נכון
+                log.warning("חלון תרגום %d-%d עבר %.0f שניות — ינוסה שוב",
+                            window[0].index, window[-1].index,
                             config.GEMINI_WINDOW_TIMEOUT)
                 result = {}
         got = _collect(result)

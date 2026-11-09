@@ -775,7 +775,12 @@ TRANSLATE_RETRY_MAX = _int("TRANSLATE_RETRY_MAX", 8)
 # ולכן המתנה והמשך עדיפים על פליטת טקסט המקור לקובץ הסופי
 TRANSLATE_WINDOW_TRIES = _int("TRANSLATE_WINDOW_TRIES", 4)
 TRANSLATE_WINDOW_REST = float(os.getenv("TRANSLATE_WINDOW_REST") or 20)
-GEMINI_WINDOW_TIMEOUT = float(os.getenv("GEMINI_WINDOW_TIMEOUT") or 240)
+# תקרת זמן לחלון תרגום. נמדד בלוג אצל המשתמש: ממוצע קריאה 65 שניות,
+# אבל חלק מהחלונות עוברים 240 באופן לגיטימי — וכל חלון שנחתך נזרק
+# ומטופל מחדש, כך ש-14 חלונות הפכו ל-67 קריאות. חיתוך עולה הרבה
+# יותר מהמתנה, ולכן התקרה נדיבה: היא נועדה לתפוס חלון שבאמת מת,
+# לא חלון שעובד לאט
+GEMINI_WINDOW_TIMEOUT = float(os.getenv("GEMINI_WINDOW_TIMEOUT") or 420)
 # התאמת המגדר מקבלת תקרה נדיבה משלה. היא התיקון הנראה ביותר
 # בעברית, וחלון שמדולג בה משאיר "אתה" לדמות אישה — נמדד מול
 # תרגום אולפן: צורות זכר קפצו מ-14 ל-51 כשהתקרה כאן הושוותה לשאר
