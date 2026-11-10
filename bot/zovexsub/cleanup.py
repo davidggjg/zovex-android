@@ -93,9 +93,34 @@ def has_foreign(text: str) -> bool:
     אל הקובץ הסופי. עכשיו כל אות זרה נספרת, עם או בלי עברית לידה.
 
     לטינית אינה כאן בכוונה: שמות, מותגים ו-OK מופיעים בכתוביות
-    עבריות באופן לגיטימי
+    עבריות באופן לגיטימי. אבל משפט באנגלית הוא לא שם. ראו english_line
     """
-    return bool(FOREIGN.search(text))
+    return bool(FOREIGN.search(text)) or english_line(text)
+
+
+# מילה לטינית של שלוש אותיות ומעלה. "OK" ו-"Bela" הן שמות; "laughing"
+# או "door creaks" הן אנגלית, ומופיעות בשורות שהמודל השאיר כמו שהן
+_LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
+_BRACKET = re.compile(r"\[([^\]]*)\]")
+
+
+def english_line(text: str) -> bool:
+    """האם השורה היא אנגלית שלא תורגמה — ולא רק שם או מותג.
+
+    נמדד בקובץ של הבוט עצמו: 259 מתוך 1664 כתוביות נשארו באנגלית,
+    ו-249 מהן היו תיאורי צליל בסוגריים, כמו "[Mommy boops softly]".
+    הבדיקה הישנה לא ראתה אותן בכלל, כי היא התעלמה מכל לטינית.
+
+    הכלל: אם יש בשורה תיאור בסוגריים שמכיל מילה לטינית של שלוש אותיות
+    ומעלה, או שיש בה שתי מילים כאלה לפחות — זו אנגלית. שם בודד או
+    מותג בודד נשארים כמו שהם
+    """
+    if not text or not text.strip():
+        return False
+    for inside in _BRACKET.findall(text):
+        if _LATIN_WORD.search(inside):
+            return True
+    return len(_LATIN_WORD.findall(text)) >= 2
 
 
 def foreign_lines(lines: list[str]) -> list[int]:

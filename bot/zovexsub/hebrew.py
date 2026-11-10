@@ -367,9 +367,43 @@ REPAIR_SYSTEM = """אתה מתקן שגיאות כתיב בכתוביות בעב
 מחזיר תמיד JSON בלבד."""
 
 
+# שורה באנגלית שלמה לא "פגומה" — היא לא תורגמה. הפרומפט של האותיות
+# הערביות אומר "אל תתרגם", וזה נכון שם, אבל כאן זה בדיוק ההפך
+REPAIR_EN_SYSTEM = """אתה מתרגם כתוביות לעברית. השורות שאתה מקבל הן
+באנגלית ולא תורגמו. תרגם כל אחת לעברית טבעית, קצרה, כמו שמתרגם
+אולפן מקצועי.
+
+תיאורי צליל בסוגריים מרובעים — כמו [laughing] או [door creaks] — תרגם
+גם הם, ושמור על הסוגריים: [צוחקת], [דלת נחרקת]. שמות של אנשים נשארים
+כמו שהם. מחזיר תמיד JSON בלבד."""
+
+
 async def repair_foreign(segments: list[Segment], lines: list[str],
                          indices: list[int], on_step=None) -> list[str]:
-    """מתקן שורות שבהן השתרבבו אותיות משפה אחרת.
+    """מתקן שורות בעייתיות: אותיות ערביות שנדבקו, או שורה באנגלית שלמה.
+
+    שני סוגים שדורשים פרומפטים הפוכים: אותיות ערביות שנדבקו למילה
+    עברית — לתקן בלי לתרגם. שורה באנגלית שלמה — לתרגם. לכן מפצלים
+    ומריצים כל קבוצה בפעם אחת, בפרומפט שלה.
+    """
+    if not indices:
+        return lines
+    in_english = [i for i in indices if cleanup.english_line(lines[i])]
+    in_arabic = [i for i in indices if i not in in_english]
+    if in_arabic:
+        lines = await _repair_batch(segments, lines, in_arabic, on_step)
+    if in_english:
+        lines = await _repair_batch(segments, lines, in_english, on_step,
+                                    english=True)
+    return lines
+
+
+async def _repair_batch(segments: list[Segment], lines: list[str],
+                        indices: list[int], on_step=None,
+                        english: bool = False) -> list[str]:
+    """מתקן קבוצה אחת של שורות, באותו פרומפט. ראו repair_foreign.
+
+    מתקן שורות שבהן השתרבבו אותיות משפה אחרת.
 
     עם תקרת זמן, ובכוונה. פסק הזמן הפנימי של ג'ימיני הוא 300 שניות
     לניסיון והוא מנסה על פני כמה מפתחות, כך שהשלב הזה יכול לרוץ רבע
@@ -390,9 +424,18 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
         return lines
 
     log.warning("נמצאו %d שורות עם אותיות זרות — שולח לתיקון", len(indices))
-    listing = "\n".join(
-        f'[{i}] מקור: {segments[i].text}\n[{i}] פגום: {lines[i]}' for i in indices
-    )
+    if english:
+        listing = "\n".join(f"[{i}] {segments[i].text}" for i in indices)
+        system = REPAIR_EN_SYSTEM
+        ask = ("תרגם כל שורה. החזר JSON: {\"lines\": [{\"i\": <אינדקס>, "
+               "\"he\": \"<התרגום בעברית>\"}]}")
+    else:
+        listing = "\n".join(
+            f'[{i}] מקור: {segments[i].text}\n[{i}] פגום: {lines[i]}' for i in indices
+        )
+        system = REPAIR_SYSTEM
+        ask = ("החזר JSON: {\"lines\": [{\"i\": <אינדקס>, "
+               "\"he\": \"<השורה בעברית תקנית>\"}]}")
     schema = {
         "type": "object",
         "properties": {
@@ -421,9 +464,8 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
     pulse = asyncio.create_task(tick())
     try:
         result = await asyncio.wait_for(gemini.ask_json(
-            REPAIR_SYSTEM,
-            f"{listing}\n\nהחזר JSON: {{\"lines\": [{{\"i\": <אינדקס>, "
-            f"\"he\": \"<השורה בעברית תקנית>\"}}]}}",
+            system,
+            f"{listing}\n\n{ask}",
             schema=schema, temperature=0.0,
         ), timeout=config.REPAIR_TIMEOUT)
     except asyncio.TimeoutError:
@@ -440,6 +482,13 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
     fixed = 0
     for item in (_collect(result) or {}).items():
         index, text = item
+        # ‫בשורה באנגלית התרגום העברי הוא התשובה, גם אם המודל החזיר
+        # משהו עם לטינית. בשורה ערבית הבדיקה הישנה נשארת
+        if english and 0 <= index < len(lines) and text.strip() \
+                and index in indices and not cleanup.english_line(text):
+            lines[index] = text.strip()
+            fixed += 1
+            continue
         if 0 <= index < len(lines) and text.strip() and not cleanup.has_foreign(text):
             log.info("תוקן [%d]: %s ⇐ %s", index, text[:40], lines[index][:40])
             lines[index] = text.strip()

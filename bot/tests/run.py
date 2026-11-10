@@ -1921,7 +1921,9 @@ def _repair_bounded():
     import inspect
     from zovexsub import hebrew
 
-    body = inspect.getsource(hebrew.repair_foreign)
+    # התקרה נמצאת בעוזר, כי הפיצול לשתי קבוצות יושב בפונקציה שמעליו
+    body = (inspect.getsource(hebrew.repair_foreign)
+            + inspect.getsource(hebrew._repair_batch))
     # פסק הזמן הפנימי של ג'ימיני הוא 300 שניות לניסיון, על פני כמה
     # מפתחות. בלי תקרה משלנו זה רבע שעה חוקית בלי שהמסך יזוז
     assert "config.REPAIR_TIMEOUT" in body, "אין תקרת זמן לשלב"
@@ -3231,7 +3233,8 @@ def _mend_arabic():
     # תקרה אפסית אינה "בלי הגבלה" אלא ביטול. נמדד אצל המשתמש:
     # REPAIR_TIMEOUT=0 ב-.env, wait_for נכשל מיד, והלוג אמר
     # "עבר 0 שניות" כאילו ניסה
-    body = inspect.getsource(hebrew.repair_foreign)
+    body = (inspect.getsource(hebrew.repair_foreign)
+            + inspect.getsource(hebrew._repair_batch))
     assert "REPAIR_TIMEOUT <= 0" in body, "מלכודת האפס נשארה"
 
 
@@ -4814,6 +4817,51 @@ def _leading_marks_move_to_end() -> None:
     assert cleanup.fix_leading_marks("?ABC") == "?ABC"
     # וסימן שכבר בסוף נשאר שם
     assert cleanup.fix_leading_marks("מה שלומך?") == "מה שלומך?"
+
+
+@check("שורה באנגלית שלא תורגמה נתפסת, ושם בודד אינו נתפס")
+def _untranslated_english_is_caught() -> None:
+    from zovexsub import cleanup
+    # תיאורי צליל באנגלית: בדיוק מה שנשאר בקובץ של 1664 כתוביות
+    assert cleanup.has_foreign("[Mommy boops softly]")
+    assert cleanup.has_foreign("-[rhythmic grunting]")
+    assert cleanup.has_foreign("[door creaks softly, closes]")
+    assert cleanup.has_foreign("Hello there")
+    # שם או מותג בודד בעברית אינם שגיאה
+    assert not cleanup.has_foreign("בלה, OK")
+    assert not cleanup.has_foreign("שלום Netflix")
+    assert not cleanup.has_foreign("מה שלומך")
+    # ותיקון ערבי קיים לא נשבר
+    assert cleanup.has_foreign("לאחيك")
+
+
+@check("שורות באנגלית מתורגמות בקריאה משלהן, לא בפרומפט של אותיות ערביות")
+def _english_repair_translates() -> None:
+    from zovexsub import gemini, hebrew
+    from zovexsub.stt import Segment
+
+    segs = [Segment(index=0, start=0, end=2, text="[Mommy boops softly]"),
+            Segment(index=1, start=2, end=4, text="Hello there"),
+            Segment(index=2, start=4, end=6, text="ok fine")]
+    lines = ["[Mommy boops softly]", "Hello there", "שלום לך"]
+    asked: list[str] = []
+
+    async def fake(system, prompt, schema=None, temperature=0.0):
+        asked.append(system)
+        return {"lines": [{"i": 0, "he": "[מלמלת ומלטפת]"},
+                          {"i": 1, "he": "שלום שם"}]}
+
+    was = gemini.ask_json
+    gemini.ask_json = fake
+    try:
+        out = asyncio.run(hebrew.repair_foreign(segs, lines, [0, 1], None))
+    finally:
+        gemini.ask_json = was
+    # התרגום נכנס, והשורה העברית לא נגעה בה
+    assert out == ["[מלמלת ומלטפת]", "שלום שם", "שלום לך"], out
+    # ורק קריאה אחת, עם הפרומפט של תרגום ולא של "אל תתרגם"
+    assert len(asked) == 1, asked
+    assert "מתרגם" in asked[0], asked[0]
 
 
 def main() -> int:
