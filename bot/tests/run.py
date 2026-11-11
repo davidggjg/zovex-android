@@ -4864,6 +4864,23 @@ def _english_repair_translates() -> None:
     assert "מתרגם" in asked[0], asked[0]
 
 
+@check("כתוביות זעירות של מילישניות נכנסות לשכנה ואינן נשארות על המסך")
+def _slivers_are_absorbed() -> None:
+    # המקרה מהקובץ האמיתי: כתוביות של 10 עד 230 מילישניות שצמודות לשכנה
+    # ולכן אינן יכולות להתארך. בלי התיקון הן נשארו בקובץ הסופי
+    cues = [srt.Cue(index=1, start=0.0, end=2.0, text="שלום"),
+            srt.Cue(index=2, start=2.0, end=2.01, text="הוא."),
+            srt.Cue(index=3, start=2.01, end=4.0, text="מה נשמע")]
+    assert srt.absorb_slivers(cues) == 1
+    assert len(cues) == 2, [c.text for c in cues]
+    assert all(c.end - c.start >= 0.25 for c in cues), cues
+    # ושום תוכן לא נמחק: הטקסט של הזעירה נשאר בתוך השכנה
+    assert "הוא." in cues[0].text, cues[0].text
+    # וכתובית זעירה שאין לה שכנה קרובה נשארת כמו שהיא, ולא מוחקים אותה
+    lone = [srt.Cue(index=1, start=0.0, end=0.05, text="הה")]
+    assert srt.absorb_slivers(lone) == 0 and len(lone) == 1
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

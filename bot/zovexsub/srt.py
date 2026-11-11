@@ -676,6 +676,60 @@ def drop_echoes(cues: list["Cue"], window: float = 3.0) -> int:
     return gone
 
 
+# כתובית שמשכה פחות מזה אינה נקראת בכלל. נמדד בקובץ של הבוט: 271
+# כתוביות של 10 עד 230 מילישניות, ורובן צמודות לשכנה ולכן לא יכולות
+# להתארך. הפתרון אינו להאריך אלא לאחד לשכנה
+SLIVER = 0.25
+
+
+def absorb_slivers(cues: list["Cue"]) -> int:
+    """מאחד כתוביות זעירות לשכנה הקרובה, כשזה נכנס בתקרות.
+
+    נכנס לפני השלב שמאריך כתוביות קצרות. זה מה שחסר שם: כתובית שהבאה
+    מתחילה מיד אינה יכולה להתארך, ונשארת על המסך 10 מילישניות.
+    """
+    if len(cues) < 2:
+        return 0
+    absorbed = 0
+    index = 0
+    while index < len(cues):
+        cue = cues[index]
+        if cue.end - cue.start >= SLIVER or not (cue.text or "").strip():
+            index += 1
+            continue
+        target = None
+        # קודם הקודמת, כי היא כבר מוצגת ואין מה לחכות לה
+        if index > 0:
+            before = cues[index - 1]
+            gap = cue.start - before.end
+            if (0 <= gap <= config.SRT_MERGE_GAP
+                    and len(before.text) + len(cue.text) + 1
+                    <= config.SRT_MERGE_MAX_CHARS
+                    and cue.end - before.start <= config.SRT_MERGE_MAX_SPAN):
+                target = index - 1
+        if target is None and index + 1 < len(cues):
+            after = cues[index + 1]
+            gap = after.start - cue.end
+            if (0 <= gap <= config.SRT_MERGE_GAP
+                    and len(after.text) + len(cue.text) + 1
+                    <= config.SRT_MERGE_MAX_CHARS
+                    and after.end - cue.start <= config.SRT_MERGE_MAX_SPAN):
+                target = index + 1
+        if target is None:
+            # לא נכנסת בשום שכנה: נשארת, והשלב שמאריך יעשה מה שהוא יכול
+            index += 1
+            continue
+        keep = cues[target]
+        keep.text = (f"{keep.text}\n{cue.text}" if target < index
+                     else f"{cue.text}\n{keep.text}")
+        keep.start = min(keep.start, cue.start)
+        keep.end = max(keep.end, cue.end)
+        del cues[index]
+        absorbed += 1
+        index = max(0, target if target < index else target - 1)
+    return absorbed
+
+
 def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     """מעבר אחרון לפני הכתיבה לקובץ. מחזיר מה תוקן.
 
@@ -694,10 +748,12 @@ def finalize(cues: list["Cue"], fps: float = 24.0) -> dict:
     frame = 1.0 / max(1.0, fps)
     gap = max(config.SRT_GAP, 2 * frame)
     fixed = {"ריקות": 0, "שורות": 0, "קצרות": 0, "ארוכות": 0, "הפוכות": 0,
-             "כפולות": 0, "קולות": 0, "מוזגו": 0}
+             "כפולות": 0, "קולות": 0, "מוזגו": 0, "זעירות": 0}
 
     fixed["כפולות"] = drop_echoes(cues)
     fixed["קולות"] = drop_filler(cues)
+    # לפני כל מה שמאריך: כתובית זעירה שאין לה מקום להתארך נכנסת לשכנה
+    fixed["זעירות"] = absorb_slivers(cues)
 
     # כתובית שאינה נכנסת בשתי שורות מפוצלת, ולא נדחסת לשלוש. ‏wrap
     # לבדו נופל כאן ל-_hard_wrap ומייצר שורה שלישית
