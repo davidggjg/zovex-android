@@ -537,6 +537,11 @@ async def run(choice) -> None:
                     cues = srt_tools.parse(srt_tools.read_subtitle(given))
                     washed = srt_tools.clean_auto_captions(cues)
                     cues = [c for c in cues if c.text.strip()]
+                    # רשת ביטחון: משפט ששרד רק בכתובית של 10
+                    # מילישניות מקבל חזרה את הזמן שבו נאמר
+                    moved = srt_tools.backfill_slivers(cues)
+                    if moved:
+                        log.info("%d משפטים הוחזרו לזמן שבו נאמרו", moved)
                     given.write_text(srt_tools.render(cues),
                                      encoding="utf-8")
                     log.info("נוקו %d כתוביות אוטומטיות, נשארו %d",

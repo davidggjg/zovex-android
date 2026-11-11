@@ -347,6 +347,27 @@ async def subtitle_tracks(url: str, timeout: float = 45.0) -> list[dict]:
     return found
 
 
+def _unroll(work: Path) -> Path | None:
+    """פורס VTT אוטומטי שירד לקובץ SRT עם שורה לכל משפט, או None."""
+    from . import srt
+    for found in sorted(work.glob("linked*.vtt")):
+        try:
+            cues = srt.unroll_vtt(found.read_text(encoding="utf-8",
+                                                  errors="replace"))
+        except OSError as exc:
+            log.warning("קריאת ה-VTT נכשלה (%s)", exc)
+            continue
+        if not cues:
+            continue
+        target = found.with_suffix(".srt")
+        target.write_text(srt.render(cues), encoding="utf-8")
+        log.info("כתוביות אוטומטיות נפרסו: %d משפטים מתוך %s",
+                 len(cues), found.name)
+        return target
+    log.warning("לא ירד VTT שאפשר לפרוס")
+    return None
+
+
 async def grab_subtitles(url: str, work: Path, code: str,
                          auto: bool = False,
                          timeout: float = 120.0) -> Path | None:
@@ -356,9 +377,13 @@ async def grab_subtitles(url: str, work: Path, code: str,
     cmd = _command() + _browser_args(url) + [
         "--skip-download", "--no-playlist", "--no-warnings",
         "--write-auto-subs" if auto else "--write-subs",
-        "--sub-langs", code, "--convert-subs", "srt",
-        "-o", str(target) + ".%(ext)s", url,
+        "--sub-langs", code,
     ]
+    # כתוביות אוטומטיות יורדות כ-VTT ונפרסות אצלנו. ההמרה ל-SRT של
+    # yt-dlp מאבדת את הכתובית שבה כל משפט שאחרי שתיקה נאמר — ראו
+    # srt.unroll_vtt. כתוביות ידניות אינן מתגלגלות, ושם ההמרה תקינה
+    cmd += (["--sub-format", "vtt"] if auto else ["--convert-subs", "srt"])
+    cmd += ["-o", str(target) + ".%(ext)s", url]
     if config.FETCH_COOKIES:
         cmd += ["--cookies", config.FETCH_COOKIES]
     try:
@@ -373,6 +398,10 @@ async def grab_subtitles(url: str, work: Path, code: str,
         log.warning("הורדת הכתוביות נכשלה: %s",
                     err.decode("utf-8", "replace").strip()[-200:])
         return None
+    if auto:
+        unrolled = _unroll(work)
+        if unrolled is not None:
+            return unrolled
     # ‏yt-dlp מוסיף את קוד השפה לשם, ולא תמיד בדיוק כפי שביקשנו
     hits = sorted(work.glob("linked*.srt"))
     if not hits:

@@ -4894,6 +4894,52 @@ def _addressee_rows_carry_speaker() -> None:
     assert "מקור: hi" in out and "עברית: שלום" in out, out
 
 
+@check("כתוביות אוטומטיות של יוטיוב נפרסות למשפט בזמן שבו נאמר")
+def _youtube_auto_captions_unroll() -> None:
+    head = " align:start position:0%\n"
+    blocks = [
+        "00:00:28.870 --> 00:00:31.550" + head + " \nMehmet",
+        "00:00:31.550 --> 00:00:31.560" + head + "Mehmet\n ",
+        "00:00:31.560 --> 00:00:33.630" + head + "Mehmet\n"
+        "ne<00:00:31.800><c> yapiyorsun</c><00:00:32.100><c> sen</c>",
+        "00:00:33.630 --> 00:00:33.640" + head + "Mehmet\nne yapiyorsun sen",
+        "00:00:33.640 --> 00:00:36.950" + head
+        + "ne yapiyorsun sen\nkarima<00:00:34.000><c> nasil</c>",
+        "00:00:36.950 --> 00:00:36.960" + head
+        + "ne yapiyorsun sen\nkarima nasil",
+        "00:00:36.960 --> 00:00:41.670" + head
+        + " \nMehmet<00:00:37.000><c> gercekten</c>",
+        "00:00:41.670 --> 00:00:41.680" + head + "Mehmet gercekten\n ",
+    ]
+    text = "WEBVTT\nKind: captions\n\n" + "\n\n".join(blocks) + "\n"
+    got = srt.unroll_vtt(text)
+    # משפט אחד לכל שורה שנאמרה, בזמן שבו הופיעה לראשונה. המשפט שאחרי
+    # שתיקה (שורת רווח מעליו) הוא בדיוק מה שההמרה ל-SRT איבדה
+    assert [(c.start, c.text) for c in got] == [
+        (28.87, "Mehmet"), (31.56, "ne yapiyorsun sen"),
+        (33.64, "karima nasil"), (36.96, "Mehmet gercekten")], got
+    assert all(c.end - c.start > 1 for c in got), got
+    assert not any("<" in c.text for c in got)
+
+    # ורשת הביטחון לקובץ שכבר עבר את ההמרה: המשפט נאמר לפני הכתובית
+    # הזעירה, ולכן היא נמתחת אחורה אל הרווח — ולא קדימה
+    cues = [srt.Cue(index=1, start=33.64, end=36.95, text="א"),
+            srt.Cue(index=2, start=41.67, end=41.68,
+                    text="מהמט, מה אתה עושה?"),
+            srt.Cue(index=3, start=41.68, end=43.87, text="ב")]
+    assert srt.backfill_slivers(cues) == 1
+    assert cues[1].end == 41.67 and 37.0 <= cues[1].start < 40.7, cues[1]
+    assert cues[1].start >= cues[0].end
+    # כתובית זעירה בלי רווח לפניה נשארת: אין לאן להחזיר אותה
+    tight = [srt.Cue(index=1, start=0.0, end=2.0, text="א"),
+             srt.Cue(index=2, start=2.0, end=2.01, text="ב")]
+    assert srt.backfill_slivers(tight) == 0
+
+    # והכתוביות האוטומטיות יורדות כ-VTT, לא בהמרה שמאבדת משפטים
+    source = Path("zovexsub/fetch.py").read_text(encoding="utf-8")
+    assert '["--sub-format", "vtt"] if auto' in source
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

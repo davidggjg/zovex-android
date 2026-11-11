@@ -1006,6 +1006,85 @@ def clean_auto_captions(cues: list["Cue"]) -> int:
     return touched
 
 
+_VTT_TIME = re.compile(
+    r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})\s*-->\s*"
+    r"(\d{2}):(\d{2}):(\d{2})[.,](\d{3})")
+
+
+def unroll_vtt(text: str) -> list["Cue"]:
+    """קורא VTT של כתוביות אוטומטיות מיוטיוב, שורה אחת לכל משפט שנאמר.
+
+    יוטיוב מציגה כתובית אוטומטית כשתי שורות מתגלגלות: בכל כתובית
+    השורה העליונה היא מה שכבר נאמר, והתחתונה היא מה שנאמר עכשיו.
+    ביניהן יש כתובית של 10 מילישניות שרק מקבעת את המסך.
+
+    עד כה ביקשנו מ-yt-dlp להמיר ל-SRT, וזה הרס את התזמון. אחרי שתיקה
+    השורה העליונה היא רווח בודד, וב-SRT שורה ריקה מסיימת את הכתובית —
+    ולכן הכתובית שבה המשפט באמת נאמר נעלמה, והמשפט שרד רק בכתובית
+    של 10 המילישניות שאחריה. נמדד בקובץ של המשתמש: 271 כתוביות כאלה,
+    כולן צמודות לבאה, וכל אחת מהן הופיעה אחרי שהמשפט כבר נגמר.
+
+    כאן כל שורה מקבלת את הזמן של הכתובית שבה היא מופיעה **בפעם
+    הראשונה**, כלומר הזמן שבו היא נאמרה
+    """
+    out: list[Cue] = []
+    shown: list[str] = []
+    # ‫רק שורה ריקה **לגמרי** מפרידה. שורה של רווח בודד היא חלק
+    # מהכתובית — זו בדיוק המלכודת שהפילה את ההמרה ל-SRT
+    for block in re.split(r"\n\n+", text.replace("\r", "")):
+        rows = block.split("\n")
+        at = next((i for i, row in enumerate(rows)
+                   if _VTT_TIME.search(row)), None)
+        if at is None:
+            continue
+        m = _VTT_TIME.search(rows[at])
+        nums = [int(x) for x in m.groups()]
+        start = nums[0] * 3600 + nums[1] * 60 + nums[2] + nums[3] / 1000
+        end = nums[4] * 3600 + nums[5] * 60 + nums[6] + nums[7] / 1000
+        lines = []
+        for row in rows[at + 1:]:
+            row = _VTT_TAG.sub("", _INLINE_TIME.sub("", row))
+            row = " ".join(row.replace("&nbsp;", " ").split())
+            if row:
+                lines.append(row)
+        fresh = [line for line in lines if line not in shown]
+        # מה שמוצג עכשיו הוא מה שהכתובית הבאה עלולה לחזור עליו
+        shown = lines or shown
+        if not fresh:
+            continue
+        said = " ".join(fresh)
+        if out and end - start <= 0.05:
+            # כתובית קיבוע שבכל זאת הביאה טקסט חדש: אין לה זמן משלה
+            out[-1].text = f"{out[-1].text} {said}"
+            continue
+        out.append(Cue(index=len(out) + 1, start=start, end=end, text=said))
+    return out
+
+
+def backfill_slivers(cues: list["Cue"]) -> int:
+    """מחזיר לכתובית זעירה את הזמן שבו המשפט שלה באמת נאמר.
+
+    רשת ביטחון לקובץ SRT שכבר עבר את ההמרה ההורסת (ראו unroll_vtt):
+    המשפט נאמר **לפני** הכתובית הזעירה, ברווח שנפתח לפניה. לכן היא
+    נמתחת אחורה אל תוך הרווח, ולא קדימה ולא אל השכנה
+    """
+    moved = 0
+    for index, cue in enumerate(cues):
+        if cue.end - cue.start > 0.05 or not (cue.text or "").strip():
+            continue
+        floor = cues[index - 1].end + 0.05 if index else 0.0
+        room = cue.start - floor
+        if room < 0.5:
+            continue
+        letters = len(cue.text.replace("\n", " "))
+        want = max(config.SRT_MIN_DURATION,
+                   letters / max(1.0, config.SRT_READ_SPEED) + 0.5)
+        cue.end = cue.start
+        cue.start = max(floor, cue.start - min(room, want))
+        moved += 1
+    return moved
+
+
 def speech_end(cue: "Cue") -> float:
     """מתי באמת נגמר הדיבור בכתובית, לפי תזמוני המילים של המקור."""
     ends = [float(end) for start, end in (cue.words or [])
