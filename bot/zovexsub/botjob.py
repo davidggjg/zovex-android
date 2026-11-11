@@ -757,6 +757,49 @@ async def take_studio(chat_id, file_id: str, name: str) -> None:
         force=True)
 
 
+async def _from_embedded(chat_id, source: Path, work: Path, screen,
+                         track: int) -> bool:
+    """עובד מכתוביות שיושבות בתוך הקובץ, אם יש. מחזיר אם טיפל.
+
+    סרט שמגיע כ-MKV נושא כמעט תמיד רצועת כתוביות באנגלית. הטקסט שלה
+    הוא מה שנאמר, והתזמון שלה נעשה ביד — שני הדברים שתמלול רק מנסה
+    לשחזר. לכן קודם בודקים אותה, ורק בלעדיה מקשיבים לאודיו.
+    כל כשל כאן מחזיר False, והעבודה ממשיכה לתמלול כרגיל
+    """
+    if not config.EMBEDDED_SUBS:
+        return False
+    try:
+        best = media.best_subtitle(await media.subtitle_streams(source))
+        if best is None:
+            return False
+        given = await media.extract_subtitle(
+            source, best["index"], work / "embedded.srt")
+        cues = srt_tools.parse(srt_tools.read_subtitle(given))
+    except Exception as exc:  # noqa: BLE001 — נופלים לתמלול
+        log.warning("שליפת הכתוביות מהקובץ נכשלה (%s) — מתמלל", exc)
+        return False
+    # רצועה של כמה שורות היא שלטים, לא הסרט
+    if len(cues) < 30:
+        log.info("רצועת הכתוביות שבקובץ קצרה מדי (%d) — מתמלל", len(cues))
+        return False
+    hebrew = best["language"][:2] in ("he", "iw")
+    log.info("נמצאו כתוביות בתוך הקובץ: %s, %d שורות%s", best["name"],
+             len(cues), " (SDH)" if best["sdh"] else "")
+    await screen.show(
+        f"🎞 <b>נמצאו כתוביות {best['name']} בתוך הקובץ</b> "
+        f"({len(cues)} שורות)\n"
+        + ("הן כבר בעברית — ממשיך איתן כמו שהן."
+           if hebrew else
+           "מתרגם אותן לעברית במקום לתמלל: הטקסט והתזמון שלהן "
+           "מדויקים יותר מכל תמלול."), force=True)
+    if hebrew:
+        _translating.discard(int(chat_id))
+    else:
+        _translating.add(int(chat_id))
+    await _after_subtitle(chat_id, source, given, work, track)
+    return True
+
+
 async def _make_subtitles(chat_id, source: Path, work: Path, screen,
                           track: int = 0) -> None:
     """המסלול המלא: תמלול, תרגום, ואז הצעת צריבה.
@@ -768,6 +811,8 @@ async def _make_subtitles(chat_id, source: Path, work: Path, screen,
         await screen.show(text)
 
     async def go(picked: int) -> None:
+        if await _from_embedded(chat_id, source, work, screen, picked):
+            return
         result = await pipeline.run(source, work, progress=progress,
                                     track=picked)
         await screen.show(

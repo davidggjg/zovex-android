@@ -4940,6 +4940,100 @@ def _youtube_auto_captions_unroll() -> None:
     assert '["--sub-format", "vtt"] if auto' in source
 
 
+@check("כתוביות SDH מנוקות מתיאורי צליל ומשמות דוברים, והמשפט נשאר")
+def _sdh_is_stripped() -> None:
+    def cue(text):
+        return srt.Cue(index=1, start=0.0, end=2.0, text=text)
+
+    cues = [cue("[door creaks softly, closes]"), cue("♪ ♪"),
+            cue("-[rhythmic grunting]\n-♪ Boy meets girl... ♪"),
+            cue("-Right? -BELA: Why not?"),
+            cue("GRANDMA RUTH: You should visit me soon."),
+            cue("[whispers]: What if I say no?"),
+            cue("Hello (laughs) there"),
+            # נקודתיים בתוך משפט אינן שם דובר
+            cue("Note that: this stays? It's 6:00."),
+            cue("-I love you. -Love you.")]
+    srt.strip_sdh(cues)
+    assert [c.text for c in cues] == [
+        "♪ Boy meets girl... ♪", "-Right? -Why not?",
+        "You should visit me soon.", "What if I say no?", "Hello there",
+        "Note that: this stays? It's 6:00.", "-I love you. -Love you."], \
+        [c.text for c in cues]
+    assert [c.index for c in cues] == list(range(1, len(cues) + 1))
+
+
+@check("שני דוברים בכתובית אחת מקבלים שורה ומקף לכל אחד")
+def _dialogue_is_tidied() -> None:
+    assert srt.tidy_dialogue("- היי. - הנה אהובה.") == "- היי.\n- הנה אהובה."
+    assert srt.tidy_dialogue("-בסדר. -כן.") == "- בסדר.\n- כן."
+    assert srt.tidy_dialogue("קדימה. / היי.") == "- קדימה.\n- היי."
+    assert srt.tidy_dialogue("-אוהבת.\n-אוהב.") == "- אוהבת.\n- אוהב."
+    # דובר אחד, ומקף באמצע משפט, נשארים כמו שהם
+    assert srt.tidy_dialogue("- היי.") == "- היי."
+    assert srt.tidy_dialogue("מה שלומך - טוב") == "מה שלומך - טוב"
+    assert srt.tidy_dialogue("שלום לך") == "שלום לך"
+    # ולא שוברים כשהתוצאה אינה נכנסת ברוחב
+    wide = "- " + "א" * 50 + " - כן."
+    assert srt.tidy_dialogue(wide) == wide
+
+
+@check("כתוביות שבתוך הקובץ נבחרות נכון, ונשלפות באמת")
+def _embedded_subtitles_are_used() -> None:
+    import shutil as _sh
+    import subprocess
+    import tempfile
+    from zovexsub import media
+
+    streams = [
+        {"index": 0, "language": "fre", "forced": True, "sdh": False},
+        {"index": 1, "language": "eng", "forced": False, "sdh": True},
+        {"index": 2, "language": "eng", "forced": False, "sdh": False},
+    ]
+    # רגילה לפני SDH, ו-forced אינה נבחרת אף פעם
+    assert media.best_subtitle(streams)["index"] == 2
+    assert media.best_subtitle(streams[:2])["index"] == 1
+    assert media.best_subtitle(streams[:1]) is None
+    # עברית קודמת לכל: אין מה לתרגם
+    hebrew = streams + [{"index": 3, "language": "heb", "forced": False,
+                         "sdh": False}]
+    assert media.best_subtitle(hebrew)["index"] == 3
+
+    if not _sh.which("ffmpeg"):
+        return
+    folder = Path(tempfile.mkdtemp())
+    try:
+        (folder / "en.srt").write_text(
+            "1\n00:00:01,000 --> 00:00:03,000\n[door creaks]\n\n"
+            "2\n00:00:03,500 --> 00:00:05,000\nBELA: Hello there.\n\n",
+            encoding="utf-8")
+        made = subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+             "color=c=black:s=160x90:d=6", "-i", str(folder / "en.srt"),
+             "-t", "6", "-c:v", "libx264", "-preset", "ultrafast",
+             "-c:s", "srt", "-metadata:s:s:0", "language=eng",
+             "-metadata:s:s:0", "title=English SDH",
+             str(folder / "t.mkv")], capture_output=True)
+        if made.returncode != 0:
+            return
+
+        async def go():
+            found = await media.subtitle_streams(folder / "t.mkv")
+            best = media.best_subtitle(found)
+            out = await media.extract_subtitle(
+                folder / "t.mkv", best["index"], folder / "out.srt")
+            return found, srt.parse(srt.read_subtitle(out))
+
+        found, cues = asyncio.run(go())
+        assert len(found) == 1 and found[0]["sdh"], found
+        assert [c.text for c in cues] == ["[door creaks]",
+                                          "BELA: Hello there."], cues
+        srt.strip_sdh(cues)
+        assert [c.text for c in cues] == ["Hello there."], cues
+    finally:
+        _sh.rmtree(folder, ignore_errors=True)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

@@ -1085,6 +1085,82 @@ def backfill_slivers(cues: list["Cue"]) -> int:
     return moved
 
 
+# הנקודתיים שאחרי התיאור ("[whispers]: ...") הולכות איתו
+_SDH_SOUND = re.compile(r"(?:\[[^\]]*\]|\([^)]*\))\s*:?")
+# רק אותיות גדולות, כמו שכתוביות SDH כותבות שם דובר. "Note that:"
+# הוא חלק מהמשפט ולא שם — נמדד בבדיקה, שם הוא נמחק בטעות
+_SDH_LABEL = re.compile(r"(^|(?<=-)\s*)[A-Z][A-Z .'\-]{1,24}:\s+")
+_NOTES_ONLY = re.compile(r"^[\s♪♫#\-–—.…]*$")
+
+
+def strip_sdh(cues: list["Cue"]) -> int:
+    """מסיר מכתוביות לכבדי שמיעה את מה שכתוביות רגילות אינן נושאות.
+
+    תיאורי צליל בסוגריים, תווים בלי מילים, ושם הדובר לפני השורה.
+    נמדד בקובץ של המשתמש, סרט באנגלית: 388 מתוך 1664 כתוביות — 23% —
+    היו תיאור צליל בלבד, ועוד 42 נשאו שם דובר. מילות שיר נשארות.
+
+    רץ על המקור, לפני התרגום: מה שהוסר כאן לא נשלח למודל ולא חוזר
+    """
+    removed = 0
+    kept: list[Cue] = []
+    for cue in cues:
+        rows = []
+        for row in (cue.text or "").split("\n"):
+            row = _SDH_SOUND.sub(" ", row)
+            row = _SDH_LABEL.sub(r"\1", row)
+            # מקף שנשאר בלי דובר אחריו ("-[grunts] -Hello")
+            row = re.sub(r"-\s*(?=-)|-\s*$", " ", row)
+            row = " ".join(row.split())
+            if row and not _NOTES_ONLY.match(row):
+                rows.append(row)
+        if len(rows) == 1:
+            # נשאר דובר אחד: המקף שלו כבר אינו מסמן דו-שיח
+            parts = [x.strip() for x in re.split(r"\s+-\s*(?=\S)", rows[0])]
+            if len([x for x in parts if x.strip("- ")]) <= 1:
+                rows[0] = rows[0].lstrip("- ").strip()
+        text = "\n".join(rows)
+        if text != cue.text:
+            removed += 1
+        if text:
+            cue.text = text
+            kept.append(cue)
+    cues[:] = kept
+    for position, cue in enumerate(cues, start=1):
+        cue.index = position
+    return removed
+
+
+_TURN = re.compile(r"\s+(?:/\s*|-\s*(?=\S))")
+
+
+def tidy_dialogue(text: str) -> str:
+    """שני דוברים בכתובית אחת: שורה לכל דובר, ומקף לפני כל אחד.
+
+    נמדד באותו קובץ: 142 כתוביות עם שני דוברים דחוסים לשורה אחת
+    ("- היי. - הנה אהובה."), 12 עם לוכסן ביניהם, ורק 16 בצורה התקנית.
+    שלוש צורות לאותו דבר באותו סרט. מחזיר את הטקסט כמו שהוא כשאין
+    בו שני דוברים, או כשהתוצאה אינה נכנסת בשתי שורות
+    """
+    flat = " ".join((text or "").split())
+    if "\n" in (text or "").strip():
+        rows = [r.strip() for r in text.strip().split("\n")]
+        if len(rows) == 2 and all(r.startswith("-") for r in rows):
+            return "\n".join("- " + r.lstrip("- ").strip() for r in rows)
+        return text
+    starts = flat.startswith("-")
+    if not starts and " / " not in flat:
+        return text
+    parts = [x.strip() for x in _TURN.split(flat.lstrip("- ").strip())]
+    parts = [x for x in parts if x]
+    if len(parts) != 2:
+        return text
+    rows = ["- " + x for x in parts]
+    if any(len(r) > config.SRT_MAX_CHARS_PER_LINE for r in rows):
+        return text
+    return "\n".join(rows)
+
+
 def speech_end(cue: "Cue") -> float:
     """מתי באמת נגמר הדיבור בכתובית, לפי תזמוני המילים של המקור."""
     ends = [float(end) for start, end in (cue.words or [])

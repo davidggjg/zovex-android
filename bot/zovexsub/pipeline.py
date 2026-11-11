@@ -281,6 +281,11 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
             await on_progress(text)
 
     cues = srt.parse(srt.read_subtitle(srt_path))
+    if cues and config.SDH_STRIP:
+        cleaned = srt.strip_sdh(cues)
+        if cleaned:
+            log.info("נוקו %d כתוביות מתיאורי צליל ושמות דוברים, נשארו %d",
+                     cleaned, len(cues))
     if not cues:
         raise RuntimeError("לא הצלחתי לקרוא כתוביות מהקובץ ששלחת.")
     log.info("קובץ שהובא: %d כתוביות, %s עד %s", len(cues),
@@ -338,7 +343,8 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
 
     # אותם זמנים בדיוק, טקסט חדש. wrap משנה רק היכן נשברת השורה
     out = [srt.Cue(index=i + 1, start=cue.start, end=cue.end,
-                   text=srt.wrap(lines[i] if i < len(lines) else cue.text))
+                   text=srt.tidy_dialogue(
+                       srt.wrap(lines[i] if i < len(lines) else cue.text)))
            for i, cue in enumerate(cues)]
     target = work / f"{source.stem}.he.srt"
     target.write_text(srt.render(out), encoding="utf-8")

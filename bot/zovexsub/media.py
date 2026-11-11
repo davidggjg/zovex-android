@@ -267,6 +267,67 @@ def track_label(track: dict) -> str:
     return " · ".join(parts)
 
 
+# קודקים של כתוביות טקסט. ‏PGS ו-VobSub הם תמונות, ואין מה לתרגם בהן
+TEXT_SUBS = {"subrip", "srt", "ass", "ssa", "mov_text", "webvtt", "text"}
+
+
+async def subtitle_streams(path: Path) -> list[dict]:
+    """רצועות כתוביות הטקסט שבתוך הקובץ, במספור של ffmpeg ‏(0:s:N)."""
+    try:
+        info = await probe(path)
+    except Exception as exc:  # noqa: BLE001 — בלי מידע אין כתוביות
+        log.warning("לא ניתן לקרוא את רצועות הכתוביות (%s)", exc)
+        return []
+    out = []
+    for position, stream in enumerate(
+            s for s in info.get("streams", [])
+            if s.get("codec_type") == "subtitle"):
+        if str(stream.get("codec_name") or "").lower() not in TEXT_SUBS:
+            continue
+        tags = stream.get("tags") or {}
+        flags = stream.get("disposition") or {}
+        title = str(tags.get("title") or "").strip()
+        code = str(tags.get("language") or "und").lower()
+        out.append({
+            "index": position,
+            "language": code,
+            "name": LANGUAGE_NAMES.get(code, code),
+            "title": title,
+            "forced": bool(flags.get("forced")) or "forced" in title.lower(),
+            "sdh": bool(flags.get("hearing_impaired"))
+                   or "sdh" in title.lower(),
+        })
+    return out
+
+
+def best_subtitle(streams: list[dict]) -> dict | None:
+    """הרצועה שכדאי לעבוד ממנה, או None.
+
+    עברית קודמת לכל (אין מה לתרגם), אחריה אנגלית, אחריה כל שפה.
+    רצועת forced מחזיקה רק שלטים ושורות בשפה זרה, ולכן אינה נבחרת.
+    רצועה רגילה עדיפה על SDH, אבל SDH עדיפה על תמלול
+    """
+    full = [s for s in streams if not s["forced"]]
+    if not full:
+        return None
+
+    def rank(stream: dict) -> tuple:
+        code = stream["language"][:2]
+        order = 0 if code in ("he", "iw") else 1 if code == "en" else 2
+        return (order, stream["sdh"], stream["index"])
+
+    return sorted(full, key=rank)[0]
+
+
+async def extract_subtitle(src: Path, index: int, dst: Path) -> Path:
+    """שולף רצועת כתוביות טקסט מהקובץ כ-SRT."""
+    await _run([
+        "ffmpeg", "-nostdin", "-y", "-i", str(src),
+        "-map", f"0:s:{max(0, index)}", "-c:s", "srt", str(dst),
+    ], nice=False, timeout=300)
+    return dst
+
+
 async def extract_audio(src: Path, dst: Path, track: int = 0) -> Path:
     """FLAC 16kHz מונו — מה ש-Whisper אוהב, וגם הקטן ביותר ללא איבוד דיוק.
 
