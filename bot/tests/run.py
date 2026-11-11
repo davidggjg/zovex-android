@@ -5034,6 +5034,59 @@ def _embedded_subtitles_are_used() -> None:
         _sh.rmtree(folder, ignore_errors=True)
 
 
+@check("בודק האיות מסמן רק מילים חד-פעמיות, והתיקון אינו רשאי לנסח מחדש")
+def _spelling_pass_is_narrow() -> None:
+    from zovexsub import gemini, hebrew, spelling
+    from zovexsub.stt import Segment
+
+    lines = ["אני יכולה לסייום, בבקשה?", "ראסל בא", "ראסל הלך",
+             "הוא בפיג'מה", "כן"]
+    asked = spelling.candidates(lines, known="בבקשה")
+    # מילה שחוזרת היא שם ואינה נשאלת, וגם מילה מוכרת מראש או עם גרש
+    assert "לסייום" in asked and asked["לסייום"] == [0], asked
+    assert "ראסל" not in asked and "בבקשה" not in asked, asked
+    assert not any("פיג" in word for word in asked), asked
+
+    # תיקון של מילה מתקבל; ניסוח מחדש נדחה
+    assert hebrew._small_fix("אני יכולה לסייום, בבקשה?",
+                             "אני יכולה לסיים, בבקשה?", ["לסייום"])
+    assert not hebrew._small_fix("אני יכולה לסייום, בבקשה?",
+                                 "אפשר לגמור עם זה כבר עכשיו?", ["לסייום"])
+    assert not hebrew._small_fix("אני יכולה לסייום", "אני יכולה לסייום",
+                                 ["לסייום"])
+
+    segs = [Segment(index=i, start=0, end=1, text="src")
+            for i in range(len(lines))]
+    was_suspects, was_ask = spelling.suspects, gemini.ask_json
+
+    async def marked(_lines, known=""):
+        return {0: ["לסייום"], 1: ["ראסל"]}
+
+    async def fake(system, prompt, schema=None, temperature=0.0):
+        assert "מסומן: לסייום" in prompt, prompt
+        return {"lines": [
+            {"i": 0, "he": "אני יכולה לסיים, בבקשה?"},
+            {"i": 1, "he": "משהו אחר לגמרי שהמודל המציא"},
+            {"i": 4, "he": "שורה שלא סומנה"}]}
+
+    spelling.suspects, gemini.ask_json = marked, fake
+    try:
+        out = asyncio.run(hebrew.repair_spelling(segs, list(lines)))
+    finally:
+        spelling.suspects, gemini.ask_json = was_suspects, was_ask
+    assert out[0] == "אני יכולה לסיים, בבקשה?", out
+    assert out[1] == "ראסל בא" and out[4] == "כן", out
+
+    # ובלי מילון השלב מדלג ולא מפיל את התרגום
+    was = config.SPELL_DICT
+    config.SPELL_DICT = "/nonexistent/he_IL"
+    try:
+        assert not spelling.available()
+        assert asyncio.run(spelling.suspects(lines)) == {}
+    finally:
+        config.SPELL_DICT = was
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

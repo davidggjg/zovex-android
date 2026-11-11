@@ -782,6 +782,13 @@ MEMORY_PATH = os.getenv("MEMORY_PATH") or str(
 MEMORY_EXAMPLES = _int("MEMORY_EXAMPLES", 4)
 # סף הדמיון שמתחתיו דוגמה אינה נכנסת. התאמה רחוקה גרועה מאין התאמה
 MEMORY_FLOOR = float(os.getenv("MEMORY_FLOOR") or 0.12)
+# בדיקת איות עברית אחרי התרגום. המילון (Hspell, פורמט hunspell) יורד
+# ב-update.sh ויושב ליד ה-.env. בלי המילון השלב מדלג בשקט. 0 מכבה
+SPELL_CHECK = _int("SPELL_CHECK", 1)
+SPELL_DICT = os.getenv("SPELL_DICT") or str(
+    Path(__file__).resolve().parent.parent / "spell" / "he_IL")
+# כמה שורות חשודות נשלחות לתיקון לכל היותר. מעבר לזה משהו אחר שבור
+SPELL_MAX_LINES = _int("SPELL_MAX_LINES", 120)
 # כתוביות טקסט שכבר יושבות בתוך קובץ הווידאו (MKV של סרט מגיע כמעט
 # תמיד עם אנגלית). הטקסט והתזמון שלהן מדויקים, ושום תמלול אינו
 # משתווה לזה — ולכן "תייצר לי כתוביות" מתרגם אותן במקום להקשיב.

@@ -145,6 +145,27 @@ else
   fi
 fi
 
+# ── 2b. מילון האיות ───────────────────────────────────────────
+head_ "מילון איות"
+SPELL_DIR="$BOT/spell"
+if [[ -s "$SPELL_DIR/he_IL.aff" && -s "$SPELL_DIR/he_IL.dic" ]]; then
+  ok "מילון Hspell קיים"
+else
+  old "מילון האיות העברי חסר — בלעדיו שלב ההגהה מדלג"
+  if [[ $MODE != check ]]; then
+    mkdir -p "$SPELL_DIR"
+    BASE="https://raw.githubusercontent.com/LibreOffice/dictionaries/master/he_IL"
+    if curl -fsSL -o "$SPELL_DIR/he_IL.aff" "$BASE/he_IL.aff" && \
+       curl -fsSL -o "$SPELL_DIR/he_IL.dic" "$BASE/he_IL.dic" && \
+       [[ $(wc -c < "$SPELL_DIR/he_IL.dic") -gt 1000000 ]]; then
+      ok "המילון הורד ($(du -h "$SPELL_DIR/he_IL.dic" | cut -f1))"
+    else
+      rm -f "$SPELL_DIR/he_IL.aff" "$SPELL_DIR/he_IL.dic"
+      bad "הורדת המילון נכשלה — ההגהה תדלג עד שתצליח"
+    fi
+  fi
+fi
+
 # ── 3. כל המודולים נטענים ─────────────────────────────────────
 # זה השער שתופס מודול חדש שהגיע בגיט ותלוי בספרייה שלא הותקנה.
 # בלעדיו התקלה מתגלה רק כשמשתמש שולח סרטון

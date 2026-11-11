@@ -16,7 +16,7 @@ import logging
 import re
 import time
 
-from . import cleanup, config, gemini, idiom, memory, studio
+from . import cleanup, config, gemini, idiom, memory, spelling, studio
 from .stt import Segment
 
 log = logging.getLogger(__name__)
@@ -513,6 +513,84 @@ async def _repair_batch(segments: list[Segment], lines: list[str],
     return lines
 
 
+SPELL_SYSTEM = """אתה מגיה כתוביות בעברית. בכל שורה שאתה מקבל סומנה מילה
+שבודק האיות אינו מכיר. לכל שורה מצורף המקור שממנו תורגמה.
+
+אם המילה המסומנת היא שגיאת כתיב — תקן אותה, ורק אותה. אם היא שם של
+אדם או מקום, מילה לועזית מקובלת או סלנג תקין — החזר את השורה בדיוק
+כמו שהיא. אל תנסח מחדש, אל תשנה מילים אחרות ואל תשנה פיסוק.
+
+מחזיר תמיד JSON בלבד."""
+
+
+def _small_fix(before: str, after: str, marked: list[str]) -> bool:
+    """האם השינוי הוא תיקון של מילה, ולא ניסוח מחדש.
+
+    המודל התבקש לגעת במילה אחת. תשובה שמשנה יותר מזה נדחית, כי שלב
+    שנועד לתקן אות אינו רשאי להחליף תרגום
+    """
+    old, new = before.split(), after.split()
+    if abs(len(old) - len(new)) > 1:
+        return False
+    changed = [w for w in old if w not in new]
+    if not changed or len(changed) > len(marked) + 1:
+        return False
+    # ורק אם לפחות אחת מהמילים המסומנות אכן נעלמה
+    return any(not re.search(rf"(?<![א-ת]){re.escape(m)}(?![א-ת])", after)
+               for m in marked)
+
+
+async def repair_spelling(segments: list[Segment], lines: list[str],
+                          known: str = "", on_step=None) -> list[str]:
+    """מתקן שגיאות כתיב שבודק האיות סימן. ראו spelling.py."""
+    marked = await spelling.suspects(lines, known)
+    if not marked:
+        return lines
+    if len(marked) > config.SPELL_MAX_LINES:
+        log.warning("בודק האיות סימן %d שורות — יותר מדי, מדלג",
+                    len(marked))
+        return lines
+    log.info("בודק האיות סימן %d שורות", len(marked))
+    if on_step:
+        await on_step(f"מגיה {len(marked)} מילים חשודות", QUALITY_TO)
+    listing = "\n".join(
+        f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}\n"
+        f"[{i}] מסומן: {', '.join(words)}"
+        for i, words in sorted(marked.items()))
+    schema = {
+        "type": "object",
+        "properties": {"lines": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"i": {"type": "integer"},
+                           "he": {"type": "string"}},
+            "required": ["i", "he"]}}},
+        "required": ["lines"],
+    }
+    try:
+        result = await asyncio.wait_for(gemini.ask_json(
+            SPELL_SYSTEM,
+            f"{listing}\n\nהחזר JSON: {{\"lines\": [{{\"i\": <אינדקס>, "
+            f"\"he\": \"<השורה>\"}}]}}",
+            schema=schema, temperature=0.0),
+            timeout=max(30.0, config.REPAIR_TIMEOUT))
+    except (asyncio.TimeoutError, gemini.GeminiError) as exc:
+        log.warning("הגהת האיות נכשלה (%s) — ממשיכים בלעדיה", exc)
+        return lines
+    fixed = 0
+    for index, text in _collect(result).items():
+        text = (text or "").strip()
+        if index not in marked or not text or text == lines[index]:
+            continue
+        if cleanup.has_foreign(text) or not _small_fix(
+                lines[index], text, marked[index]):
+            continue
+        log.info("איות [%d]: %s ⇐ %s", index, text[:40], lines[index][:40])
+        lines[index] = text
+        fixed += 1
+    log.info("הגהת איות: תוקנו %d מתוך %d שורות מסומנות", fixed, len(marked))
+    return lines
+
+
 async def research_notes(numbered: str, language: str, on_step=None,
                          title: str = "") -> str:
     """בונה את מסמך ההנחיות בכמה קריאות מקבילות במקום אחת סדרתית.
@@ -760,6 +838,9 @@ async def build_hebrew(segments: list[Segment], language: str,
             await on_step("מתקן אותיות זרות", QUALITY_TO)
         lines = await repair_foreign(segments, lines, foreign, on_step)
         lines, _ = cleanup.clean(lines)
+
+    # אחרון: שגיאות כתיב. אחרי כל מה שמשנה טקסט, כדי שלא ייווצרו חדשות
+    lines = await repair_spelling(segments, lines, notes, on_step)
 
     return lines, notes
 

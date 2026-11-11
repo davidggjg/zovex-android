@@ -4,3 +4,4 @@ allowlist.json
 *.session-journal
 __pycache__/
 work/
+spell/
