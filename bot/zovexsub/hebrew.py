@@ -189,6 +189,24 @@ ADDRESSEE_WINDOW = 120   # שורות שנבדקות בקריאה אחת
 ADDRESSEE_CONTEXT = 15   # שורות הקשר לפני ואחרי
 
 
+def _addressee_listing(segments: list[Segment], lines: list[str],
+                       numbers: list[int]) -> str:
+    """שורות לתיוג נמען, כשכל שורה נושאת את הדובר שלה.
+
+    הרעיון: בלי תווית דובר המודל רואה משפטים בלי לדעת מי אמר כל אחד,
+    ואז צריך לנחש למי פונים. עם התווית, השיחה מתפרשת לפי הדוברים.
+    זה עדיין לא נמדד על סרט אמיתי — המדידה תהיה על סצנה מסומנת ידנית.
+    התווית ניתנת מהתמלול, כך שאין כאן ניחוש של הבוט.
+    """
+    rows = []
+    for i in numbers:
+        who = getattr(segments[i], "speaker", "") or "לא ידוע"
+        rows.append(f"[{i}] דובר: {who}\n"
+                    f"[{i}] מקור: {segments[i].text}\n"
+                    f"[{i}] עברית: {lines[i]}")
+    return "\n".join(rows)
+
+
 async def enforce_addressee(segments: list[Segment], lines: list[str], notes: str,
                             on_step=None) -> list[str]:
     """קובע לכל שורה אל מי פונים ואוכף את הצורה המתאימה.
@@ -245,9 +263,7 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
     log.info("התאמת מגדר: %d חלונות, עד %d במקביל", len(starts), workers)
 
     def render(numbers: list[int]) -> str:
-        return "\n".join(
-            f"[{i}] מקור: {segments[i].text}\n[{i}] עברית: {lines[i]}" for i in numbers
-        )
+        return _addressee_listing(segments, lines, numbers)
 
     async def one(start: int) -> None:
         nonlocal changed, done

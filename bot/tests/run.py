@@ -4881,6 +4881,19 @@ def _slivers_are_absorbed() -> None:
     assert srt.absorb_slivers(lone) == 0 and len(lone) == 1
 
 
+@check("שורות תיוג הנמען נושאות את הדובר של כל שורה")
+def _addressee_rows_carry_speaker() -> None:
+    from zovexsub import hebrew
+    from zovexsub.stt import Segment
+    segs = [Segment(index=0, start=0, end=1, text="hi", speaker="S1"),
+            Segment(index=1, start=1, end=2, text="yo")]
+    out = hebrew._addressee_listing(segs, ["שלום", "היי"], [0, 1])
+    assert "דובר: S1" in out, out
+    assert "דובר: לא ידוע" in out, out
+    # המקור והעברית נשארים, כי התיוג מוסיף ולא מחליף
+    assert "מקור: hi" in out and "עברית: שלום" in out, out
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
