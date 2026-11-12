@@ -15,6 +15,7 @@ import {nextEpLead} from '../utils/nextEpLead';
 // נפילה ל-/vt, שממיר בשרת עם ffmpeg. ראה vtFallbackSrc למטה.
 import Video from 'react-native-video';
 import {BACK10, FS_ENTER, FS_EXIT, FWD10} from './playerIcons';
+import {buildStreamSource, variantCount} from '../utils/liveSource';
 
 // נגן נייטיב עם הפקדים **שלנו**.
 //
@@ -66,7 +67,6 @@ const HIDE_AFTER = 3500;
 //     מוכר. VLC מזדהה בשמו וכך עובר; ExoPlayer מזדהה כ-Android גנרי.
 //  3. באפר התחלתי: ברירת המחדל מחכה 2.5 שניות של וידאו לפני שמתחילים, ו-5 אחרי
 //     כל עצירה. לשידור חי מספיק פחות, והניגון מתחיל מוקדם יותר.
-const LIVE_UA = 'VLC/3.0.20 LibVLC/3.0.20';
 const LIVE_BUFFER = {
   minBufferMs: 8000,
   maxBufferMs: 30000,
@@ -74,7 +74,6 @@ const LIVE_BUFFER = {
   bufferForPlaybackAfterRebufferMs: 2500,
 };
 // קישורים שהם בבירור לא HLS (מכולה/זרם ישיר) — לא כופים עליהם type=m3u8.
-const NOT_HLS = /\.(ts|mp4|mkv|flv|avi|mpd)(\?|$)/i;
 
 const fmt = s => {
   s = Math.max(0, Math.floor(s || 0));
@@ -140,6 +139,9 @@ export default function NativePlayer({
   const liveRetried = useRef(false);
   // כשהניגון הישיר נכשל, עוברים פעם אחת למסלול ההמרה בשרת.
   const [vtSrc, setVtSrc] = useState(null);
+  // הדרך הנוכחית מתוך streamVariants (progressive מול HLS). מתקדמת
+  // בכשל, ומתאפסת כשהכתובת מתחלפת.
+  const [srcVariant, setSrcVariant] = useState(0);
   const [paused, setPaused] = useState(false);
   const [ready, setReady] = useState(false);
   const [pos, setPos] = useState(0);
@@ -209,6 +211,8 @@ export default function NativePlayer({
   useEffect(() => () => { if (skipTimer.current) clearTimeout(skipTimer.current); }, []);
 
   const skip = d => { seekTo(posRef.current + d); flashSkip(d > 0 ? 1 : -1); poke(); };
+
+  useEffect(() => { setSrcVariant(0); }, [src, vtSrc]);
 
   // סרגל ההתקדמות. PanResponder ולא Slider חיצוני — אין ספריית slider
   // בפרויקט, והוספת תלות בשביל פס אחד לא מוצדקת.
@@ -304,18 +308,21 @@ export default function NativePlayer({
                   (dur - pos) <= nextEpLead(dur);
 
   const curSrc = vtSrc || src || '';
-  const liveHls = isLive && !NOT_HLS.test(curSrc);
-  const vidSource = {
-    uri: curSrc,
-    minLoadRetryCount: isLive ? 3 : 6,
-    ...(liveHls || /\.m3u8|Manifest\.ism/i.test(curSrc) ? {type: 'm3u8'} : {}),
-    ...(isLive ? {headers: {'User-Agent': LIVE_UA}} : {}),
-  };
+  // קודם: ‎isLive && !NOT_HLS.test(curSrc)‎ — כלומר כל שידור חי בכתובת
+  // בלי סיומת נשלח כ-HLS. ערוץ Xtream (‎/user/pass/id‎) מגיש MPEG-TS
+  // גולמי, ה-HlsMediaSource נופל על הבית הראשון, והערוץ לא התנגן בכלל.
+  // עכשיו הסוג נגזר ב-src/utils/liveSource.js, עם דרך שנייה בכשל.
+  const vidSource = buildStreamSource(curSrc, srcVariant, {
+    isLive,
+    extra: {minLoadRetryCount: isLive ? 3 : 6},
+  }) || {uri: curSrc, minLoadRetryCount: isLive ? 3 : 6};
 
   return (
     <View style={styles.wrap}>
       <Video
-        key={retryKey}
+        // ה-variant בתוך ה-key: ExoPlayer ממשיך עם אותו MediaSource
+        // כששולחים לו רק type אחר, ולכן בלעדיו המעבר לא קורה בפועל.
+        key={`${retryKey}:${srcVariant}`}
         ref={ref}
         source={vidSource}
         bufferConfig={isLive ? LIVE_BUFFER : undefined}
@@ -386,6 +393,15 @@ export default function NativePlayer({
         }}
         onEnd={() => onEnd && onEnd()}
         onError={e => {
+          // נשארה עוד דרך לנגן את אותה כתובת? (progressive מול HLS).
+          // קודם לכל השאר: אין טעם בניסיון חוזר, בהחלפת מפענח או בהמרה
+          // בשרת כשהזרם פשוט הוגש לנגן בסוג הלא נכון.
+          if (srcVariant + 1 < variantCount(curSrc)) {
+            if (debug) setDiag(d => `${d}\nמחליף סוג זרם (${srcVariant + 1})`);
+            setReady(false);
+            setSrcVariant(v => v + 1);
+            return;
+          }
           if (isLive && !liveRetried.current) {
             liveRetried.current = true;
             if (debug) setDiag(d => `${d}\nשידור חי: ניסיון חוזר`);

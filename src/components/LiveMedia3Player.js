@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import {FS_ENTER, FS_EXIT} from './playerIcons';
 import {ltrRow} from '../i18n';
+import {buildStreamSource, variantCount} from '../utils/liveSource';
 
 // Temporary compatibility name: this component now uses the same Media3 / ExoPlayer
 // engine as NativePlayer and TvNativePlayer. No libVLC is loaded.
@@ -12,16 +13,9 @@ const ACCENT = '#e91e8c';
 const HIDE_AFTER = 3500;
 const STALL_MS = 25000;
 
-function liveSource(src) {
-  const uri = String(src || '');
-  // IPTV relay URLs often have no file extension. Prefer HLS for such live URLs,
-  // but preserve obvious direct-stream/container types when the URL tells us.
-  if (/\.mpd(?:$|[?#])/i.test(uri)) return {uri, type: 'mpd'};
-  if (/\.ism(?:$|[?#])/i.test(uri)) return {uri, type: 'ism'};
-  if (/\.(?:ts|mpeg|mpg)(?:$|[?#])/i.test(uri)) return {uri};
-  if (/\.(?:mp4|m4v|mov)(?:$|[?#])/i.test(uri)) return {uri, type: 'mp4'};
-  return {uri, type: 'm3u8'};
-}
+// זיהוי סוג הזרם עבר ל-src/utils/liveSource.js, משותף לשלושת הנגנים.
+// מה שהיה כאן הניח שכל כתובת חיה בלי סיומת היא HLS, וזו בדיוק הסיבה
+// שערוץ Xtream (‎/user/pass/id‎, שמגיש MPEG-TS גולמי) לא התנגן בכלל.
 
 export default function LiveMedia3Player({
   src, title, onClose, onFail, onPlayingChange, onFullscreen,
@@ -34,6 +28,10 @@ export default function LiveMedia3Player({
   const [fs, setFs] = useState(false);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
+  // באיזו דרך מתוך streamVariants אנחנו עכשיו. נפרד מ-attempt בכוונה:
+  // attempt הוא "נסה שוב" של המשתמש, וזה מעבר אוטומטי לדרך הבאה אחרי
+  // כשל — בלי זה ניחוש שגוי אחד היה סוף הסיפור.
+  const [variant, setVariant] = useState(0);
   const hideTimer = useRef(null);
   const started = useRef(false);
   const onFailRef = useRef(onFail);
@@ -62,7 +60,10 @@ export default function LiveMedia3Player({
       clearTimeout(stall);
       if (hideTimer.current) clearTimeout(hideTimer.current);
     };
-  }, [src, attempt, poke]);
+  }, [src, attempt, variant, poke]);
+
+  // כתובת חדשה או "נסה שוב" — מתחילים את הרשימה מההתחלה.
+  useEffect(() => { setVariant(0); }, [src, attempt]);
 
   useEffect(() => {
     onPlayingChange && onPlayingChange(playing && !paused && !error);
@@ -76,6 +77,15 @@ export default function LiveMedia3Player({
   };
 
   const fail = e => {
+    // נשארה עוד דרך לנסות? עוברים אליה בשקט במקום להציג שגיאה. זה
+    // המקרה של כתובת בלי סיומת שניחשנו עליה לא נכון — ההחלפה בין
+    // progressive ל-HLS קורית כאן.
+    if (variant + 1 < variantCount(src)) {
+      started.current = false;
+      setBuffering(true);
+      setVariant(v => v + 1);
+      return;
+    }
     setBuffering(false);
     setPlaying(false);
     const msg = e?.error?.errorString || e?.error?.localizedDescription || e?.error?.errorCode;
@@ -86,9 +96,11 @@ export default function LiveMedia3Player({
   return (
     <View style={styles.wrap}>
       {!error && <Video
-        key={`${src}:${attempt}`}
+        // ה-key כולל את ה-variant: בלעדיו ExoPlayer ממשיך עם אותו
+        // MediaSource כשמשנים רק את ה-type, והמעבר לא היה קורה בפועל.
+        key={`${src}:${attempt}:${variant}`}
         ref={player}
-        source={liveSource(src)}
+        source={buildStreamSource(src, variant, {isLive: true}) || {uri: String(src || '')}}
         style={StyleSheet.absoluteFill}
         paused={paused}
         controls={false}

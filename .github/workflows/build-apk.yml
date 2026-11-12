@@ -97,6 +97,12 @@ jobs:
       - name: Check email access blocking
         run: node scripts/test-ban.js
 
+      # סוג הזרם: ערוץ Xtream (‎/user/pass/id‎) נשלח פעם כ-HLS והפרסר נפל
+      # על הבית הראשון, כלומר הערוץ לא התנגן בכלל. נסיגה כזו שקטה —
+      # הבנייה עוברת, הערוץ פשוט מת — ולכן היא נבדקת כאן.
+      - name: Check live stream type detection
+        run: node scripts/test-stream-source.js
+
       # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
       # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)

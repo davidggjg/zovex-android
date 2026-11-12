@@ -1,6 +1,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {View, StyleSheet, ActivityIndicator, Text} from 'react-native';
 import Video from 'react-native-video';
+import {buildStreamSource, variantCount} from '../utils/liveSource';
 import {vtFallbackSrc} from './NativePlayer';
 
 // נגן נייטיב (ExoPlayer) לטלוויזיה. בטלוויזיות ה-WebView חלש וקורס בפענוח
@@ -27,7 +28,14 @@ export default function TvNativePlayer({
   // היה מוצג — וזה בדיוק המקרה שאנחנו מנסים לתפוס. עכשיו תמיד יש מה לראות.
   const [diag, setDiag] = useState(debug ? 'פותח את הקובץ…' : '');
   // שידור חי/HLS מול קובץ שלם — שני מקרים עם צרכי באפר הפוכים לגמרי.
+  // ‎isHls‎ כאן הוא רק שאלת הבאפר. קודם הוא שימש גם לקביעת ה-type, ואז
+  // כל שידור חי נשלח כ-HLS — מה ששבר ערוצי Xtream שמגישים MPEG-TS
+  // גולמי. סוג הזרם נקבע עכשיו ב-src/utils/liveSource.js.
   const isHls = isLive || /\.m3u8|Manifest\.ism/i.test(src || '');
+  // הדרך הנוכחית מתוך streamVariants; מתקדמת בכשל.
+  const [variant, setVariant] = useState(0);
+  const curUrl = vtSrc || src;
+  useEffect(() => { setVariant(0); }, [curUrl]);
 
   // אם אחרי 15 שניות עוד לא נפתח כלום — אומרים את זה, במקום להשאיר
   // "פותח את הקובץ…" שנראה כמו טעינה תמימה.
@@ -44,17 +52,19 @@ export default function TvNativePlayer({
     <View style={styles.wrap}>
       <Video
         ref={ref}
-        // type מפורש: הכתובות שלנו עוברות דרך ה-relay ולא תמיד נגמרות בסיומת
-        // שממנה ExoPlayer מסיק את הפורמט. בלי זה הוא עלול לנסות לנגן playlist
-        // כאילו היה קובץ רגיל ולהיתקע.
-        source={{
-          uri: vtSrc || src,
-          type: isHls ? 'm3u8' : undefined,
+        // ה-key חייב לכלול את ה-variant: בלי זה ExoPlayer ממשיך עם אותו
+        // MediaSource כשרק ה-type משתנה, והמעבר לא קורה בפועל.
+        key={`${curUrl}:${variant}`}
+        // סוג הזרם נגזר מהכתובת, עם רשימת נפילה-אחורה. הכתובות שלנו
+        // עוברות דרך ה-relay ולא תמיד נגמרות בסיומת, ולכן ניחוש יחיד
+        // לא מספיק — ראה src/utils/liveSource.js.
+        source={buildStreamSource(curUrl, variant, {
+          isLive,
           // הממסר איטי: נמדד 0.7–3s ל-playlist ועוד 1.6–3.7s למקטע של 6 שניות.
           // עם ברירת המחדל אין מרווח ביטחון וכל עיכוב מרוקן את הבאפר — זה מה
           // שנראה כ"מסתובב הרבה". כמה ניסיונות חוזרים מונעים נפילה על תקלה אחת.
-          minLoadRetryCount: 6,
-        }}
+          extra: {minLoadRetryCount: 6},
+        }) || {uri: curUrl, minLoadRetryCount: 6}}
         // הבאפר המוגדל שייך ל-HLS/שידור חי בלבד. בגרסה קודמת הוא הוחל על כל
         // ניגון נייטיבי, וזה שבר את הסרטים: 90 שניות של 1080p הן עשרות MB
         // שהטלוויזיה צריכה להחזיק ולמלא לפני שמתחילה — ולכן "שידורים חיים
@@ -94,6 +104,13 @@ export default function TvNativePlayer({
         }}
         onEnd={() => { if (onEnd) onEnd(); }}
         onError={e => {
+          // קודם כול: נשארה עוד דרך לנגן את אותה כתובת? (progressive מול
+          // HLS). זה חייב לקדום להמרה בשרת — אין טעם להמיר זרם שפשוט
+          // הוגש לנגן בסוג הלא נכון.
+          if (variant + 1 < variantCount(curUrl)) {
+            setVariant(v => v + 1);
+            return;
+          }
           // לפני שמציגים "לא ניתן לנגן" — ניסיון אחד דרך ההמרה בשרת.
           // זה מה שפותר AVI ומכולות שה-ExoPlayer לא פותח.
           if (!vtSrc) {
