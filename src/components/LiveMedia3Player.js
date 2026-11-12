@@ -5,7 +5,8 @@ import {
 } from 'react-native';
 import {FS_ENTER, FS_EXIT} from './playerIcons';
 import {ltrRow} from '../i18n';
-import {buildStreamSource, variantCount} from '../utils/liveSource';
+import {buildStreamSource, variantCount, variantLabel} from '../utils/liveSource';
+import {APP_VERSION} from '../api/movies';
 
 // Temporary compatibility name: this component now uses the same Media3 / ExoPlayer
 // engine as NativePlayer and TvNativePlayer. No libVLC is loaded.
@@ -32,6 +33,10 @@ export default function LiveMedia3Player({
   // attempt הוא "נסה שוב" של המשתמש, וזה מעבר אוטומטי לדרך הבאה אחרי
   // כשל — בלי זה ניחוש שגוי אחד היה סוף הסיפור.
   const [variant, setVariant] = useState(0);
+  // מה נכשל בכל ניסיון. בלי זה מוצגת רק השגיאה של הניסיון האחרון, ואז
+  // "נכשל אחרי דרך אחת" ו"נכשל אחרי ארבע" נראים זהים לחלוטין — וזה בדיוק
+  // מה שמנע לדעת אם התיקון בכלל רץ על המכשיר.
+  const errLog = useRef([]);
   const hideTimer = useRef(null);
   const started = useRef(false);
   const onFailRef = useRef(onFail);
@@ -63,7 +68,7 @@ export default function LiveMedia3Player({
   }, [src, attempt, variant, poke]);
 
   // כתובת חדשה או "נסה שוב" — מתחילים את הרשימה מההתחלה.
-  useEffect(() => { setVariant(0); }, [src, attempt]);
+  useEffect(() => { setVariant(0); errLog.current = []; }, [src, attempt]);
 
   useEffect(() => {
     onPlayingChange && onPlayingChange(playing && !paused && !error);
@@ -77,9 +82,17 @@ export default function LiveMedia3Player({
   };
 
   const fail = e => {
+    const raw = String(e?.error?.errorString || e?.error?.localizedDescription ||
+                       e?.error?.errorCode || 'שגיאה לא ידועה');
+    // מקצרים את ‎ExoPlaybackException: ERROR_CODE_…‎ לחלק שבאמת אומר משהו,
+    // אחרת ארבע שורות כאלה לא נכנסות למסך.
+    const short = (raw.match(/ERROR_CODE_[A-Z_]+/) || [raw])[0]
+      .replace(/^ERROR_CODE_/, '');
+    errLog.current = [...errLog.current, `${variantLabel(src, variant)}: ${short}`];
+
     // נשארה עוד דרך לנסות? עוברים אליה בשקט במקום להציג שגיאה. זה
     // המקרה של כתובת בלי סיומת שניחשנו עליה לא נכון — ההחלפה בין
-    // progressive ל-HLS קורית כאן.
+    // ישיר, HLS, ‎.m3u8‎ ו-‎.ts‎ קורית כאן.
     if (variant + 1 < variantCount(src)) {
       started.current = false;
       setBuffering(true);
@@ -88,8 +101,10 @@ export default function LiveMedia3Player({
     }
     setBuffering(false);
     setPlaying(false);
-    const msg = e?.error?.errorString || e?.error?.localizedDescription || e?.error?.errorCode;
-    setError(msg ? `לא ניתן לנגן את השידור (${msg}).` : 'לא ניתן לנגן את השידור.');
+    // כל הניסיונות, כל אחד בשורה, ומספר הגרסה. זה מה שהופך צילום מסך
+    // אחד לאבחנה שלמה במקום לעוד סבב שאלות.
+    setError('לא ניתן לנגן את השידור.\n' + errLog.current.join('\n') +
+             `\nגרסה ${APP_VERSION}`);
     onFailRef.current && onFailRef.current('media3-error');
   };
 
@@ -192,7 +207,10 @@ const styles = StyleSheet.create({
   fsBtn: {width: 40, height: 40, alignItems: 'center', justifyContent: 'center'},
   fsIcon: {width: 21, height: 21},
   errorBox: {position: 'absolute', left: 24, right: 24, top: '30%', alignItems: 'center', gap: 12},
-  errorText: {color: '#fff', textAlign: 'center', fontSize: 16},
+  // שורות השגיאה נקראות שמאל-לימין (שמות קודים באנגלית) וקטנות יותר,
+  // כדי שארבעה ניסיונות ייכנסו למסך בלי לגלוש.
+  errorText: {color: '#fff', textAlign: 'center', fontSize: 14, lineHeight: 21,
+              writingDirection: 'ltr'},
   retryBtn: {paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, backgroundColor: '#e91e8c'},
   retryText: {color: '#fff', fontWeight: '700'},
 });

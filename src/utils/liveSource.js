@@ -62,48 +62,87 @@ export function isXtreamStyle(url) {
 }
 
 /**
- * רשימת הדרכים לנסות לנגן את הכתובת, לפי סדר. כל איבר הוא ה-source
- * של react-native-video, בלי ה-uri (הנגן מוסיף אותו).
+ * רשימת הדרכים לנסות לנגן, לפי סדר. כל איבר הוא ‎{url, type?}‎ —
+ * **גם הכתובת יכולה להשתנות**, לא רק הסוג.
  *
- * ‎{}‎ פירושו "בלי type" — ExoPlayer בונה ProgressiveMediaSource ומריץ
- * את ה-extractors שלו, שכוללים את TsExtractor. זה המסלול שמנגן
- * MPEG-TS גולמי, וזה בדיוק מה שהיה חסר.
+ * למה הכתובת: בפאנלי Xtream, ‎/user/pass/id‎ החשוף לא תמיד מגיש את
+ * הזרם בעצמו. הצורות שעובדות בפועל הן ‎…/id.m3u8‎ (HLS) ו-‎…/id.ts‎
+ * (MPEG-TS), וחלק מהפאנלים מגישים **רק** איתן ומחזירים דף HTML או
+ * הפניה על הכתובת החשופה. נגני IPTV מוסיפים את הסיומות האלה כדבר
+ * שבשגרה, וזו הסיבה שאותו קישור "עובד ב-VLC ולא אצלנו".
+ *
+ * ‎type‎ חסר פירושו "בלי type" — ExoPlayer בונה ProgressiveMediaSource
+ * ומריץ את ה-extractors שלו, שכוללים את TsExtractor. זה המסלול שמנגן
+ * MPEG-TS גולמי.
  */
 export function streamVariants(url) {
   const u = String(url || '');
   const {last} = lastSegment(u);
 
-  if (/\.m3u8?(?:$|[?#])/i.test(u)) return [{type: 'm3u8'}, {}];
-  if (/\.mpd(?:$|[?#])/i.test(u)) return [{type: 'mpd'}];
-  if (/\.ism|Manifest\.ism/i.test(u)) return [{type: 'ism'}, {type: 'm3u8'}];
+  if (/\.m3u8?(?:$|[?#])/i.test(u)) return [{url: u, type: 'm3u8'}, {url: u}];
+  if (/\.mpd(?:$|[?#])/i.test(u)) return [{url: u, type: 'mpd'}];
+  if (/\.ism|Manifest\.ism/i.test(u)) return [{url: u, type: 'ism'}, {url: u, type: 'm3u8'}];
   // מיכלים ישירים: קודם progressive, ו-HLS רק כגיבוי — יש שרתים
   // שמגישים פלייליסט מכתובת שנגמרת ב-.ts.
-  if (/\.(?:ts|mpeg|mpg|mkv|avi|webm)(?:$|[?#])/i.test(u)) return [{}, {type: 'm3u8'}];
-  if (/\.(?:mp4|m4v|mov)(?:$|[?#])/i.test(u)) return [{type: 'mp4'}, {}];
+  if (/\.(?:ts|mpeg|mpg|mkv|avi|webm)(?:$|[?#])/i.test(u)) {
+    return [{url: u}, {url: u, type: 'm3u8'}];
+  }
+  if (/\.(?:mp4|m4v|mov)(?:$|[?#])/i.test(u)) return [{url: u, type: 'mp4'}, {url: u}];
 
-  // בלי סיומת. צורת Xtream → כמעט תמיד TS גולמי, ולכן progressive ראשון.
-  if (isXtreamStyle(u)) return [{}, {type: 'm3u8'}];
+  // ── בלי סיומת ──────────────────────────────────────────────────────────
+  // ‎withExt‎ שומר על ה-query string: בכתובות Xtream חתומות הוא נושא
+  // טוקן, והדבקת הסיומת בסוף הכתובת כולה הייתה הורסת אותו.
+  const withExt = ext => {
+    const m = u.match(/^([^?#]*)(.*)$/);
+    return (m ? m[1] : u).replace(/\/+$/, '') + ext + (m ? m[2] : '');
+  };
 
-  // כל השאר בלי סיומת: נשאר כמו שהיה — HLS ראשון — כדי לא לשבור ערוצים
-  // שכבר עובדים; אבל עכשיו יש גם ניסיון שני במקום להיכשל.
-  if (!hasExt(last)) return [{type: 'm3u8'}, {}];
+  if (isXtreamStyle(u)) {
+    return [
+      {url: u},                              // TS גולמי על הכתובת החשופה
+      {url: withExt('.m3u8'), type: 'm3u8'},  // הצורה הסטנדרטית ל-HLS
+      {url: withExt('.ts')},                  // הצורה הסטנדרטית ל-TS
+      {url: u, type: 'm3u8'},                 // HLS על הכתובת החשופה
+    ];
+  }
 
-  return [{}, {type: 'm3u8'}];
+  if (!hasExt(last)) {
+    // לא Xtream: נשאר HLS ראשון כדי לא לשבור ערוצים שכבר עובדים,
+    // אבל עם אותן דרכים נוספות אחריו.
+    return [
+      {url: u, type: 'm3u8'},
+      {url: u},
+      {url: withExt('.m3u8'), type: 'm3u8'},
+    ];
+  }
+
+  return [{url: u}, {url: u, type: 'm3u8'}];
 }
 
 /**
- * ה-source המלא לניסיון מספר [attempt]. מעבר לסוף הרשימה מוחזר null,
- * כדי שהנגן יידע שנגמרו הדרכים ויעבור לנגן הבא בשרשרת במקום להסתובב.
+ * ה-source המלא לניסיון מספר [attempt], או null כשנגמרו הדרכים — כדי
+ * שהנגן יעבור לנגן הבא בשרשרת במקום להסתובב.
  */
 export function buildStreamSource(url, attempt = 0, {isLive = false, extra = {}} = {}) {
   const variants = streamVariants(url);
   if (attempt >= variants.length) return null;
+  const v = variants[attempt];
   return {
-    uri: String(url || ''),
-    ...variants[attempt],
+    uri: v.url,
+    ...(v.type ? {type: v.type} : {}),
     ...(isLive ? {headers: {'User-Agent': LIVE_UA}} : {}),
     ...extra,
   };
+}
+
+/** תיאור קצר של הניסיון, להודעת השגיאה. */
+export function variantLabel(url, attempt) {
+  const variants = streamVariants(url);
+  const v = variants[attempt];
+  if (!v) return '?';
+  const kind = v.type === 'm3u8' ? 'HLS' : v.type ? v.type : 'ישיר';
+  const same = v.url === String(url || '');
+  return same ? kind : `${kind}+${v.url.slice(v.url.lastIndexOf('.'))}`;
 }
 
 export function variantCount(url) {
