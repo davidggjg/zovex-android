@@ -993,8 +993,9 @@ def clean_auto_captions(cues: list["Cue"]) -> int:
     for cue in cues:
         was = cue.text
         text = _INLINE_TIME.sub("", cue.text)
-        text = _VTT_TAG.sub("", text)
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        text = _VTT_TAG.sub("", text).replace(">>", " ")
+        lines = [" ".join(line.split()) for line in text.splitlines()
+                 if line.strip()]
         # השורה שכבר הוצגה בכתובית הקודמת אינה מוצגת שוב
         if previous and lines and lines[0] == previous:
             lines = lines[1:]
@@ -1044,6 +1045,8 @@ def unroll_vtt(text: str) -> list["Cue"]:
         lines = []
         for row in rows[at + 1:]:
             row = _VTT_TAG.sub("", _INLINE_TIME.sub("", row))
+            # ">>" הוא הסימן של יוטיוב לחילוף דובר, לא טקסט
+            row = row.replace("&gt;&gt;", " ").replace(">>", " ")
             row = " ".join(row.replace("&nbsp;", " ").split())
             if row:
                 lines.append(row)

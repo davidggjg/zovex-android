@@ -817,6 +817,13 @@ TRANSLATE_RETRY_MAX = _int("TRANSLATE_RETRY_MAX", 8)
 # ולכן המתנה והמשך עדיפים על פליטת טקסט המקור לקובץ הסופי
 TRANSLATE_WINDOW_TRIES = _int("TRANSLATE_WINDOW_TRIES", 4)
 TRANSLATE_WINDOW_REST = float(os.getenv("TRANSLATE_WINDOW_REST") or 20)
+# סבבי הצלה לחלונות שנכשלו כולם, אחרי שכל שאר הסרט תורגם. ההמתנה
+# מוכפלת מסבב לסבב (60, 120, 240 שניות): מכסה לדקה מתאפסת בזמן הזה
+TRANSLATE_RESCUE_ROUNDS = _int("TRANSLATE_RESCUE_ROUNDS", 3)
+TRANSLATE_RESCUE_REST = float(os.getenv("TRANSLATE_RESCUE_REST") or 60)
+# מעל האחוז הזה של שורות לא מתורגמות הקובץ אינו נשלח. חצי סרט בשפת
+# המקור אינו תוצאה — נמדד אצל המשתמש: 58% מהקובץ נשאר בטורקית
+TRANSLATE_FAIL_SHARE = float(os.getenv("TRANSLATE_FAIL_SHARE") or 5)
 # תקרת זמן לחלון תרגום. נמדד בלוג אצל המשתמש: ממוצע קריאה 65 שניות,
 # אבל חלק מהחלונות עוברים 240 באופן לגיטימי — וכל חלון שנחתך נזרק
 # ומטופל מחדש, כך ש-14 חלונות הפכו ל-67 קריאות. חיתוך עולה הרבה

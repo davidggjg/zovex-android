@@ -5087,6 +5087,62 @@ def _spelling_pass_is_narrow() -> None:
         config.SPELL_DICT = was
 
 
+@check("חלונות שנכשלו בגלל מכסה מקבלים סבב הצלה, וחצי סרט אינו נשלח")
+def _failed_windows_are_rescued() -> None:
+    import re as _re
+    from zovexsub import gemini, hebrew
+    from zovexsub.stt import Segment
+
+    segs = [Segment(index=i, start=i, end=i + 1, text=f"line {i}")
+            for i in range(40)]
+    saved = (gemini.ask_json, hebrew.WINDOW, config.TRANSLATE_WINDOW_REST,
+             config.TRANSLATE_RESCUE_REST, config.TRANSLATE_WINDOW_TRIES,
+             config.TRANSLATE_RESCUE_ROUNDS)
+    state = {"down": True}
+
+    async def fake(system, prompt, schema=None, temperature=0.0):
+        asked = sorted({int(n) for n in _re.findall(r"\[(\d+)\] line", prompt)})
+        # המכסה "נגמרת" לחצי השני של הסרט, עד שסבב ההצלה מתחיל
+        if state["down"] and asked and asked[-1] >= 20:
+            return {"lines": []}
+        return {"lines": [{"i": i, "he": f"שורה {i}"} for i in asked]}
+
+    async def watch(note, fraction):
+        if "סבב" in note:
+            state["down"] = False
+
+    gemini.ask_json = fake
+    hebrew.WINDOW = 10
+    config.TRANSLATE_WINDOW_REST = 0
+    config.TRANSLATE_RESCUE_REST = 0
+    config.TRANSLATE_WINDOW_TRIES = 2
+    config.TRANSLATE_RESCUE_ROUNDS = 2
+    try:
+        out = asyncio.run(hebrew._translate_all(segs, "en", "", watch))
+        assert all(line.startswith("שורה") for line in out), out
+
+        # ואם המכסה לא חוזרת — לא שולחים חצי סרט אלא הודעה ברורה
+        state["down"] = True
+
+        async def blind(note, fraction):
+            return None
+
+        try:
+            asyncio.run(hebrew._translate_all(segs, "en", "", blind))
+            raise AssertionError("חצי סרט לא מתורגם נשלח")
+        except RuntimeError as exc:
+            assert "לא תורגמו" in str(exc), exc
+    finally:
+        (gemini.ask_json, hebrew.WINDOW, config.TRANSLATE_WINDOW_REST,
+         config.TRANSLATE_RESCUE_REST, config.TRANSLATE_WINDOW_TRIES,
+         config.TRANSLATE_RESCUE_ROUNDS) = saved
+
+    from zovexsub import cleanup
+    # מילים טורקיות עם אותיות מורחבות נתפסות כשורה שלא תורגמה
+    assert cleanup.has_foreign("gülüm yani bunu istemiyor muyuz")
+    assert cleanup.has_foreign("değişiklik yok.")
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

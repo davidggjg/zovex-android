@@ -1102,6 +1102,38 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
             # יותר מהודעה ברורה
             raise broken[0]
 
+    # סבבי הצלה. חלון שנכשל ארבע פעמים בתוך דקה וחצי נכשל כמעט תמיד
+    # בגלל מכסה, והמכסה לדקה חוזרת — רק שעד עכשיו איש לא חזר אליו.
+    # נמדד אצל המשתמש: מדקה 64 ועד סוף הסרט, 1669 שורות ברצף, נשארו
+    # בטורקית. כל החלונות האלה נכשלו בזה אחר זה באותן דקות, והקובץ
+    # נשלח כאילו הסתיים
+    def stuck() -> list[int]:
+        lost = set(failed) | {i for i, text in enumerate(out)
+                              if not (text or "").strip()}
+        return [start for start in starts
+                if all(seg.index in lost
+                       for seg in segments[start:start + WINDOW])]
+
+    for turn in range(1, config.TRANSLATE_RESCUE_ROUNDS + 1):
+        again = stuck()
+        if not again:
+            break
+        rest = config.TRANSLATE_RESCUE_REST * 2 ** (turn - 1)
+        log.warning("סבב הצלה %d: %d חלונות נכשלו — ממתין %.0f שניות "
+                    "וחוזר אליהם", turn, len(again), rest)
+        if on_step:
+            await on_step(f"⏳ {len(again)} חלונות נכשלו — ממתין למכסה "
+                          f"וחוזר אליהם (סבב {turn})", TRANSLATE_TO)
+        await asyncio.sleep(rest)
+        for start in again:
+            for seg in segments[start:start + WINDOW]:
+                out[seg.index] = ""
+                if seg.index in failed:
+                    failed.remove(seg.index)
+            finished -= len(segments[start:start + WINDOW])
+        await asyncio.gather(*(translate_window(start) for start in again),
+                             return_exceptions=True)
+
     empty = [index for index, text in enumerate(out) if not (text or "").strip()]
     if empty:
         log.warning("%d שורות נשארו בלי תרגום — נשמר המקור שלהן",
@@ -1124,6 +1156,15 @@ async def _translate_all(segments: list[Segment], language: str, notes: str,
             + (untranslated[-1:] if len(untranslated) > 1 else []))
         log.error("⚠️ %d שורות (%.0f%%) נשארו בשפת המקור, סביב %s",
                   len(untranslated), share, spots)
+        if share > config.TRANSLATE_FAIL_SHARE:
+            # לא שולחים חצי סרט. קובץ שרובו בשפת המקור נראה כמו תקלה
+            # מוזרה; הודעה ברורה אומרת מה קרה ומה לעשות
+            raise RuntimeError(
+                f"{share:.0f}% מהשורות ({len(untranslated)}) לא תורגמו, גם "
+                f"אחרי {config.TRANSLATE_RESCUE_ROUNDS} סבבי המתנה. כמעט "
+                "תמיד זו המכסה היומית של מפתחות ג'מיני שנגמרה — היא "
+                "מתאפסת בסביבות 10:00 בבוקר שעון ישראל. הקובץ לא נשלח "
+                "כדי שלא תקבל חצי סרט. נסה שוב אחרי האיפוס, או הוסף מפתח.")
         if on_step:
             await on_step(f"⚠️ {len(untranslated)} שורות לא תורגמו "
                           f"({share:.0f}%) סביב {spots}", 1.0)
