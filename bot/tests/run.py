@@ -5217,6 +5217,67 @@ def _stop_kills_download_tree() -> None:
     assert not alive, "תהליך הבן נשאר חי אחרי העצירה"
 
 
+@check("למידה בזמן מת: רק בשקט, תוך תקרה, ונעצרת בשגיאה")
+def _idle_learning_is_polite() -> None:
+    import tempfile
+    from zovexsub import gemini, idle, memory, studio
+
+    was = (config.MEMORY_PATH, config.IDLE_QUIET, config.IDLE_DAILY,
+           config.IDLE_LEARN, gemini.ask_json, gemini.waiting_for_key)
+    folder = tempfile.mkdtemp()
+    config.MEMORY_PATH = str(Path(folder) / "memory.jsonl")
+    config.IDLE_QUIET, config.IDLE_DAILY, config.IDLE_LEARN = 10, 2, 1
+    gemini.waiting_for_key = lambda: 0
+    idle._state.update(busy_at=0.0, pause_until=0.0, day="", done_today=0)
+    calls: list[str] = []
+
+    async def fake(system, prompt, schema=None, temperature=0.0):
+        calls.append(prompt)
+        rows = [l for l in prompt.splitlines() if l.startswith("[")]
+        return {"lines": [{"i": i, "en": f"English line {i} here"}
+                          for i in range(len(rows))]}
+
+    gemini.ask_json = fake
+    try:
+        cues = [srt.Cue(index=i + 1, start=i, end=i + 1,
+                        text=f"שורת אולפן מספר {i} כאן") for i in range(36)]
+        studio.add_style(cues, "studio.srt")
+        assert len(idle.pending()) == 3
+
+        # עבודה רצה: לא נוגעים במודל
+        assert asyncio.run(idle.tick(True)) == 0 and not calls
+        # מיד אחרי עבודה: עוד לא שקט
+        assert asyncio.run(idle.tick(False)) == 0 and not calls
+
+        idle._state["busy_at"] = -10_000.0
+        assert asyncio.run(idle.tick(False)) == 12
+        bank = memory.load()
+        assert bank[0]["src"].startswith("English"), bank[0]
+        assert bank[0]["he"].startswith("שורת אולפן"), bank[0]
+        assert bank[0]["from"].startswith("חזרה:"), bank[0]
+        assert len(idle.pending()) == 2   # הקטע נרשם ולא יילמד שוב
+
+        # התקרה היומית
+        asyncio.run(idle.tick(False))
+        assert asyncio.run(idle.tick(False)) == 0 and len(calls) == 2
+
+        # שגיאה מהמודל עוצרת את הלמידה
+        idle._state.update(day="", done_today=0)
+
+        async def broken(*a, **k):
+            raise gemini.GeminiError("429")
+
+        gemini.ask_json = broken
+        assert asyncio.run(idle.tick(False)) == 0
+        gemini.ask_json = fake
+        assert asyncio.run(idle.tick(False)) == 0 and len(calls) == 2
+        assert len(idle.pending()) == 1
+    finally:
+        (config.MEMORY_PATH, config.IDLE_QUIET, config.IDLE_DAILY,
+         config.IDLE_LEARN, gemini.ask_json, gemini.waiting_for_key) = was
+        shutil.rmtree(folder, ignore_errors=True)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

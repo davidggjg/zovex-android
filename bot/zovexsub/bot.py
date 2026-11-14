@@ -28,6 +28,10 @@ logging.basicConfig(level=LEVEL, format="%(asctime)s %(levelname)s %(name)s | %(
 logging.getLogger("telethon").setLevel(max(LEVEL, logging.INFO))
 logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("zovexsub")
+
+# משימות רקע שחיות לאורך חיי הבוט. הפניה חזקה, אחרת אוסף הזבל
+# של asyncio עלול לאסוף אותן באמצע
+_background: set = set()
 log.setLevel(LEVEL)
 
 T = config.TRIGGER
@@ -928,6 +932,11 @@ async def main() -> None:
         # ה-Bot API היה חי והעדכונים הצטברו אצלו בלי שאיש קורא אותם
         botjob.install()
         botmenu.start()
+        # למידה בזמן מת: רצה ברקע, רק כשאף עבודה אינה פעילה
+        from . import idle
+        _idle_task = asyncio.create_task(idle.run_forever(
+            lambda: any(not task.done() for task in botjob._jobs.values())))
+        _background.add(_idle_task)
         try:
             log.info("מסלול הבוט פעיל: @%s — שלח אליו סרטון ישירות",
                      await localbot.probe())
