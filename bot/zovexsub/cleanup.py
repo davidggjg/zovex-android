@@ -26,6 +26,10 @@ FOREIGN = re.compile(
     "Ͱ-Ͽ"            # יוונית
     "ぁ-ゟ゠-ヿ"      # יפנית
     "가-힣"           # קוריאנית
+    "\u10a0-\u10ff"  # גאורגית — נמצאה בתוך "ולנסיה" בקובץ אמיתי
+    "\u0530-\u058f"  # ארמנית
+    "\u0900-\u097f"  # דוואנגרי
+    "\u0e00-\u0e7f"  # תאית
     "一-鿿㐀-䶿"      # סינית
     "]"
 )
@@ -106,6 +110,19 @@ _LATIN_WORD = re.compile(r"[A-Za-z\u00c0-\u024f]{3,}")
 _BRACKET = re.compile(r"\[([^\]]*)\]")
 
 
+def untranslated(text: str) -> bool:
+    """שורה שלא תורגמה כלל: אין בה עברית, ויש בה טקסט בשפה אחרת.
+
+    שונה מאות זרה שנדבקה למילה עברית. שורה כזאת צריכה **תרגום**, ולא
+    תיקון אותיות — ופרומפט התיקון אומר במפורש "אל תתרגם". נמדד בקובץ
+    של סרט באנגלית שתורגם ממקור ערבי: 89 שורות ערביות שלמות שרדו,
+    כי הן נשלחו לתיקון אותיות והמודל ציית
+    """
+    if not text or HEBREW.search(text):
+        return False
+    return bool(FOREIGN.search(text)) or bool(_LATIN_WORD.search(text))
+
+
 def english_line(text: str) -> bool:
     """האם השורה היא אנגלית שלא תורגמה — ולא רק שם או מותג.
 
@@ -148,11 +165,19 @@ def fix_leading_marks(line: str) -> str:
     return f"{rest}{match.group(1)}"
 
 
+# התטוויל הערבי (ـ) משמש בכתוביות ערביות כמקף דו-שיח, והמודל מעתיק
+# אותו לעברית: "ـ עליך לפנות מזרחה. ـ מזרחה?" — 11 פעמים בקובץ אחד.
+# זה תמיד מקף, ואין צורך במודל כדי להחליף אותו
+_TATWEEL = re.compile(r"\u0640+")
+
+
 def clean(lines: list[str]) -> tuple[list[str], list[int]]:
     """מנקה ניקוד ומחזיר גם את האינדקסים שעדיין מכילים אותיות זרות."""
     out = []
     for line in lines:
         cleaned = strip_niqqud(line or "")
+        if HEBREW.search(cleaned):
+            cleaned = _TATWEEL.sub("-", cleaned)
         if cleaned != line:
             log.info("הוסר ניקוד: %s", cleaned[:40])
         # האות הערבית מוחזרת כאן, לפני שמחליטים שהשורה "זרה". רוב

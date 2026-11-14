@@ -380,13 +380,17 @@ REPAIR_SYSTEM = """אתה מתקן שגיאות כתיב בכתוביות בעב
 המשמעות, הניסוח והפיסוק. אל תתרגם מחדש, אל תשפר סגנון, אל תשנה מילים
 שאינן פגומות. רק תקן את האותיות הזרות למה שהיה אמור להיכתב בעברית.
 
+אם בתוך השורה העברית נשארה **מילה שלמה** בשפה אחרת — למשל "بدقة" או
+"نحو" — תרגם את המילה הזאת לעברית לפי המקור, והשאר את שאר השורה כמו
+שהיא. שם מקום שנכתב באותיות זרות נכתב בעברית ("ולנסיה").
+
 מחזיר תמיד JSON בלבד."""
 
 
 # שורה באנגלית שלמה לא "פגומה" — היא לא תורגמה. הפרומפט של האותיות
 # הערביות אומר "אל תתרגם", וזה נכון שם, אבל כאן זה בדיוק ההפך
-REPAIR_EN_SYSTEM = """אתה מתרגם כתוביות לעברית. השורות שאתה מקבל הן
-באנגלית ולא תורגמו. תרגם כל אחת לעברית טבעית, קצרה, כמו שמתרגם
+REPAIR_EN_SYSTEM = """אתה מתרגם כתוביות לעברית. השורות שאתה מקבל לא
+תורגמו ונשארו בשפת המקור. תרגם כל אחת לעברית טבעית, קצרה, כמו שמתרגם
 אולפן מקצועי.
 
 תיאורי צליל בסוגריים מרובעים — כמו [laughing] או [door creaks] — תרגם
@@ -404,7 +408,10 @@ async def repair_foreign(segments: list[Segment], lines: list[str],
     """
     if not indices:
         return lines
-    in_english = [i for i in indices if cleanup.english_line(lines[i])]
+    # כל שורה שלא תורגמה בכלל — אנגלית, ערבית או כל שפה — הולכת לתרגום
+    in_english = [i for i in indices
+                  if cleanup.english_line(lines[i])
+                  or cleanup.untranslated(lines[i])]
     in_arabic = [i for i in indices if i not in in_english]
     if in_arabic:
         lines = await _repair_batch(segments, lines, in_arabic, on_step)
@@ -501,7 +508,9 @@ async def _repair_batch(segments: list[Segment], lines: list[str],
         # ‫בשורה באנגלית התרגום העברי הוא התשובה, גם אם המודל החזיר
         # משהו עם לטינית. בשורה ערבית הבדיקה הישנה נשארת
         if english and 0 <= index < len(lines) and text.strip() \
-                and index in indices and not cleanup.english_line(text):
+                and index in indices and not cleanup.english_line(text) \
+                and not cleanup.untranslated(text) \
+                and not cleanup.FOREIGN.search(text):
             lines[index] = text.strip()
             fixed += 1
             continue

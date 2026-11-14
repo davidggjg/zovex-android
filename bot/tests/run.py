@@ -5143,6 +5143,43 @@ def _failed_windows_are_rescued() -> None:
     assert cleanup.has_foreign("değişiklik yok.")
 
 
+@check("שורה שלא תורגמה בכל שפה הולכת לתרגום, ושאריות ערביות מתוקנות")
+def _untranslated_any_language() -> None:
+    from zovexsub import cleanup, gemini, hebrew
+    from zovexsub.stt import Segment
+
+    # שורה ערבית שלמה: תרגום, לא תיקון אותיות
+    assert cleanup.untranslated("إنه أنا . مع من أتحدث؟")
+    assert cleanup.untranslated("Hello there")
+    assert not cleanup.untranslated("מורכב ומעוצב بدقة.")
+    assert not cleanup.untranslated("♪ ♪")
+    # גאורגית בתוך מילה עברית נתפסת
+    assert cleanup.has_foreign("הבסיס האמריקאי בვალנסיה")
+    # תטוויל ערבי בשורה עברית הוא מקף
+    fixed, _ = cleanup.clean(["ـ עליך לפנות מזרחה. ـ מזרחה?"])
+    assert fixed == ["- עליך לפנות מזרחה. - מזרחה?"], fixed
+
+    segs = [Segment(index=0, start=0, end=1, text="It's me. Who is this?"),
+            Segment(index=1, start=1, end=2, text="Intricate, precise.")]
+    lines = ["إنه أنا . مع من أتحدث؟", "מורכב ומעוצב بدقة."]
+    asked: list[str] = []
+
+    async def fake(system, prompt, schema=None, temperature=0.0):
+        asked.append(system)
+        if "מתרגם" in system:
+            return {"lines": [{"i": 0, "he": "זה אני. עם מי אני מדבר?"}]}
+        return {"lines": [{"i": 1, "he": "מורכב ומעוצב בדייקנות."}]}
+
+    was = gemini.ask_json
+    gemini.ask_json = fake
+    try:
+        out = asyncio.run(hebrew.repair_foreign(segs, list(lines), [0, 1]))
+    finally:
+        gemini.ask_json = was
+    assert out == ["זה אני. עם מי אני מדבר?", "מורכב ומעוצב בדייקנות."], out
+    assert len(asked) == 2 and any("מתרגם" in s for s in asked), asked
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
