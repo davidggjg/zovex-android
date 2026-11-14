@@ -659,9 +659,12 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
              "aria2c" if "--downloader" in cmd else "פנימי של yt-dlp",
              config.FETCH_CONNECTIONS, _format_for(url, fmt))
 
+    # קבוצת תהליכים משלו: yt-dlp מפעיל ffmpeg או aria2c כתהליכי בן, וכשעוצרים
+    # רק אותו הם ממשיכים לרוץ יתומים. נמדד אצל המשתמש: "העבודה נעצרה"
+    # הופיע על המסך, ו-ffmpeg המשיך להוריד את הקישור שש שעות אחר כך
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-        env=child_env(),
+        env=child_env(), start_new_session=True,
     )
 
     # מצב משותף בין המוריד לשעון הדיסק: מתי דווח לאחרונה וכמה בסך הכל
@@ -719,6 +722,8 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
         await proc.wait()
     finally:
         watcher.cancel()
+        # עצירה, שגיאה או כל יציאה אחרת לפני הסוף: כל העץ מת יחד
+        kill_tree(proc)
 
     if proc.returncode != 0:
         stderr = (err or b"").decode("utf-8", "replace")
@@ -736,6 +741,22 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
     _note_success()
     log.info("הורד: %s (%.1f MB)", files[0].name, files[0].stat().st_size / 1048576)
     return files[0]
+
+
+def kill_tree(proc) -> None:
+    """הורג תהליך שרץ בקבוצה משלו, יחד עם כל התהליכים שהוא הפעיל."""
+    if proc is None or proc.returncode is not None:
+        return
+    import os
+    import signal
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+        log.warning("ההורדה נעצרה — המוריד ותהליכי הבן שלו נהרגו")
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
 
 
 # מקומות התקנה מקובלים של deno, מעבר למה שנמצא ב-PATH

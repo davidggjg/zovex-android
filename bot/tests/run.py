@@ -5180,6 +5180,43 @@ def _untranslated_any_language() -> None:
     assert len(asked) == 2 and any("מתרגם" in s for s in asked), asked
 
 
+@check("עצירת הורדה הורגת גם את תהליכי הבן של המוריד")
+def _stop_kills_download_tree() -> None:
+    import os
+    import signal
+    import time as _t
+    from zovexsub import fetch
+
+    source = Path("zovexsub/fetch.py").read_text(encoding="utf-8")
+    assert "start_new_session=True" in source
+    assert "kill_tree(proc)" in source
+
+    async def go():
+        # הורה שמפעיל בן ארוך — בדיוק כמו yt-dlp שמפעיל ffmpeg
+        proc = await asyncio.create_subprocess_exec(
+            "sh", "-c", "sleep 60 & echo $!; wait",
+            stdout=asyncio.subprocess.PIPE, start_new_session=True)
+        child = int((await proc.stdout.readline()).decode().strip())
+        fetch.kill_tree(proc)
+        await proc.wait()
+        return child
+
+    child = asyncio.run(go())
+    _t.sleep(0.2)
+    try:
+        os.kill(child, 0)
+        alive = True
+    except ProcessLookupError:
+        alive = False
+    if alive:
+        try:
+            with open(f"/proc/{child}/stat") as fh:
+                alive = fh.read().split()[2] != "Z"
+        except OSError:
+            alive = False
+    assert not alive, "תהליך הבן נשאר חי אחרי העצירה"
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
