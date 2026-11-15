@@ -1284,7 +1284,7 @@ def _large_output_relay():
     # והקטנים ממשיכים בדרך הזולה, דרך השרת המקומי
     assert "localbot.send_video" in burn, "הקטנים אינם עוברים בשרת המקומי"
 
-    relay = inspect.getsource(botjob._relay_video)
+    relay = (inspect.getsource(botjob._relay_video) + inspect.getsource(botjob._relay_with))
     assert "localbot.forward" in relay, "אינו מעביר מהאחסון למשתמש"
     assert "botapi.uploader" in relay, "אינו בוחר חשבון לפי גודל"
     assert "return False" in relay, "כשל אינו מדווח לקורא"
@@ -1562,7 +1562,7 @@ def _custom_cover():
     assert "_cover_wait.discard" in burn, "ההמתנה אינה מתנקה"
 
     # ובהעלאה: כמה מתוך כמה, לא רק אחוז
-    relay = inspect.getsource(botjob._relay_video)
+    relay = (inspect.getsource(botjob._relay_video) + inspect.getsource(botjob._relay_with))
     assert "/{total / 1048576:.0f}MB" in relay, "אין כמה מתוך כמה"
 
 
@@ -1778,7 +1778,7 @@ def _premium_upload_lane():
     # תקרת המהירות שנתפסת בהורדה משביתה את מסלול החשבון להורדה בלבד.
     # אם היא תחסום גם את ההעלאה, קובץ של 3 ג'יגה פשוט לא יימסר
     assert "_account_rested" in inspect.getsource(botjob._via_storage)
-    assert "_account_rested" not in inspect.getsource(botjob._relay_video)
+    assert "_account_rested" not in (inspect.getsource(botjob._relay_video) + inspect.getsource(botjob._relay_with))
 
 
 @check("בקשות קבצים הולכות לכתובת ה-DC שטלגרם ייעד לקבצים")
@@ -2060,7 +2060,7 @@ def _full_resolution_cover():
 
     # מסלול החשבון: video_cover מקבל InputPhoto ואינו כפוף לתקרת
     # 320 הפיקסלים שחלה על thumbnail
-    relay = inspect.getsource(botjob._relay_video)
+    relay = (inspect.getsource(botjob._relay_video) + inspect.getsource(botjob._relay_with))
     assert "video_cover" in relay, "מסלול החשבון אינו שולח עטיפה מלאה"
     assert "InputMediaUploadedPhoto" in relay, "העטיפה אינה מועלית כתמונה"
     # וכשל בשדה הזה אינו שווה סרט שלא נמסר אחרי ארבעים דקות צריבה
@@ -2092,7 +2092,7 @@ def _upload_progress_not_clobbered():
     assert "if pulse is not None:" in body, "ביטול הדופק יקרוס כשאין דופק"
 
     # ומסלול החשבון באמת מדווח כמה מתוך כמה, ולא רק אחוז
-    relay = inspect.getsource(botjob._relay_video)
+    relay = (inspect.getsource(botjob._relay_video) + inspect.getsource(botjob._relay_with))
     assert "/{total / 1048576" in relay or "מתוך" in relay, \
         "אין דיווח של כמה מתוך כמה"
 
@@ -5276,6 +5276,60 @@ def _idle_learning_is_polite() -> None:
         (config.MEMORY_PATH, config.IDLE_QUIET, config.IDLE_DAILY,
          config.IDLE_LEARN, gemini.ask_json, gemini.waiting_for_key) = was
         shutil.rmtree(folder, ignore_errors=True)
+
+
+@check("הורדה בלבד: רק למנהל, ורק בקישור")
+def _raw_download_is_owner_only() -> None:
+    from zovexsub import botmenu
+
+    was = config.BOT_OWNER
+    config.BOT_OWNER = 8658294616
+    try:
+        def has_raw(chat, link):
+            _, keys = botmenu.source_screen(chat, link=link)
+            return any(data == "src:raw" for row in keys for _, data in row)
+
+        assert has_raw(8658294616, True)
+        assert not has_raw(8658294616, False)     # קובץ שנשלח: אין הורדה
+        assert not has_raw(1179463907, True)      # מורשה אחר: לא רואה
+    finally:
+        config.BOT_OWNER = was
+    source = Path("zovexsub/botmenu.py").read_text(encoding="utf-8")
+    # וגם לחיצה מזויפת נחסמת, לא רק הכפתור מוסתר
+    assert 'if choice.source == "raw":\n            who, _, _ = _who(query)' \
+        in source
+
+
+@check("העלאה שנכשלה מהחשבון הרגיל עוברת ל-Premium")
+def _lite_failure_falls_back() -> None:
+    from zovexsub import botapi, botjob
+
+    tried: list[str] = []
+    was = (botapi.uploader, botapi.premium, botjob._relay_with)
+
+    async def relay(user, which, *rest):
+        tried.append(which)
+        return which == "Premium"
+
+    botapi.uploader = lambda size, premium: ("LITE", "רגיל")
+    botapi.premium = lambda: "PREMIUM"
+    botjob._relay_with = relay
+    try:
+        import tempfile
+        f = Path(tempfile.mktemp())
+        f.write_bytes(b"x" * 10)
+        ok = asyncio.run(botjob._relay_video(1, f, {}, {}, None, None))
+        f.unlink()
+    finally:
+        botapi.uploader, botapi.premium, botjob._relay_with = was
+    assert ok and tried == ["רגיל", "Premium"], tried
+
+
+@check("קובץ שירד בלי שמע יורד שוב עם וידאו ושמע בנפרד")
+def _silent_download_is_retried() -> None:
+    source = Path("zovexsub/fetch.py").read_text(encoding="utf-8")
+    assert "if not await media.audio_tracks(got)" in source
+    assert 'bv*[height<={height.group(1)}]+ba/bv*+ba' in source
 
 
 def main() -> int:

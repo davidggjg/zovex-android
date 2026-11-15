@@ -513,6 +513,11 @@ async def run(choice) -> None:
             pipeline.cleanup(work)
             return
 
+        if choice.source == "raw":
+            await _deliver_raw(chat_id, source, work, screen)
+            pipeline.cleanup(work)
+            return
+
         if choice.source in ("linked", "linked_raw"):
             # הכתוביות כבר קיימות בקישור, והתזמונים שלהן נכונים.
             # אין כאן תמלול בכלל: לא Groq, לא ג'מיני, ואף אחת
@@ -1089,8 +1094,34 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         pipeline.cleanup(work)
 
 
+async def _deliver_raw(chat_id, source: Path, work: Path, screen) -> None:
+    """מעלה את הקובץ שירד כמו שהוא: בלי קידוד, בלי כתוביות. למנהל בלבד."""
+    info = await media.probe(source)
+    stream = next((s for s in info.get("streams", [])
+                   if s.get("codec_type") == "video"), {})
+    poster = await media.poster(source, work)
+    size_gb = source.stat().st_size / 1024 ** 3
+    log.info("הורדה בלבד: %.2fGB, %sx%s", size_gb,
+             stream.get("width"), stream.get("height"))
+    await screen.show(f"📤 מעלה כמו שהוא · {size_gb:.2f}GB", force=True)
+    relayed = await _relay_video(chat_id, source, info, stream, poster,
+                                 screen, caption="⬇️ הורדה מקישור")
+    if not relayed:
+        if source.stat().st_size > localbot.MAX_BYTES:
+            raise RuntimeError(
+                f"{size_gb:.2f}GB מעל תקרת הבוט, והמסירה דרך ערוץ "
+                "האחסון לא זמינה.")
+        await localbot.send_video(
+            chat_id, source, caption="⬇️ הורדה מקישור",
+            duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
+            width=int(stream.get("width", 0) or 0),
+            height=int(stream.get("height", 0) or 0), thumb=poster)
+    await screen.show("✅ הועלה", force=True)
+
+
 async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
-                       thumb, screen: "Screen", full_cover=None) -> bool:
+                       thumb, screen: "Screen", full_cover=None,
+                       caption: str = "🔥 וידאו עם כתוביות צרובות") -> bool:
     """מעלה מחשבון משתמש לערוץ האחסון, והבוט מעביר משם. מחזיר הצלחה.
 
     לבוט יש תקרת העלאה קשיחה, ומעליה הוא פשוט מסרב — "נדרש חשבון
@@ -1104,6 +1135,24 @@ async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
     """
     size = dst.stat().st_size
     user, which = botapi.uploader(size, botapi.premium())
+    log.info("העלאה: %.2fGB ← חשבון %s", size / 1024 ** 3, which)
+    first = await _relay_with(user, which, chat_id, dst, info, stream,
+                              thumb, screen, full_cover, caption)
+    if first or which != "רגיל" or botapi.premium() is None:
+        return first
+    # החשבון הרגיל נכשל — לרוב כי אינו חבר בערוץ האחסון. קודם זה נפל
+    # ישר לבוט, בלי שום סימן, ונראה כאילו הרגיל פשוט לא מעלה כלום
+    log.warning("ההעלאה מהחשבון הרגיל נכשלה — מנסה מחשבון Premium")
+    return await _relay_with(botapi.premium(), "Premium", chat_id, dst,
+                             info, stream, thumb, screen, full_cover,
+                             caption)
+
+
+async def _relay_with(user, which: str, chat_id, dst: Path, info: dict,
+                      stream: dict, thumb, screen: "Screen", full_cover,
+                      caption: str) -> bool:
+    """מעלה מחשבון אחד מסוים לערוץ האחסון, והבוט מעביר. מחזיר הצלחה."""
+    size = dst.stat().st_size
     if user is None or not config.STORAGE_CHAT:
         log.info("אין מסלול אחסון להעלאה (חשבון=%s, ערוץ=%s)",
                  which if user else "אין", config.STORAGE_CHAT or "לא הוגדר")
@@ -1140,7 +1189,7 @@ async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
     attributes = fastio.video_attributes(
         dst, seconds, int(stream.get("width", 0) or 0),
         int(stream.get("height", 0) or 0))
-    common = dict(caption="🔥 וידאו עם כתוביות צרובות",
+    common = dict(caption=caption,
                   supports_streaming=True, attributes=attributes,
                   thumb=str(thumb) if thumb else None)
     async def with_cover(handle):

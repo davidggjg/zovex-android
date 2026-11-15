@@ -505,14 +505,32 @@ async def download(url: str, work: Path, on_progress=None,
         except FetchError as exc:
             log.warning("cobalt נכשל (%s), עוברים ל-yt-dlp", exc)
     try:
-        return await _ytdlp(url, work, on_progress, fmt)
+        got = await _ytdlp(url, work, on_progress, fmt)
     except StalePlayer:
         # yt-dlp עודכן באמצע הכישלון. ניסיון אחד נוסף, ורק אחד:
         # אם גם הגרסה החדשה נכשלת זו כבר לא בעיית גרסה
         log.warning("מנסה שוב עם הגרסה המעודכנת")
         for leftover in work.glob("source.*"):
             leftover.unlink(missing_ok=True)
-        return await _ytdlp(url, work, on_progress, fmt)
+        got = await _ytdlp(url, work, on_progress, fmt)
+    # קישורי HLS (m3u8) מחזיקים את השמע כרצועה נפרדת. כשהתבנית נופלת
+    # ל-best[height<=…] יורד וידאו בלבד — וסרט שקט. נבדק כאן ולא בונים
+    # על התבנית: אם אין שמע, מורידים שוב עם בקשה מפורשת לווידאו ולשמע
+    if not await media.audio_tracks(got) and "+ba" not in (fmt or ""):
+        log.warning("הקובץ שירד בלי שמע — מוריד שוב וידאו ושמע בנפרד")
+        for stale in work.glob("source.*"):
+            stale.unlink(missing_ok=True)
+        height = re.search(r"height<=(\d+)", fmt or "")
+        again = (f"bv*[height<={height.group(1)}]+ba/bv*+ba" if height
+                 else "bv*+ba")
+        got = await _audible(url, work, on_progress, again)
+    return got
+
+
+async def _audible(url: str, work: Path, on_progress, fmt: str) -> Path:
+    """הורדה חוזרת שדורשת שמע במפורש. נפרדת כדי שהניסיון החוזר אחרי
+    עדכון yt-dlp יישאר יחיד ב-download, ולא יתערבב עם זה"""
+    return await _ytdlp(url, work, on_progress, fmt)
 
 
 async def _cobalt(url: str, work: Path, on_progress=None) -> Path:

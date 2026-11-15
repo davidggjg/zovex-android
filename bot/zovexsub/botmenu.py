@@ -172,7 +172,8 @@ def is_hebrew_code(code: str) -> bool:
 
 
 def source_screen(chat_id, note: str = "",
-                  subs: list | None = None) -> tuple[str, list]:
+                  subs: list | None = None,
+                  link: bool = False) -> tuple[str, list]:
     """מסך הפתיחה: מה נבחר, ושתי דרכים להתחיל.
 
     קודם נשאלו חמש שאלות בכל פרק, באותן תשובות בדיוק. ההגדרות
@@ -189,6 +190,10 @@ def source_screen(chat_id, note: str = "",
             f"{prefs.summary(saved)}\n\n"
             "מה לעשות עם הכתוביות?")
     keys = []
+    # הורדה בלבד, בלי קידוד ובלי כתוביות — רק למנהל. מי שאינו המנהל
+    # אינו רואה את הכפתור בכלל, וגם לחיצה מזויפת נחסמת ב-_press
+    if link and allowlist.owner() and int(chat_id) == allowlist.owner():
+        keys.append([("⬇️ רק הורדה — בלי קידוד (רק לך)", "src:raw")])
     # כתוביות שכבר קיימות בקישור קודמות לכל השאר: התזמונים שלהן
     # נכונים, וזה הדבר שהכי קשה לנו לייצר. קישור שיש לו כתוביות
     # אינו צריך תמלול בכלל — ואיתו גם אף אחת מההזיות שלו
@@ -333,7 +338,7 @@ async def greet_link(chat_id, url: str) -> None:
 
     if single:
         # ישר למסך הבחירה. אין איכויות ואין שפות לבחור מהן
-        text, keys = source_screen(chat_id)
+        text, keys = source_screen(chat_id, link=True)
         await localbot.edit(chat_id, message_id, text,
                             buttons=localbot.keyboard(keys))
         return
@@ -385,7 +390,8 @@ async def _after_quality(choice, message_id: int, note: str = "") -> None:
                                 voice_keys(choice.voices)))
         return
     text, keys = source_screen(choice.chat_id, note,
-                               getattr(choice, "subs", None))
+                               getattr(choice, "subs", None),
+                               link=bool(choice.url))
     await localbot.edit(choice.chat_id, message_id, text,
                         buttons=localbot.keyboard(keys))
 
@@ -478,7 +484,9 @@ async def _press(query: dict) -> None:
                        if v["id"] == choice.audio), None)
         log.info("שפת שמע נבחרה: %s",
                  chosen["name"] if chosen else "ברירת מחדל")
-        text, keys = source_screen(choice.chat_id)
+        text, keys = source_screen(choice.chat_id,
+                                   subs=getattr(choice, "subs", None),
+                                   link=bool(choice.url))
         await localbot.edit(choice.chat_id, message_id, text,
                             buttons=localbot.keyboard(keys))
         return
@@ -491,6 +499,13 @@ async def _press(query: dict) -> None:
 
     if data.startswith("src:"):
         choice.source = data.split(":", 1)[1]
+        if choice.source == "raw":
+            who, _, _ = _who(query)
+            if not allowlist.owner() or who != allowlist.owner():
+                log.warning("לחיצה על הורדה בלבד ממי שאינו המנהל: %s", who)
+                return
+            # הורדה בלבד אינה מבקשת תמונה ואינה צורבת דבר
+            choice.cover = ""
         # ההגדרות השמורות נטענות כאן ולא בתחילת השיחה: מי שנכנס
         # ל"שנה הגדרות" כבר עדכן אותן בעצמו, ואין לדרוס אותו
         saved = prefs.get(choice.chat_id)
@@ -504,7 +519,15 @@ async def _press(query: dict) -> None:
                          "לעברית והתזמונים שלו יישמרו.",
             "linked": "מושך את הכתוביות מהקישור ומתרגם לעברית…",
             "linked_raw": "מושך את הכתוביות מהקישור וצורב כמו שהן…",
+            "raw": "מוריד ומעלה לך כמו שהוא, בלי קידוד…",
         }.get(choice.source, "ממשיך…")
+        if choice.source == "raw":
+            await localbot.edit(choice.chat_id, message_id,
+                                f"⬇️ <b>{label}</b>")
+            _open.pop(message_id, None)
+            if on_choice:
+                _detach(on_choice(choice), "הורדה בלבד")
+            return
         # הסיכום נשאר על המסך: אחרת אי אפשר לדעת באילו הגדרות זה רץ
         await localbot.edit(
             choice.chat_id, message_id,
@@ -543,7 +566,9 @@ async def _press(query: dict) -> None:
     if choice.done is None:
         # הגענו לכאן מ"שנה הגדרות" לפני שנבחר מסלול — חוזרים למסך
         # הפתיחה, שמציג עכשיו את מה שנבחר זה עתה
-        text, keys = source_screen(choice.chat_id)
+        text, keys = source_screen(choice.chat_id,
+                                   subs=getattr(choice, "subs", None),
+                                   link=bool(choice.url))
         await localbot.edit(choice.chat_id, message_id, text,
                             buttons=localbot.keyboard(keys))
         return
