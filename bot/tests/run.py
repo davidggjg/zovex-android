@@ -2484,7 +2484,7 @@ def _browser_headers():
     # ושני מסלולי הקריאה ל-yt-dlp מקבלים אותן — גם בדיקת האיכויות
     # וגם ההורדה. אחרת התפריט יוצא ריק וההורדה נחסמת
     assert "_browser_args(url)" in inspect.getsource(fetch.heights)
-    assert "_browser_args(url, mode)" in inspect.getsource(fetch._ytdlp_once)
+    assert "_browser_args(url, mode, proxy)" in inspect.getsource(fetch._ytdlp_once)
 
     # ואחרי 403 יש סולם: בלי כותרות בכלל, ו-Referer של כאן. נמדד אצל
     # המשתמש: קישור של כאן נכשל עם Referer של רשת ההפצה ועבר בלעדיו
@@ -5409,6 +5409,47 @@ def _proxy_scoped_to_hosts() -> None:
     finally:
         (config.FETCH_PROXY, config.FETCH_PROXY_HOSTS,
          config.FETCH_ARIA2) = was
+
+
+@check("סרטון חסום בישראל יורד שוב דרך הפרוקסי של חו\"ל")
+def _geo_blocked_retries_abroad() -> None:
+    import tempfile
+    from zovexsub import fetch
+
+    used: list[str] = []
+    was = (fetch._ytdlp_once, config.FETCH_PROXY_GEO)
+
+    async def once(url, work, on_progress=None, fmt="", mode="origin",
+                   proxy=""):
+        used.append(proxy)
+        if not proxy:
+            raise fetch.FetchError(fetch._explain(
+                "ERROR: The uploader has not made this video available "
+                "in your country", url))
+        return Path(work) / "source.mp4"
+
+    fetch._ytdlp_once = once
+    work = Path(tempfile.mkdtemp())
+    try:
+        config.FETCH_PROXY_GEO = "socks5://127.0.0.1:25345"
+        got = asyncio.run(fetch._ytdlp("https://youtu.be/AvhXk8j-Vh4", work))
+        assert got.name == "source.mp4"
+        assert used == ["", "socks5://127.0.0.1:25345"], used
+        # בלי פרוקסי של חו"ל: נכשל עם הסבר, בלי ניסיון נוסף
+        used.clear()
+        config.FETCH_PROXY_GEO = ""
+        try:
+            asyncio.run(fetch._ytdlp("https://youtu.be/AvhXk8j-Vh4", work))
+            raise AssertionError("לא נכשל")
+        except fetch.FetchError as exc:
+            assert "FETCH_PROXY_GEO" in str(exc), exc
+        assert used == [""], used
+        # והפרוקסי של חו"ל מגיע ל-yt-dlp רק כשמבקשים אותו
+        assert "socks5://x:1" in fetch._browser_args(
+            "https://youtu.be/x", proxy="socks5://x:1")
+    finally:
+        fetch._ytdlp_once, config.FETCH_PROXY_GEO = was
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def main() -> int:

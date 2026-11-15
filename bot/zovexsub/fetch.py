@@ -119,7 +119,8 @@ HEADER_LADDER = ("origin", "bare", "kan")
 _KAN = "https://www.kan.org.il/"
 
 
-def _browser_args(url: str, mode: str = "origin") -> list[str]:
+def _browser_args(url: str, mode: str = "origin",
+                  proxy: str = "") -> list[str]:
     """כותרות שגורמות לבקשה להיראות כמו דפדפן.
 
     רשתות הפצה חוסמות בקשה שאינה נראית כך. נמדד על קישור m3u8 שעבד
@@ -131,7 +132,9 @@ def _browser_args(url: str, mode: str = "origin") -> list[str]:
     שובר מסלול שעובד
     """
     args: list[str] = []
-    if proxied(url):
+    if proxy:
+        args += ["--proxy", proxy]
+    elif proxied(url):
         args += ["--proxy", config.FETCH_PROXY]
     if _is_youtube(url):
         # יוטיוב דורשת פתרון אתגר JavaScript ("n challenge") לפני
@@ -671,6 +674,14 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
             return await _ytdlp_once(url, work, on_progress, fmt, mode)
         except FetchError as exc:
             text = str(exc)
+            if _geo_blocked(text) and config.FETCH_PROXY_GEO:
+                # חסום בישראל: ניסיון אחד דרך פרוקסי במדינה אחרת
+                log.warning("הסרטון חסום גיאוגרפית — מנסה דרך הפרוקסי "
+                            "של חו\"ל")
+                for leftover in work.glob("source.*"):
+                    leftover.unlink(missing_ok=True)
+                return await _ytdlp_once(url, work, on_progress, fmt, mode,
+                                         proxy=config.FETCH_PROXY_GEO)
             if "403" not in text or step == len(ladder) - 1:
                 raise
             log.warning("403 עם כותרות '%s' — מנסה '%s'", mode,
@@ -680,8 +691,16 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
     raise FetchError("ההורדה נכשלה")
 
 
+def _geo_blocked(text: str) -> bool:
+    low = (text or "").lower()
+    # ההודעה מגיעה כבר מתורגמת ב-_explain, ולכן גם הנוסח העברי שלה
+    return ("available in your country" in low or "geo restrict" in low
+            or "חסום לצפייה מישראל" in text)
+
+
 async def _ytdlp_once(url: str, work: Path, on_progress=None,
-                      fmt: str = "", mode: str = "origin") -> Path:
+                      fmt: str = "", mode: str = "origin",
+                      proxy: str = "") -> Path:
     """מוריד את הווידאו הטוב ביותר שנכנס במגבלה, וממזג לקובץ אחד."""
     if not available():
         raise FetchError("yt-dlp לא מותקן על השרת. התקנה: pip install yt-dlp")
@@ -699,7 +718,7 @@ async def _ytdlp_once(url: str, work: Path, on_progress=None,
         log.warning("קובץ העוגיות לא נמצא ב-%s", cookies)
         cookies = None
 
-    cmd = _command() + _browser_args(url, mode) + [
+    cmd = _command() + _browser_args(url, mode, proxy) + [
         # --no-config: קובץ הגדרות אישי בשרת שינה התנהגות בלי שאיש ידע.
         # -4: רזולוציית IPv6 נכשלת בשקט אצל חלק מהספקים ועולה בזמן.
         # player_client: הלקוח שיוטיוב מגישה לו את הנגן. הערכים משתנים
@@ -959,15 +978,15 @@ def _explain(stderr: str, url: str = "") -> str:
     # נמדד אצל המשתמש: heights ו-subtitle_tracks חזרו ריקים, והוא
     # חיפש את התקלה אצלנו שעה שלמה
     if "available in your country" in low or "geo restrict" in low:
-        if config.FETCH_PROXY:
-            return ("הסרטון חסום לצפייה מישראל, והפרוקסי שהוגדר "
-                    f"({config.FETCH_PROXY}) לא עקף את זה — כנראה שגם "
-                    "הוא יושב במדינה חסומה.")
+        if config.FETCH_PROXY_GEO:
+            return ("הסרטון חסום לצפייה מישראל, וגם הפרוקסי של חו\"ל "
+                    "לא עקף את זה — כנראה שגם הוא יושב במדינה חסומה, "
+                    "או שיוטיוב דורשת ממנו אימות שאינו בוט.")
         return ("הסרטון הזה חסום לצפייה מישראל. המעלה הגביל את "
                 "המדינות שבהן הוא זמין.\n"
                 "זו אינה תקלה אצלנו: עוגיות ו-PO token לא יעזרו כאן.\n"
-                "הפתרון היחיד הוא לצאת ממדינה מותרת — "
-                "הגדר FETCH_PROXY לשרת במדינה כזו.")
+                "הפתרון הוא לצאת ממדינה מותרת — "
+                "הגדר FETCH_PROXY_GEO לפרוקסי במדינה כזו.")
     if tube and ("429" in low or "too many requests" in low):
         return ("יוטיוב חוסם זמנית את כתובת השרת (429). נסה שוב בעוד "
                 "כמה דקות, או הוסף קובץ עוגיות ב-FETCH_COOKIES.")
