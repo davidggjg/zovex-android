@@ -2499,6 +2499,18 @@ def _blocked_link_explained():
     import inspect
     from zovexsub import fetch
 
+    # ההודעה כשאין פרוקסי. על השרת יש FETCH_PROXY ב-.env, והבדיקה
+    # נפלה שם בגלל שההודעה עם פרוקסי שונה בכוונה
+    _saved = (config.FETCH_PROXY, config.FETCH_PROXY_HOSTS)
+    config.FETCH_PROXY, config.FETCH_PROXY_HOSTS = "", []
+    try:
+        _blocked_link_explained_body(fetch, inspect)
+    finally:
+        config.FETCH_PROXY, config.FETCH_PROXY_HOSTS = _saved
+
+
+def _blocked_link_explained_body(fetch, inspect):
+
     # נמדד בשרת: curl חשוף, curl עם UA של דפדפן, yt-dlp נקי ו-yt-dlp
     # עם aria2c — כולם 403. אותו קישור בדיוק עובר מטלפון סלולרי באותה
     # עיר. המסנן פועל על ה-IP, לפני שהבקשה נקראת
@@ -4185,7 +4197,13 @@ def _geo_block_is_explained() -> None:
     # את התקלה בקוד שלנו שעה שלמה, והסיבה הייתה שהמעלה חסם את ישראל
     raw = ("ERROR: [youtube] X: The uploader has not made this video "
            "available in your country")
-    said = fetch._explain(raw, "https://youtu.be/X")
+    # ההודעה כשאין פרוקסי. על השרת יש פרוקסי ב-.env, והבדיקה נפלה שם
+    saved = (config.FETCH_PROXY, config.FETCH_PROXY_GEO)
+    config.FETCH_PROXY, config.FETCH_PROXY_GEO = "", ""
+    try:
+        said = fetch._explain(raw, "https://youtu.be/X")
+    finally:
+        config.FETCH_PROXY, config.FETCH_PROXY_GEO = saved
     assert "חסום" in said and "ישראל" in said, said
     assert "FETCH_PROXY" in said, said
     # ואומרים במפורש מה לא יעזור, כדי שלא ירדוף אחרי הפתרון הלא נכון
