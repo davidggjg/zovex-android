@@ -915,7 +915,7 @@ def _fetch_disk_progress():
         got = fetch.disk_bytes(work)
         assert got == 6200, got
 
-    source = inspect.getsource(fetch._ytdlp)
+    source = inspect.getsource(fetch._ytdlp_once)
     assert "disk_bytes(work)" in source, "אין שעון דיסק ב-_ytdlp"
     assert "FETCH_STALL" in source, "אין זיהוי תקיעה"
 
@@ -2484,7 +2484,14 @@ def _browser_headers():
     # ושני מסלולי הקריאה ל-yt-dlp מקבלים אותן — גם בדיקת האיכויות
     # וגם ההורדה. אחרת התפריט יוצא ריק וההורדה נחסמת
     assert "_browser_args(url)" in inspect.getsource(fetch.heights)
-    assert "_browser_args(url)" in inspect.getsource(fetch._ytdlp)
+    assert "_browser_args(url, mode)" in inspect.getsource(fetch._ytdlp_once)
+
+    # ואחרי 403 יש סולם: בלי כותרות בכלל, ו-Referer של כאן. נמדד אצל
+    # המשתמש: קישור של כאן נכשל עם Referer של רשת ההפצה ועבר בלעדיו
+    assert "--referer" not in fetch._browser_args(link, "bare")
+    kan = fetch._browser_args(link, "kan")
+    assert "https://www.kan.org.il/" in kan, kan
+    assert fetch.HEADER_LADDER[0] == "origin"
 
 
 @check("חסימת 403 מוסברת, ואפשר לנתב דרך פרוקסי")
@@ -5330,6 +5337,53 @@ def _silent_download_is_retried() -> None:
     source = Path("zovexsub/fetch.py").read_text(encoding="utf-8")
     assert "if not await media.audio_tracks(got)" in source
     assert 'bv*[height<={height.group(1)}]+ba/bv*+ba' in source
+
+
+@check("אחרי 403 ההורדה מנסה כותרות אחרות לפני שהיא מוותרת")
+def _forbidden_tries_header_ladder() -> None:
+    import tempfile
+    from zovexsub import fetch
+
+    tried: list[str] = []
+    was = fetch._ytdlp_once
+
+    async def once(url, work, on_progress=None, fmt="", mode="origin"):
+        tried.append(mode)
+        if mode != "kan":
+            raise fetch.FetchError("HTTP Error 403: Forbidden")
+        return Path(work) / "source.mp4"
+
+    fetch._ytdlp_once = once
+    try:
+        work = Path(tempfile.mkdtemp())
+        got = asyncio.run(fetch._ytdlp(
+            "https://r.il.cdn-redge.media/x/playlist.m3u8", work))
+        assert got.name == "source.mp4" and tried == ["origin", "bare",
+                                                     "kan"], tried
+        # שגיאה שאינה 403 אינה מנסה שוב
+        tried.clear()
+
+        async def other(url, work, on_progress=None, fmt="", mode="origin"):
+            tried.append(mode)
+            raise fetch.FetchError("Private video")
+
+        fetch._ytdlp_once = other
+        try:
+            asyncio.run(fetch._ytdlp("https://e.com/a.m3u8", work))
+        except fetch.FetchError:
+            pass
+        assert tried == ["origin"], tried
+        # וביוטיוב אין סולם — שם הכותרות חלק מזרימת האימות
+        tried.clear()
+        fetch._ytdlp_once = once
+        try:
+            asyncio.run(fetch._ytdlp("https://youtu.be/x", work))
+        except fetch.FetchError:
+            pass
+        assert tried == ["origin"], tried
+        shutil.rmtree(work, ignore_errors=True)
+    finally:
+        fetch._ytdlp_once = was
 
 
 def main() -> int:

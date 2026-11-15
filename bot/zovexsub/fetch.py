@@ -95,7 +95,16 @@ def _format_for(url: str, fmt: str = "") -> str:
     return fmt or config.FETCH_FORMAT
 
 
-def _browser_args(url: str) -> list[str]:
+# סולם כותרות לקישורים שאינם יוטיוב, לפי הסדר שבו מנסים אחרי 403.
+# נמדד אצל המשתמש: קישור m3u8 של כאן החזיר 403 מהשרת, ואותו קישור
+# עבר משרת אחר בישראל — כלומר לא חסימת IP ולא חסימה גיאוגרפית. מה
+# שהיה שונה הוא הכותרות: אנחנו שלחנו Referer ו-Origin של רשת ההפצה
+# עצמה, ורשת הפצה שמגנה מפני קישור חיצוני מסרבת בדיוק לזה
+HEADER_LADDER = ("origin", "bare", "kan")
+_KAN = "https://www.kan.org.il/"
+
+
+def _browser_args(url: str, mode: str = "origin") -> list[str]:
     """כותרות שגורמות לבקשה להיראות כמו דפדפן.
 
     רשתות הפצה חוסמות בקשה שאינה נראית כך. נמדד על קישור m3u8 שעבד
@@ -124,8 +133,11 @@ def _browser_args(url: str) -> list[str]:
         if config.YTDLP_COMPONENTS:
             args += ["--remote-components", config.YTDLP_COMPONENTS]
         return args
+    if mode == "bare":
+        # בלי כותרות בכלל — כמו שנבדק בהצלחה מהשרת האחר
+        return args
     where = urllib.parse.urlsplit(url)
-    origin = (config.FETCH_REFERER
+    origin = (_KAN if mode == "kan" else config.FETCH_REFERER
               or (f"{where.scheme}://{where.netloc}/"
                   if where.scheme and where.netloc else ""))
     if config.FETCH_UA:
@@ -634,6 +646,24 @@ def _note_success() -> None:
 
 async def _ytdlp(url: str, work: Path, on_progress=None,
                  fmt: str = "") -> Path:
+    """מוריד, ואחרי 403 מנסה שוב עם כותרות אחרות. ראו HEADER_LADDER."""
+    ladder = ("origin",) if _is_youtube(url) else HEADER_LADDER
+    for step, mode in enumerate(ladder):
+        try:
+            return await _ytdlp_once(url, work, on_progress, fmt, mode)
+        except FetchError as exc:
+            text = str(exc)
+            if "403" not in text or step == len(ladder) - 1:
+                raise
+            log.warning("403 עם כותרות '%s' — מנסה '%s'", mode,
+                        ladder[step + 1])
+            for leftover in work.glob("source.*"):
+                leftover.unlink(missing_ok=True)
+    raise FetchError("ההורדה נכשלה")
+
+
+async def _ytdlp_once(url: str, work: Path, on_progress=None,
+                      fmt: str = "", mode: str = "origin") -> Path:
     """מוריד את הווידאו הטוב ביותר שנכנס במגבלה, וממזג לקובץ אחד."""
     if not available():
         raise FetchError("yt-dlp לא מותקן על השרת. התקנה: pip install yt-dlp")
@@ -651,7 +681,7 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
         log.warning("קובץ העוגיות לא נמצא ב-%s", cookies)
         cookies = None
 
-    cmd = _command() + _browser_args(url) + [
+    cmd = _command() + _browser_args(url, mode) + [
         # --no-config: קובץ הגדרות אישי בשרת שינה התנהגות בלי שאיש ידע.
         # -4: רזולוציית IPv6 נכשלת בשקט אצל חלק מהספקים ועולה בזמן.
         # player_client: הלקוח שיוטיוב מגישה לו את הנגן. הערכים משתנים
@@ -961,13 +991,15 @@ def _explain(stderr: str, url: str = "") -> str:
             return ("האתר חוסם את הבקשה (403), גם דרך הפרוקסי שהוגדר "
                     f"({config.FETCH_PROXY}). ייתכן שגם הוא מזוהה "
                     "ככתובת של שרת.")
-        return ("האתר חוסם את כתובת השרת (403).\n"
-                "זו חסימה לפי סוג הרשת ולא לפי מדינה: ספקי אחסון "
-                "חסומים, רשתות ביתיות וסלולריות לא. לכן אותו קישור "
-                "עובד בטלפון ונכשל כאן.\n"
-                "אפשרויות:\n"
-                "1. להוריד במכשיר ולשלוח את הקובץ לבוט\n"
-                "2. להגדיר FETCH_PROXY לכתובת פרוקסי ברשת ביתית")
+        return ("הקישור החזיר 403 (גישה נדחתה), גם אחרי שלושה ניסיונות "
+                "עם כותרות שונות.\n"
+                "סיבות אפשריות:\n"
+                "• הקישור פג תוקף — קישורי m3u8 תקפים לזמן קצר. העתק "
+                "קישור טרי ונסה שוב.\n"
+                "• האתר חוסם רשתות של שרתים. זה נמדד בעבר על רשת הפצה "
+                "אחרת, אבל לא כל אתר עושה את זה.\n"
+                "אפשרויות: לשלוח את הקובץ ישירות לבוט, או להגדיר "
+                "FETCH_PROXY לפרוקסי ברשת ביתית.")
     if "unsupported url" in low:
         return "הקישור הזה לא נתמך."
     if "private video" in low or "members-only" in low:

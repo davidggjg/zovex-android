@@ -504,8 +504,7 @@ async def _press(query: dict) -> None:
             if not allowlist.owner() or who != allowlist.owner():
                 log.warning("לחיצה על הורדה בלבד ממי שאינו המנהל: %s", who)
                 return
-            # הורדה בלבד אינה מבקשת תמונה ואינה צורבת דבר
-            choice.cover = ""
+            pass
         # ההגדרות השמורות נטענות כאן ולא בתחילת השיחה: מי שנכנס
         # ל"שנה הגדרות" כבר עדכן אותן בעצמו, ואין לדרוס אותו
         saved = prefs.get(choice.chat_id)
@@ -522,6 +521,10 @@ async def _press(query: dict) -> None:
             "raw": "מוריד ומעלה לך כמו שהוא, בלי קידוד…",
         }.get(choice.source, "ממשיך…")
         if choice.source == "raw":
+            # הורדה בלבד אינה מבקשת תמונה. כאן, ולא לפני טעינת ההגדרות
+            # השמורות: שם "כן" השמור דרס את זה, ונמדד אצל המשתמש —
+            # "שלח לי את התמונה לתצוגה המקדימה" על הורדה בלי קידוד
+            choice.cover = ""
             await localbot.edit(choice.chat_id, message_id,
                                 f"⬇️ <b>{label}</b>")
             _open.pop(message_id, None)
