@@ -2483,7 +2483,9 @@ def _browser_headers():
 
     # ושני מסלולי הקריאה ל-yt-dlp מקבלים אותן — גם בדיקת האיכויות
     # וגם ההורדה. אחרת התפריט יוצא ריק וההורדה נחסמת
-    assert "_browser_args(url)" in inspect.getsource(fetch.heights)
+    assert "_info_json(" in inspect.getsource(fetch.heights)
+    assert "_browser_args(url, proxy=proxy)" in inspect.getsource(
+        fetch._info_json)
     assert "_browser_args(url, mode, proxy)" in inspect.getsource(fetch._ytdlp_once)
 
     # ואחרי 403 יש סולם: בלי כותרות בכלל, ו-Referer של כאן. נמדד אצל
@@ -4215,10 +4217,15 @@ def _geo_block_is_explained() -> None:
     assert "חסום לצפייה מישראל" not in other, other
 
     # והקריאות שבדקו את הקישור כבר אינן בולעות את השגיאה
+    # כולן עוברות דרך _info_json, שקורא את השגיאה ומסביר אותה — ומנסה
+    # שוב דרך הפרוקסי של חו"ל כשהסרטון חסום בישראל
+    helper = inspect.getsource(fetch._info_json)
+    assert "stderr=asyncio.subprocess.PIPE" in helper
+    assert "_explain(" in helper
+    assert "FETCH_PROXY_GEO" in helper
     for name in ("heights", "subtitle_tracks", "audio_options"):
         flow = inspect.getsource(getattr(fetch, name))
-        assert "stderr=asyncio.subprocess.PIPE" in flow, name
-        assert "_explain(" in flow, f"{name} עדיין שותק על כישלון"
+        assert "_info_json(" in flow, f"{name} עדיין שותק על כישלון"
 
 
 @check("תקרת הזמן של קטע מתחשבת בכמה רצים במקביל")
@@ -5438,8 +5445,10 @@ def _geo_blocked_retries_abroad() -> None:
     was = (fetch._ytdlp_once, config.FETCH_PROXY_GEO)
 
     async def once(url, work, on_progress=None, fmt="", mode="origin",
-                   proxy=""):
+                   proxy="", cookies_ok=True):
         used.append(proxy)
+        # בחו"ל בלי העוגיות של החשבון הישראלי
+        assert not proxy or not cookies_ok
         if not proxy:
             raise fetch.FetchError(fetch._explain(
                 "ERROR: The uploader has not made this video available "

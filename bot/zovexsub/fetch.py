@@ -276,6 +276,44 @@ async def cookies_work(path: Path, timeout: float = 45.0) -> tuple[bool, str]:
     return False, (reason[-1][:200] if reason else "yt-dlp נכשל בלי הסבר")
 
 
+async def _info_json(url: str, timeout: float, what: str) -> bytes | None:
+    """קורא את פרטי הקישור מ-yt-dlp (-J), או None בכישלון.
+
+    סרטון שחסום בישראל נכשל כאן כמו בהורדה — ובלי ניסיון חוזר דרך
+    הפרוקסי של חו"ל, התפריט יצא בלי איכויות ובלי כתוביות. נמדד אצל
+    המשתמש: ההורדה עצמה עברה דרך הפרוקסי, אבל לא נשאל על איכות ולא
+    הוצעו כתוביות
+    """
+    async def attempt(proxy: str, cookies: bool):
+        cmd = _command() + _browser_args(url, proxy=proxy) + [
+            "-J", "--no-warnings", "--no-playlist", url]
+        if cookies and config.FETCH_COOKIES:
+            cmd += ["--cookies", config.FETCH_COOKIES]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=child_env())
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode, out, err.decode("utf-8", "replace")
+
+    try:
+        code, out, err = await attempt("", True)
+        if (code != 0 or not out) and _geo_blocked(err) \
+                and config.FETCH_PROXY_GEO:
+            log.info("%s: הסרטון חסום בישראל — קורא דרך הפרוקסי של חו\"ל",
+                     what)
+            code, out, err = await attempt(config.FETCH_PROXY_GEO, False)
+    except (asyncio.TimeoutError, OSError) as exc:
+        log.warning("%s נכשלה (%s)", what, exc)
+        return None
+    if code != 0 or not out:
+        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
+        # שום רמז למה. נמדד: שעה שלמה של חיפוש תקלה אצלנו
+        if err:
+            log.warning("קריאת הקישור נכשלה — %s", _explain(err, url))
+        return None
+    return out
+
+
 async def heights(url: str, timeout: float = 45.0) -> list[int]:
     """הרזולוציות שבאמת קיימות בקישור, מהגבוהה לנמוכה.
 
@@ -285,25 +323,8 @@ async def heights(url: str, timeout: float = 45.0) -> list[int]:
 
     כישלון אינו מפיל כלום: הקורא נופל לרשימה הקבועה
     """
-    cmd = _command() + _browser_args(url) + [
-        "-J", "--no-warnings", "--no-playlist", url]
-    if config.FETCH_COOKIES:
-        cmd += ["--cookies", config.FETCH_COOKIES]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=child_env())
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, OSError) as exc:
-        log.warning("בדיקת איכויות נכשלה (%s)", exc)
-        return []
-    if proc.returncode != 0 or not out:
-        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
-        # שום רמז למה. סרטון שחסום גיאוגרפית נראה בדיוק כמו סרטון
-        # בלי איכויות, והמשתמש חיפש את התקלה אצלנו. נמדד: שעה שלמה
-        if err:
-            log.warning("קריאת הקישור נכשלה — %s",
-                        _explain(err.decode("utf-8", "replace"), url))
+    out = await _info_json(url, timeout, "בדיקת איכויות")
+    if out is None:
         return []
     try:
         info = json.loads(out.decode("utf-8", "replace"))
@@ -335,25 +356,8 @@ async def subtitle_tracks(url: str, timeout: float = 45.0) -> list[dict]:
     כתוביות ידניות קודמות לאוטומטיות תמיד: האוטומטיות הן תמלול מכונה
     של יוטיוב, ואין להן יתרון על התמלול שלנו — חוץ מהתזמון
     """
-    cmd = _command() + _browser_args(url) + [
-        "-J", "--no-warnings", "--no-playlist", url]
-    if config.FETCH_COOKIES:
-        cmd += ["--cookies", config.FETCH_COOKIES]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=child_env())
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, OSError) as exc:
-        log.warning("בדיקת כתוביות נכשלה (%s)", exc)
-        return []
-    if proc.returncode != 0 or not out:
-        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
-        # שום רמז למה. סרטון שחסום גיאוגרפית נראה בדיוק כמו סרטון
-        # בלי איכויות, והמשתמש חיפש את התקלה אצלנו. נמדד: שעה שלמה
-        if err:
-            log.warning("קריאת הקישור נכשלה — %s",
-                        _explain(err.decode("utf-8", "replace"), url))
+    out = await _info_json(url, timeout, "בדיקת כתוביות")
+    if out is None:
         return []
     try:
         info = json.loads(out.decode("utf-8", "replace"))
@@ -457,25 +461,8 @@ async def audio_options(url: str, timeout: float = 45.0) -> list[dict]:
     ביותר לכל שפה, אחרת המשתמש היה מקבל שתים־עשרה כפתורים כדי
     לבחור בין שתי שפות
     """
-    cmd = _command() + _browser_args(url) + [
-        "-J", "--no-warnings", "--no-playlist", url]
-    if config.FETCH_COOKIES:
-        cmd += ["--cookies", config.FETCH_COOKIES]
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=child_env())
-        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, OSError) as exc:
-        log.warning("בדיקת שפות השמע נכשלה (%s)", exc)
-        return []
-    if proc.returncode != 0 or not out:
-        # השגיאה נזרקה עד כה ל-DEVNULL, והקורא קיבל רשימה ריקה בלי
-        # שום רמז למה. סרטון שחסום גיאוגרפית נראה בדיוק כמו סרטון
-        # בלי איכויות, והמשתמש חיפש את התקלה אצלנו. נמדד: שעה שלמה
-        if err:
-            log.warning("קריאת הקישור נכשלה — %s",
-                        _explain(err.decode("utf-8", "replace"), url))
+    out = await _info_json(url, timeout, "בדיקת שפות שמע")
+    if out is None:
         return []
     try:
         info = json.loads(out.decode("utf-8", "replace"))
@@ -681,7 +668,8 @@ async def _ytdlp(url: str, work: Path, on_progress=None,
                 for leftover in work.glob("source.*"):
                     leftover.unlink(missing_ok=True)
                 return await _ytdlp_once(url, work, on_progress, fmt, mode,
-                                         proxy=config.FETCH_PROXY_GEO)
+                                         proxy=config.FETCH_PROXY_GEO,
+                                         cookies_ok=False)
             if "403" not in text or step == len(ladder) - 1:
                 raise
             log.warning("403 עם כותרות '%s' — מנסה '%s'", mode,
@@ -700,7 +688,7 @@ def _geo_blocked(text: str) -> bool:
 
 async def _ytdlp_once(url: str, work: Path, on_progress=None,
                       fmt: str = "", mode: str = "origin",
-                      proxy: str = "") -> Path:
+                      proxy: str = "", cookies_ok: bool = True) -> Path:
     """מוריד את הווידאו הטוב ביותר שנכנס במגבלה, וממזג לקובץ אחד."""
     if not available():
         raise FetchError("yt-dlp לא מותקן על השרת. התקנה: pip install yt-dlp")
@@ -713,7 +701,8 @@ async def _ytdlp_once(url: str, work: Path, on_progress=None,
             "בינתיים אפשר לשלוח את הקובץ ישירות לבוט.")
 
     target = work / "source.%(ext)s"
-    cookies = Path(config.FETCH_COOKIES) if config.FETCH_COOKIES else None
+    cookies = (Path(config.FETCH_COOKIES)
+               if config.FETCH_COOKIES and cookies_ok else None)
     if cookies and not cookies.exists():
         log.warning("קובץ העוגיות לא נמצא ב-%s", cookies)
         cookies = None
