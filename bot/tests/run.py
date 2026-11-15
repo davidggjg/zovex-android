@@ -5386,6 +5386,31 @@ def _forbidden_tries_header_ladder() -> None:
         fetch._ytdlp_once = was
 
 
+@check("פרוקסי לאתרים מסוימים בלבד, ו-aria2c אינו רץ דרך SOCKS")
+def _proxy_scoped_to_hosts() -> None:
+    from zovexsub import fetch
+
+    was = (config.FETCH_PROXY, config.FETCH_PROXY_HOSTS, config.FETCH_ARIA2)
+    try:
+        config.FETCH_PROXY = "socks5://127.0.0.1:1080"
+        config.FETCH_PROXY_HOSTS = ["cdn-redge.media"]
+        config.FETCH_ARIA2 = "on"
+        kan = ("https://n-121-11.il.cdn-redge.media/webcache/x/"
+               "playlist.m3u8")
+        assert fetch.proxied(kan)
+        assert "--proxy" in fetch._browser_args(kan)
+        assert not fetch.proxied("https://www.youtube.com/watch?v=x")
+        assert "--proxy" not in fetch._browser_args("https://youtu.be/x")
+        assert not fetch.proxied("https://evil-cdn-redge.media.com/x")
+        assert fetch._aria2_args(kan) == []
+        # בלי רשימה: הכל דרך הפרוקסי, כמו קודם
+        config.FETCH_PROXY_HOSTS = []
+        assert fetch.proxied("https://youtu.be/x")
+    finally:
+        (config.FETCH_PROXY, config.FETCH_PROXY_HOSTS,
+         config.FETCH_ARIA2) = was
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

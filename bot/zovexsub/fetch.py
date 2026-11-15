@@ -95,6 +95,21 @@ def _format_for(url: str, fmt: str = "") -> str:
     return fmt or config.FETCH_FORMAT
 
 
+def proxied(url: str) -> bool:
+    """האם הקישור הזה יורד דרך הפרוקסי.
+
+    בלי FETCH_PROXY_HOSTS — כל קישור, כמו קודם. איתו — רק האתרים
+    שברשימה
+    """
+    if not config.FETCH_PROXY:
+        return False
+    if not config.FETCH_PROXY_HOSTS:
+        return True
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h)
+               for h in config.FETCH_PROXY_HOSTS)
+
+
 # סולם כותרות לקישורים שאינם יוטיוב, לפי הסדר שבו מנסים אחרי 403.
 # נמדד אצל המשתמש: קישור m3u8 של כאן החזיר 403 מהשרת, ואותו קישור
 # עבר משרת אחר בישראל — כלומר לא חסימת IP ולא חסימה גיאוגרפית. מה
@@ -116,9 +131,7 @@ def _browser_args(url: str, mode: str = "origin") -> list[str]:
     שובר מסלול שעובד
     """
     args: list[str] = []
-    if config.FETCH_PROXY:
-        # הפרוקסי חל על כל קישור, גם יוטיוב: החסימה היא על ה-IP של
-        # השרת ולא על האתר הספציפי
+    if proxied(url):
         args += ["--proxy", config.FETCH_PROXY]
     if _is_youtube(url):
         # יוטיוב דורשת פתרון אתגר JavaScript ("n challenge") לפני
@@ -148,13 +161,18 @@ def _browser_args(url: str, mode: str = "origin") -> list[str]:
     return args
 
 
-def _aria2_args() -> list[str]:
+def _aria2_args(url: str = "") -> list[str]:
     """מעביר את ההורדה ל-aria2c אם הוא מותקן.
 
     aria2c פותח כמה חיבורים לאותו קובץ ומנצל את הקו טוב יותר מההורדה
     הפנימית של yt-dlp. זה לא עוקף את רוחב הפס של השרת — רק מתקרב אליו.
+
+    aria2c אינו יודע לעבוד דרך פרוקסי SOCKS. כשהקישור עובר דרך פרוקסי
+    כזה ההורדה נשארת אצל yt-dlp, שכן יודע
     """
     if config.FETCH_ARIA2 in ("0", "off", "no", ""):
+        return []
+    if url and proxied(url) and config.FETCH_PROXY.lower().startswith("socks"):
         return []
     if not shutil.which("aria2c"):
         if config.FETCH_ARIA2 not in ("auto", "1", "on", "yes"):
@@ -697,7 +715,7 @@ async def _ytdlp_once(url: str, work: Path, on_progress=None,
     ] + (["--extractor-args",
           f"youtubepot-bgutilhttp:base_url={config.FETCH_POT_URL}"]
          if config.FETCH_POT_URL else []
-         ) + _aria2_args() + [
+         ) + _aria2_args(url) + [
         "-o", str(target),
     ] + (["--cookies", str(cookies)] if cookies else []) + [url]
     log.info("מוריד מקישור: %s", url)

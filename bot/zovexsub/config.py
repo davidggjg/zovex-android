@@ -46,6 +46,12 @@ FETCH_REFERER = os.getenv("FETCH_REFERER", "").strip()
 # ריק = בלי פרוקסי, וההתנהגות זהה לקודם. הערך הוא כתובת מלאה, למשל
 # socks5://user:pass@host:1080 או http://host:3128
 FETCH_PROXY = os.getenv("FETCH_PROXY", "").strip()
+# אם מוגדר: הפרוקסי חל רק על האתרים האלה (סיומות, מופרדות בפסיק),
+# וכל השאר יורד ישר. נמדד אצל המשתמש: רשת ההפצה של כאן חוסמת את
+# השרת, יוטיוב לא — ואין סיבה להעביר את כל ההורדות דרך שרת אחר
+FETCH_PROXY_HOSTS = [h.strip().lower().lstrip(".") for h in
+                     (os.getenv("FETCH_PROXY_HOSTS") or "").split(",")
+                     if h.strip()]
 # טוקן בוט מ-BotFather. ריק = עובדים עם חשבון המשתמש בלבד, כמו קודם.
 # הבוט מתחבר דרך MTProto ולא דרך ה-Bot API, ולכן תקרת ההעלאה שלו 2GB
 # ולא 50MB. קובץ גדול יותר עובר לחשבון המשתמש, שהוא Premium
