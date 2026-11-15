@@ -398,7 +398,11 @@ if systemctl list-unit-files "$SERVICE.service" >/dev/null 2>&1 && \
     while IFS= read -r file; do
       (( $(stat -c %Y "$file" 2>/dev/null || echo 0) > BOOT )) && \
         NEWEST+="$file"$'\n'
-    done < <(find "$BOT" -name '*.py' 2>/dev/null)
+    done < <(find "$BOT" -name '*.py' 2>/dev/null; \
+             [[ -f "$ENV_FILE" ]] && echo "$ENV_FILE")
+    # ‫גם .env: שינוי הגדרה נכנס לתוקף רק בהפעלה מחדש. נמדד אצל המשתמש —
+    # FETCH_PROXY_GEO הוחלף, הסקריפט אמר "הכל מעודכן", והבוט המשיך
+    # עם הפרוקסי הישן
     if [[ -n "$NEWEST" ]]; then
       NEED_RESTART=1
       old "השירות רץ מ-$STARTED, ויש קוד חדש ממנו:"
