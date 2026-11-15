@@ -164,7 +164,7 @@ def _browser_args(url: str, mode: str = "origin",
     return args
 
 
-def _aria2_args(url: str = "") -> list[str]:
+def _aria2_args(url: str = "", proxy: str = "") -> list[str]:
     """מעביר את ההורדה ל-aria2c אם הוא מותקן.
 
     aria2c פותח כמה חיבורים לאותו קובץ ומנצל את הקו טוב יותר מההורדה
@@ -175,7 +175,11 @@ def _aria2_args(url: str = "") -> list[str]:
     """
     if config.FETCH_ARIA2 in ("0", "off", "no", ""):
         return []
-    if url and proxied(url) and config.FETCH_PROXY.lower().startswith("socks"):
+    # כל פרוקסי SOCKS — של כאן או של חו"ל. נמדד אצל המשתמש: הקובץ הגיע
+    # ל-100% דרך הפרוקסי של חו"ל, ו-aria2c נפל ב-"exited with code 28"
+    # על הפרוקסי שקיבל, כי הבדיקה כאן ידעה רק על FETCH_PROXY
+    active = proxy or (config.FETCH_PROXY if url and proxied(url) else "")
+    if active.lower().startswith("socks"):
         return []
     if not shutil.which("aria2c"):
         if config.FETCH_ARIA2 not in ("auto", "1", "on", "yes"):
@@ -723,7 +727,7 @@ async def _ytdlp_once(url: str, work: Path, on_progress=None,
     ] + (["--extractor-args",
           f"youtubepot-bgutilhttp:base_url={config.FETCH_POT_URL}"]
          if config.FETCH_POT_URL else []
-         ) + _aria2_args(url) + [
+         ) + _aria2_args(url, proxy) + [
         "-o", str(target),
     ] + (["--cookies", str(cookies)] if cookies else []) + [url]
     log.info("מוריד מקישור: %s", url)

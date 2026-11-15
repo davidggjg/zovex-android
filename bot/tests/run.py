@@ -5428,6 +5428,9 @@ def _proxy_scoped_to_hosts() -> None:
         assert "--proxy" not in fetch._browser_args("https://youtu.be/x")
         assert not fetch.proxied("https://evil-cdn-redge.media.com/x")
         assert fetch._aria2_args(kan) == []
+        # וגם דרך הפרוקסי של חו"ל, שאינו FETCH_PROXY
+        assert fetch._aria2_args("https://youtu.be/x",
+                                 "socks5://127.0.0.1:25345") == []
         # בלי רשימה: הכל דרך הפרוקסי, כמו קודם
         config.FETCH_PROXY_HOSTS = []
         assert fetch.proxied("https://youtu.be/x")
