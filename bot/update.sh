@@ -48,9 +48,18 @@ echo "🔄 סריקת עדכונים — $(date '+%Y-%m-%d %H:%M:%S')   [$MODE]"
 echo "   קוד: $BOT"
 
 BUSY=0
-if pgrep -f "ffmpeg.*zovexsub" >/dev/null 2>&1; then
+# הבוט כותב אילו עבודות רצות. רק זה אומר "עבודה רצה" — ffmpeg לבדו
+# יכול להיות יתום מעבודה שנעצרה, ואז הסקריפט סירב להפעיל מחדש סתם
+ACTIVE="$(grep -oE '^/[^ ]*|^WORK_DIR=.*' "$BOT/.env" 2>/dev/null | sed -n 's/^WORK_DIR=//p' | head -1)"
+ACTIVE="${ACTIVE:-/tmp/zovexsub}/active.json"
+if [[ -s "$ACTIVE" ]] && grep -q '[0-9]' "$ACTIVE"; then
   BUSY=1
-  echo "ℹ️  עבודה רצה כרגע (ffmpeg פעיל)."
+  echo "ℹ️  עבודה רצה כרגע בבוט."
+fi
+ORPHANS=$(pgrep -f "ffmpeg.*zovexsub|yt-dlp|yt_dlp" 2>/dev/null | tr '\n' ' ')
+if [[ -n "$ORPHANS" ]] && (( ! BUSY )); then
+  echo "⚠️  תהליכי הורדה/קידוד רצים בלי שום עבודה בבוט — יתומים: $ORPHANS"
+  echo "   הפעלה מחדש של השירות תסיים אותם."
 fi
 
 # ── 1. קוד מהגיט ──────────────────────────────────────────────

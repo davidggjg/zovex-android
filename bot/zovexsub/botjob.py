@@ -11,6 +11,7 @@ Telethon, והבוט עובד מול שרת HTTP מקומי. במקום לכופ
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import shutil
 import time
@@ -78,20 +79,40 @@ class Screen:
 _jobs: dict[int, "asyncio.Task"] = {}
 
 
+def _publish() -> None:
+    """כותב לדיסק אילו עבודות רצות עכשיו, בשביל update.sh.
+
+    בלי זה update.sh ניחש לפי "יש ffmpeg כלשהו", ו-ffmpeg יתום מעבודה
+    שנעצרה מזמן גרם לו לסרב להפעיל מחדש — "עבודה רצה כרגע" כשלא רצה
+    שום עבודה. הבוט הוא היחיד שיודע באמת
+    """
+    live = {str(chat): int(time.time())
+            for chat, task in _jobs.items() if not task.done()}
+    try:
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        (config.WORK_DIR / "active.json").write_text(
+            json.dumps(live), encoding="utf-8")
+    except OSError as exc:
+        log.debug("רישום העבודות הפעילות נכשל: %s", exc)
+
+
 def claim(chat_id) -> None:
     """רושם את העבודה הנוכחית כשל הצ'אט הזה."""
     task = asyncio.current_task()
     if task is not None:
         _jobs[int(chat_id)] = task
+        _publish()
 
 
 def release(chat_id) -> None:
     _jobs.pop(int(chat_id), None)
+    _publish()
 
 
 async def stop(chat_id) -> None:
     """מבטל את העבודה שרצה בצ'אט. נקרא מכפתור עצור."""
     task = _jobs.pop(int(chat_id), None)
+    _publish()
     if task is None or task.done():
         await localbot.say(chat_id, "אין עבודה פעילה לעצור.")
         return
@@ -1257,6 +1278,9 @@ def waiting_for(chat_id) -> bool:
 
 def install() -> None:
     """מחבר את הבוט לנהג הזה."""
+    # תהליך חדש: אין עבודות. קובץ שנשאר מהתהליך הקודם אינו אמת
+    _jobs.clear()
+    _publish()
     botmenu.on_choice = run
     botmenu.on_stop = stop
     botmenu.on_subtitle = take_subtitle
