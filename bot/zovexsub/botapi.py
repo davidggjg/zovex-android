@@ -158,7 +158,23 @@ async def stop() -> None:
 
 # כמה העלאות "חולקות" כבר נעשו. רק קבצים שאפשר לחלק בהם נספרים,
 # ולכן קובץ ענק שחייב Premium אינו גוזל תור מהחשבון הרגיל
-_turn = 0
+def _turn_file():
+    return config.WORK_DIR / "upload_turn.txt"
+
+
+def _load_turn() -> int:
+    try:
+        return int(_turn_file().read_text().strip() or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _save_turn(value: int) -> None:
+    try:
+        config.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        _turn_file().write_text(str(value))
+    except OSError:
+        pass
 
 
 def uploader(size: int, premium: TelegramClient):
@@ -173,13 +189,16 @@ def uploader(size: int, premium: TelegramClient):
     ואינו מקדם את התור — אחרת שלושה סרטים גדולים ברצף היו "חייבים"
     לחשבון הרגיל שלוש העלאות שהוא לא יכול לבצע
     """
-    global _turn
     if _lite is None or size > config.LITE_UPLOAD_MAX:
         return premium, "Premium"
 
+    # התור נשמר בקובץ. כשהוא ישב בזיכרון בלבד הוא התאפס בכל הפעלה
+    # מחדש, והתור הראשון שייך ל-Premium — ובגלל שכל עדכון מפעיל מחדש,
+    # החשבון הרגיל כמעט לא הגיע לתורו. נמדד: "בינתיים זה רק פרימיום"
+    turn = _load_turn()
     block = max(1, config.UPLOAD_TURN)
-    mine = (_turn // block) % 2 == 0
-    _turn += 1
+    mine = (turn // block) % 2 == 1
+    _save_turn(turn + 1)
     if mine:
         return premium, "Premium"
     return _lite, "רגיל"

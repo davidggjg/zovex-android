@@ -1748,17 +1748,17 @@ def _premium_upload_lane():
     # ניתוב לפי גודל: מעל תקרת החשבון הרגיל — Premium, תמיד.
     # מתחת לתקרה הבחירה מתחלפת בתורות (ראו _upload_turns), ולכן
     # נבדק כאן שהחשבון הרגיל אכן מגיע לתורו ולא שהוא הראשון
-    saved_turn = botapi._turn
+    import tempfile
+    saved_dir = config.WORK_DIR
+    config.WORK_DIR = Path(tempfile.mkdtemp())
     botapi._lite = object()
     try:
-        botapi._turn = 0
         picks = {botapi.uploader(config.LITE_UPLOAD_MAX, "PREM")[1]
                  for _ in range(4)}
-        botapi._turn = 0
         big = botapi.uploader(config.LITE_UPLOAD_MAX + 1, "PREM")
     finally:
         botapi._lite = None
-        botapi._turn = saved_turn
+        config.WORK_DIR = saved_dir
     assert picks == {"רגיל", "Premium"}, picks
     assert big == ("PREM", "Premium"), big
 
@@ -3263,31 +3263,35 @@ def _mend_arabic():
 def _upload_turns():
     from zovexsub import botapi, config
 
-    saved_lite, saved_turn = botapi._lite, botapi._turn
-    botapi._lite, botapi._turn = "LITE", 0
+    import tempfile
+    saved_lite, saved_dir = botapi._lite, config.WORK_DIR
+    config.WORK_DIR = Path(tempfile.mkdtemp())
+    botapi._lite = "LITE"
     gig = 1024 ** 3
     try:
-        # קודם כל קובץ מתחת לתקרה הלך לחשבון הרגיל, ולכן הוא נשא את
-        # כל העומס בעוד ה-Premium לא העלה דבר. רוב הקבצים הם כג'יגה
-        picks = [botapi.uploader(gig, "PREMIUM")[1] for _ in range(8)]
-        assert picks == ["Premium", "Premium", "רגיל", "רגיל",
-                         "Premium", "Premium", "רגיל", "רגיל"], picks
+        # התור מתחיל ברגיל ונשמר בקובץ: בזיכרון בלבד הוא התאפס בכל
+        # הפעלה מחדש, והתור הראשון היה של Premium — אז הרגיל לא העלה
+        picks = [botapi.uploader(gig, "PREMIUM")[1] for _ in range(4)]
+        botapi._lite = "LITE"   # "הפעלה מחדש": התור ממשיך מהקובץ
+        picks += [botapi.uploader(gig, "PREMIUM")[1] for _ in range(4)]
+        assert picks == ["רגיל", "רגיל", "Premium", "Premium",
+                         "רגיל", "רגיל", "Premium", "Premium"], picks
 
         # קובץ מעל התקרה חייב Premium — ואינו מקדם את התור, אחרת
         # שלושה סרטים גדולים ברצף היו חייבים לחשבון הרגיל שלוש
         # העלאות שהוא אינו יכול לבצע בכלל
-        botapi._turn = 0
+        botapi._save_turn(0)
         for _ in range(3):
             assert botapi.uploader(3 * gig, "PREMIUM")[1] == "Premium"
-        assert botapi._turn == 0, botapi._turn
+        assert botapi._load_turn() == 0
         # והקטן שאחריהם עדיין מקבל את התור הראשון
-        assert botapi.uploader(gig, "PREMIUM")[1] == "Premium"
+        assert botapi.uploader(gig, "PREMIUM")[1] == "רגיל"
 
         # בלי חשבון רגיל מחובר הכול עובר ל-Premium
         botapi._lite = None
         assert botapi.uploader(gig, "PREMIUM")[1] == "Premium"
     finally:
-        botapi._lite, botapi._turn = saved_lite, saved_turn
+        botapi._lite, config.WORK_DIR = saved_lite, saved_dir
 
     assert config.UPLOAD_TURN >= 1
 
