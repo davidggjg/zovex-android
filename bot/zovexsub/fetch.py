@@ -524,6 +524,12 @@ def format_for(quality: str, audio: str = "") -> str:
 async def download(url: str, work: Path, on_progress=None,
                    fmt: str = "") -> Path:
     """מוריד מקישור. cobalt קודם אם הוגדר, אחרת yt-dlp."""
+    from . import torrent
+    if torrent.is_torrent(url):
+        try:
+            return await torrent.download(url, work, on_progress)
+        except torrent.TorrentError as exc:
+            raise FetchError(str(exc)) from exc
     if config.COBALT_URL:
         try:
             return await _cobalt(url, work, on_progress)

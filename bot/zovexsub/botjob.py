@@ -393,6 +393,30 @@ async def _fast(file_id: str, size: int, name: str, target: Path,
     return True
 
 
+async def _send_extras(chat_id, work: Path) -> None:
+    """הקבצים שבאו עם טורנט — כתוביות, תמונות, nfo — נשלחים למשתמש.
+
+    הסרטון עצמו אינו נשלח: הוא ממשיך לתרגום ולצריבה. המשתמש רואה מה
+    הגיע ומחליט אם לצרוב את הכתוביות שבטורנט או קובץ משלו
+    """
+    from . import torrent
+    folder = work / torrent.EXTRAS_DIR
+    files = sorted(p for p in folder.glob("*") if p.is_file()) if folder.is_dir() else []
+    if not files:
+        return
+    await localbot.say(chat_id, f"📦 בטורנט היו עוד {len(files)} קבצים — "
+                                "שולח אותם. כדי לצרוב אחד מהם בחר "
+                                "״קובץ קיים״ ושלח אותו בחזרה.")
+    for item in files:
+        try:
+            await localbot.call("sendDocument", chat_id=str(chat_id),
+                                document=localbot._to_container(item))
+        except Exception as exc:  # noqa: BLE001 — קובץ נלווה אינו תנאי
+            log.warning("שליחת %s נכשלה: %s", item.name, exc)
+        finally:
+            localbot.clear_outbox(item.name)
+
+
 async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
     """מוריד מקישור, עם הרזולוציה שנבחרה בכפתורים."""
     began = time.monotonic()
@@ -416,7 +440,9 @@ async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
     await screen.show(f"🔗 מוריד מהקישור · {choice.quality or 'איכות ברירת מחדל'}",
                       force=True)
     try:
-        return await fetch.download(choice.url, work, on_progress, fmt=want)
+        got = await fetch.download(choice.url, work, on_progress, fmt=want)
+        await _send_extras(choice.chat_id, work)
+        return got
     except fetch.FetchError as exc:
         # ההסבר של fetch כבר מנוסח למשתמש ומפרט מה לעשות
         await localbot.say(choice.chat_id, f"❌ {exc}")

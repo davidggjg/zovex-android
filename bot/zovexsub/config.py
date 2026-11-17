@@ -759,6 +759,10 @@ VAD_MIN_SPEECH = float(os.getenv("VAD_MIN_SPEECH") or 0.20)
 # יישור כפוי: מצמיד כל מילה למקום האמיתי שלה באודיו. התזמונים של
 # Whisper סוטים בסדר גודל של שנייה; היישור מוריד את זה לעשרות
 # מילישניות. ריק או מודל חסר = נשארים בתזמונים של Whisper
+# טורנט: כמה שניות בלי שום התקדמות לפני שמוותרים, ותקרת העלאה בזמן
+# ההורדה (פרוטוקול BitTorrent לא מוריד בכלל בלי להעלות קצת)
+TORRENT_STALL = _int("TORRENT_STALL", 900)
+TORRENT_UPLOAD_LIMIT = os.getenv("TORRENT_UPLOAD_LIMIT") or "50K"
 ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
 # אורך החלון נמדד: הקשב של המודל גדל ריבועית עם האורך, ולכן חלון קצר
 # יעיל יותר. תפוקה לליבה בשני חוטים — 15 שניות: 3.7x · 25: 2.75x · 40: 1.85x

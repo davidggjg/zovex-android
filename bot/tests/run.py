@@ -5562,6 +5562,32 @@ def _():
     assert "if s.text.strip()" in src and "move=not verify_only" in src
 
 
+@check("טורנט: magnet וקובץ מזוהים, הסרטון הגדול נבחר והנלווים נאספים")
+def _():
+    import tempfile
+    from zovexsub import torrent, botmenu, botjob
+    assert torrent.is_torrent("magnet:?xt=urn:btih:abc")
+    assert torrent.is_torrent("torrent:/x/y.torrent")
+    assert not torrent.is_torrent("https://youtu.be/x")
+    assert torrent.find_magnet("קח magnet:?xt=urn:btih:ab&dn=a b") == "magnet:?xt=urn:btih:ab&dn=a"
+    got = torrent.parse("[#2089b0 120MiB/1.2GiB(10%) CN:30 SD:5 DL:5.2MiB ETA:3m20s]")
+    assert got[0] == 120 * 1024 ** 2 and got[3] == 200 and got[4] == 5, got
+    folder = Path(tempfile.mkdtemp())
+    (folder / "Film").mkdir()
+    (folder / "Film" / "film.mkv").write_bytes(b"x" * 3000)
+    (folder / "Film" / "sample.mkv").write_bytes(b"x" * 100)
+    (folder / "Film" / "film.he.srt").write_text("1")
+    (folder / "Film" / "poster.jpg").write_bytes(b"j")
+    (folder / "Film" / "film.mkv.aria2").write_bytes(b"a")
+    video, extras = torrent.pick(folder)
+    assert video.name == "film.mkv", video
+    assert [p.name for p in extras] == ["film.he.srt", "poster.jpg"], extras
+    # בלי שיתוף אחרי הסיום, ורק למנהל
+    assert '"--seed-time=0"' in inspect.getsource(torrent.download)
+    assert "_is_owner(message)" in inspect.getsource(botmenu._incoming)
+    assert "_send_extras" in inspect.getsource(botjob._from_link)
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

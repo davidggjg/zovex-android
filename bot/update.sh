@@ -154,6 +154,19 @@ else
   fi
 fi
 
+# ── 2a. aria2c: הורדות מהירות וטורנט ─────────────────────────
+head_ "aria2c"
+if command -v aria2c >/dev/null; then
+  ok "aria2c מותקן"
+else
+  old "aria2c חסר — בלעדיו אין טורנט וההורדות איטיות יותר"
+  if [[ $MODE != check ]]; then
+    apt-get install -y aria2 >/dev/null 2>&1 || \
+      { apt-get update >/dev/null 2>&1 && apt-get install -y aria2 >/dev/null 2>&1; }
+    command -v aria2c >/dev/null && ok "aria2c הותקן" || bad "התקנת aria2c נכשלה"
+  fi
+fi
+
 # ── 2b. מילון האיות ───────────────────────────────────────────
 head_ "מילון איות"
 SPELL_DIR="$BOT/spell"

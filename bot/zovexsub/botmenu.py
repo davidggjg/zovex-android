@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 import time
+import uuid
 from dataclasses import dataclass, field
 
-from . import allowlist, config, fetch, localbot, memory, prefs
+from . import allowlist, config, fetch, localbot, memory, prefs, torrent
 
 log = logging.getLogger(__name__)
 
@@ -324,7 +326,7 @@ async def greet_link(chat_id, url: str) -> None:
     # בדרייב אין מה לבחור: הקובץ הוא אחד, ואנחנו ממילא כופים את
     # תבנית source. שאלת האיכות שם היא לחיצה מיותרת על שאלה שאין לה
     # תשובה, ו"בודק אילו איכויות זמינות" הוא גם משפט לא נכון
-    single = fetch._is_drive(url)
+    single = fetch._is_drive(url) or torrent.is_torrent(url)
     sent = await localbot.say(
         chat_id, "🔎 קורא את הקישור…" if single
         else "🔎 בודק אילו איכויות זמינות…")
@@ -697,6 +699,12 @@ async def _owner_command(message: dict) -> bool:
     return False
 
 
+def _is_owner(message: dict) -> bool:
+    """טורנט רק למנהל, כמו הורדה בלי קידוד."""
+    owner = allowlist.owner()
+    return bool(owner) and (message.get("from") or {}).get("id") == owner
+
+
 async def _incoming(message: dict) -> None:
     """הודעה שנכנסה לבוט.
 
@@ -729,12 +737,28 @@ async def _incoming(message: dict) -> None:
         text = (message.get("text") or "").strip()
         if not text:
             return
+        magnet = torrent.find_magnet(text)
+        if magnet and _is_owner(message):
+            await greet_link(chat, magnet)
+            return
         link = fetch.find_url(text)
         if link:
             await greet_link(chat, link)
             return
         await localbot.say(chat, "שלח סרטון או קישור ואתחיל. "
                                  "אין צורך בפקודות.")
+        return
+    # קובץ ‎.torrent מהמנהל: שומרים אותו ומתחילים כמו קישור
+    if (name or "").lower().endswith(".torrent") and _is_owner(message):
+        found, why = await localbot.locate(file_id)
+        if found is None:
+            await localbot.say(chat, "לא הצלחתי לקרוא את קובץ הטורנט.\n"
+                               + localbot.code(why))
+            return
+        keep = config.WORK_DIR / "torrents" / f"{uuid.uuid4().hex[:8]}.torrent"
+        keep.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(found, keep)
+        await greet_link(chat, torrent.PREFIX + str(keep))
         return
     # עבודה שממתינה לכתוביות גוברת על כל זיהוי: אם המשתמש ביקש לצרוב
     # קובץ משלו ושלח מסמך, זה הקובץ — גם כשהשם חסר או מטעה
