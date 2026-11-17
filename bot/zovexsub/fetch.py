@@ -22,7 +22,8 @@ URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", re.I)
 # תבנית שמוציאה מ-yt-dlp שורה אחת שקל לקרוא לכל עדכון
 TEMPLATE = "zx %(progress.downloaded_bytes)s %(progress.total_bytes)s " \
            "%(progress.total_bytes_estimate)s %(progress.speed)s " \
-           "%(progress.eta)s"
+           "%(progress.eta)s %(progress.fragment_index)s " \
+           "%(progress.fragment_count)s"
 
 
 class FetchError(RuntimeError):
@@ -764,6 +765,16 @@ async def _ytdlp_once(url: str, work: Path, on_progress=None,
             # ה-ETA של yt-dlp מחושב על הקצב שלו עצמו, והוא מדויק
             # יותר מהערכה שנבנה מבחוץ על ממוצע נע
             eta = _number(parts[5]) if len(parts) > 5 else 0.0
+            # קישורי HLS (m3u8) אינם מוסרים גודל כולל — רק כמה חלקים
+            # יש וכמה ירדו. נמדד אצל המשתמש: "מוריד · 3355MB" בלי
+            # אחוזים ובלי זמן משוער. מהחלקים אפשר להעריך את שניהם
+            index = _number(parts[6]) if len(parts) > 6 else 0.0
+            count = _number(parts[7]) if len(parts) > 7 else 0.0
+            if not total and index > 0 and count >= index:
+                total = done * count / index
+            speed = _number(parts[4])
+            if not eta and total > done and speed > 0:
+                eta = (total - done) / speed
             seen["at"] = time.monotonic()
             seen["total"] = total or seen["total"]
             await on_progress(done, total, eta)
