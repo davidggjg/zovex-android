@@ -888,7 +888,22 @@ async def _with_track(chat_id, source: Path, work: Path, screen,
             pipeline.cleanup(work)
             release(chat_id)
             return
-        await then(pick.track)
+        # הבחירה רצה במשימה חדשה, אחרי ש-run כבר יצא ושחרר את הצ'אט.
+        # בלי רישום מחדש כפתור העצירה לא מצא אותה, והיא המשיכה לרוץ
+        # ברקע גם אחרי "עצור" — ונערמה מתחת לעבודה הבאה שנשלחה
+        claim(chat_id)
+        try:
+            await then(pick.track)
+        except asyncio.CancelledError:
+            log.warning("העבודה בוטלה על ידי המשתמש")
+            pipeline.cleanup(work)
+            raise
+        except Exception as exc:  # noqa: BLE001
+            log.exception("עבודת הבוט נכשלה")
+            await screen.show(f"❌ {exc}", force=True)
+            pipeline.cleanup(work)
+        finally:
+            release(chat_id)
 
     await botmenu.offer_track(chat_id, tracks, picked)
 
