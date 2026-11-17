@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -1047,13 +1048,65 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
                               profile, track=track)
 
 
-def _settings_for(video: Path, duration: float, height: int,
-                  profile: str = "") -> dict:
-    """הגדרות הצריבה: בחירה מפורשת של המשתמש גוברת על הסולם האוטומטי."""
+async def _settings_for(video: Path, duration: float, height: int,
+                        profile: str = "") -> dict:
+    """הגדרות הצריבה: בחירה מפורשת של המשתמש גוברת על הסולם האוטומטי.
+
+    בסולם האוטומטי הגודל נמדד ולא מנוחש. הטבלה הקבועה של mbps נמדדה על
+    מקור אחד, ועל סרט גרעיני היא טועה פי שניים: נמדד אצל המשתמש סרט
+    שההערכה נתנה לו 1.8GB ויצא 3.8GB. לכן מקודדים כמה דגימות קצרות
+    מפוזרות לאורך הסרט, ומזה מחשבים את גודל הפלט האמיתי
+    """
     if profile and profile in config.PROFILES:
         log.info("פרופיל נבחר ידנית: %s", profile)
         return config.PROFILES[profile]
-    return config.profile_for(video.stat().st_size, duration, height)
+    first = config.profile_for(video.stat().st_size, duration, height)
+    if (config.BURN_PROFILE != "auto" or not config.BURN_PROBE
+            or duration < config.BURN_PROBE_MIN_MINUTES * 60):
+        return first
+    names = list(config.LADDER)
+    start = names.index(config.profile_name(first)) \
+        if config.profile_name(first) in names else 0
+    limit = config.UPLOAD_CEILING_MB * config.BURN_PROBE_MARGIN
+    for name in names[start:]:
+        settings = config.PROFILES[name]
+        try:
+            projected = await _probe_size(video, settings, duration)
+        except Exception as exc:  # noqa: BLE001 — בלי מדידה, לפי הטבלה
+            log.warning("מדידת הגודל נכשלה (%s) — לפי ההערכה", exc)
+            return first
+        log.info("מדידת גודל: %s צפוי לצאת %.0fMB (תקרה %dMB)",
+                 name, projected, config.UPLOAD_CEILING_MB)
+        if projected <= limit:
+            return settings
+    log.warning("גם הפרופיל הדחוס ביותר צפוי לעבור את התקרה")
+    return config.PROFILES[names[-1]]
+
+
+async def _probe_size(video: Path, settings: dict, duration: float) -> float:
+    """כמה MB ייצא הפלט, לפי קידוד דגימות קצרות מפוזרות לאורך הסרט."""
+    count = max(1, config.BURN_PROBE_SAMPLES)
+    length = config.BURN_PROBE_SECONDS
+    scale = (f"scale=-2:'min({config.BURN_MAX_HEIGHT},ih)':flags=lanczos"
+             if config.BURN_MAX_HEIGHT else "null")
+    folder = Path(tempfile.mkdtemp(prefix="probe-"))
+    try:
+        async def one(index: int) -> int:
+            at = duration * (index + 0.5) / count
+            out = folder / f"p{index}.mkv"
+            cmd = (["ffmpeg", "-nostdin", "-v", "error", "-y",
+                    "-ss", f"{max(0.0, at - length / 2):.2f}", "-i", str(video),
+                    "-t", f"{length:.2f}", "-an", "-sn", "-vf", scale]
+                   + _encoder_args(settings, config.BURN_SEGMENT_THREADS, duration)
+                   + ["-f", "matroska", str(out)])
+            await _run(cmd, timeout=600)
+            return out.stat().st_size
+        sizes = await asyncio.gather(*(one(i) for i in range(count)))
+    finally:
+        shutil.rmtree(folder, ignore_errors=True)
+    video_bytes = sum(sizes) / (count * length) * duration
+    audio_bytes = 192_000 / 8 * duration
+    return (video_bytes + audio_bytes) / 1024 ** 2
 
 
 async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
@@ -1061,7 +1114,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
                        profile: str = "", track: int = 0) -> Path:
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
-    settings = _settings_for(video, duration, await video_height(video),
+    settings = await _settings_for(video, duration, await video_height(video),
                              profile)
     _describe_profile(settings, video, duration)
     threads = burn_threads()
@@ -1112,7 +1165,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     work.mkdir(parents=True, exist_ok=True)
     marked = rtl_copy(srt)
     credit = credit_file(work)
-    settings = _settings_for(video, duration, await video_height(video),
+    settings = await _settings_for(video, duration, await video_height(video),
                              profile)
     _describe_profile(settings, video, duration)
     # מכולת MP4 אינה תומכת בקצב פריימים משתנה, ולכן ffmpeg מנחש קצב
