@@ -1049,7 +1049,7 @@ async def burn(video: Path, srt: Path, dst: Path, on_progress=None,
 
 
 async def _settings_for(video: Path, duration: float, height: int,
-                        profile: str = "") -> dict:
+                        profile: str = "", on_progress=None) -> dict:
     """הגדרות הצריבה: בחירה מפורשת של המשתמש גוברת על הסולם האוטומטי.
 
     בסולם האוטומטי הגודל נמדד ולא מנוחש. הטבלה הקבועה של mbps נמדדה על
@@ -1070,8 +1070,12 @@ async def _settings_for(video: Path, duration: float, height: int,
     limit = config.UPLOAD_CEILING_MB * config.BURN_PROBE_MARGIN
     for name in names[start:]:
         settings = config.PROFILES[name]
+        if on_progress:
+            # בלי הודעה השלב נראה תקוע: "צורב…" בלי שום תזוזה
+            await on_progress(0.0, f"📏 מודד גודל צפוי ({name})…")
         try:
-            projected = await _probe_size(video, settings, duration)
+            projected = await asyncio.wait_for(
+                _probe_size(video, settings, duration), timeout=300)
         except Exception as exc:  # noqa: BLE001 — בלי מדידה, לפי הטבלה
             log.warning("מדידת הגודל נכשלה (%s) — לפי ההערכה", exc)
             return first
@@ -1099,7 +1103,7 @@ async def _probe_size(video: Path, settings: dict, duration: float) -> float:
                     "-t", f"{length:.2f}", "-an", "-sn", "-vf", scale]
                    + _encoder_args(settings, config.BURN_SEGMENT_THREADS, duration)
                    + ["-f", "matroska", str(out)])
-            await _run(cmd, timeout=600)
+            await _run(cmd, timeout=240)
             return out.stat().st_size
         sizes = await asyncio.gather(*(one(i) for i in range(count)))
     finally:
@@ -1115,7 +1119,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
     marked = rtl_copy(srt)
     credit = credit_file(dst.parent)
     settings = await _settings_for(video, duration, await video_height(video),
-                             profile)
+                                   profile, on_progress)
     _describe_profile(settings, video, duration)
     threads = burn_threads()
 
@@ -1166,7 +1170,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     marked = rtl_copy(srt)
     credit = credit_file(work)
     settings = await _settings_for(video, duration, await video_height(video),
-                             profile)
+                                   profile, on_progress)
     _describe_profile(settings, video, duration)
     # מכולת MP4 אינה תומכת בקצב פריימים משתנה, ולכן ffmpeg מנחש קצב
     # לכל קטע בנפרד. במקור VFR הניחושים נבדלים, ציר הזמן של הקטעים
