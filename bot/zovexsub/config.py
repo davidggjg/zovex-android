@@ -222,10 +222,10 @@ QUICK_UNDER_MB = _int("QUICK_UNDER_MB", 300)
 # שניים עד שלושה, גם כשהפלט המהיר נכנס בתקרה בשפע. נמדד אצל המשתמש:
 # סרט של 6.3GB צרב שעתיים, ואצל חבר על אותו שרת ב-x265 מהיר — 40 דקות
 # ופלט של כ-4GB שעלה לטלגרם. הדחיסה הכבדה נשארת רק כשהפלט לא נכנס
-SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
+SMALL_OVER_MB = _int("SMALL_OVER_MB", 0)
 # מדידת גודל לפני צריבה: דגימות קצרות מקודדות בהגדרות המועמדות, ומהן
 # נגזר גודל הפלט האמיתי. רק לסרטים ארוכים — בקצרים אין סכנת תקרה
-BURN_PROBE = os.getenv("BURN_PROBE", "0") == "1"
+BURN_PROBE = os.getenv("BURN_PROBE", "1") != "0"
 BURN_PROBE_SAMPLES = _int("BURN_PROBE_SAMPLES", 8)
 BURN_PROBE_SECONDS = float(os.getenv("BURN_PROBE_SECONDS") or 8)
 BURN_PROBE_MIN_MINUTES = _int("BURN_PROBE_MIN_MINUTES", 20)
