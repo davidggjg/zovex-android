@@ -189,6 +189,54 @@ ADDRESSEE_WINDOW = 120   # שורות שנבדקות בקריאה אחת
 ADDRESSEE_CONTEXT = 15   # שורות הקשר לפני ואחרי
 
 
+async def _hedged(make, after: float, total: float, what: str = ""):
+    """מריץ בקשה, ואם היא איטית — שולח עוד אחת זהה ולוקח את הראשונה.
+
+    הטכניקה מוכרת כ-hedged request (Dean & Barroso, "The Tail at
+    Scale", 2013): רוב הבקשות מהירות, ומעט איטיות מאוד מחזיקות את כל
+    העבודה. בקשה שנייה אחרי סף מסוים מקצרת את הזנב, ועולה קריאה
+    נוספת רק לבקשות האיטיות. כל בקשה יוצאת במפתח שהמאגר בוחר, ולכן
+    השנייה לרוב מגיעה לשרת אחר.
+
+    ‏make מייצר קורוטינה חדשה בכל קריאה. ‏after=0 מכבה את הגיבוי.
+    כשל של בקשה אחת אינו מפיל אם השנייה עוד רצה; נזרק רק אם שתיהן
+    נכשלו, או אם עבר total
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + total
+    first = asyncio.ensure_future(make())
+    tasks = [first]
+    try:
+        if after and after < total:
+            done, _ = await asyncio.wait(tasks, timeout=after)
+            if not done:
+                log.info("%s: אין תשובה אחרי %.0f שניות — שולח בקשת גיבוי",
+                         what or "בקשה", after)
+                tasks.append(asyncio.ensure_future(make()))
+        error: BaseException | None = None
+        while tasks:
+            left = deadline - loop.time()
+            if left <= 0:
+                break
+            done, _ = await asyncio.wait(
+                tasks, timeout=left, return_when=asyncio.FIRST_COMPLETED)
+            if not done:
+                break
+            for task in done:
+                tasks.remove(task)
+                if task.exception() is None:
+                    if task is not first:
+                        log.info("%s: בקשת הגיבוי חזרה ראשונה", what or "בקשה")
+                    return task.result()
+                error = task.exception()
+        if error is not None and not tasks and loop.time() < deadline:
+            raise error
+        raise asyncio.TimeoutError()
+    finally:
+        for task in tasks:
+            task.cancel()
+
+
 def _addressee_listing(segments: list[Segment], lines: list[str],
                        numbers: list[int]) -> str:
     """שורות לתיוג נמען, כשכל שורה נושאת את הדובר שלה.
@@ -321,12 +369,14 @@ async def enforce_addressee(segments: list[Segment], lines: list[str], notes: st
                 # למודל על שלב שארך 1159 שניות — כלומר 1.2 קריאות
                 # באוויר בממוצע מתוך שמונה שהגייט מרשה. לא המפתחות
                 # היו הצוואר ולא המכסות (429 היה אפס), אלא הגרורים
-                result = await asyncio.wait_for(
-                    gemini.ask_json(ADDRESSEE_SYSTEM, prompt,
-                                    schema=schema, temperature=0.0,
-                                    model=config.ADDRESSEE_MODEL or None,
-                                    thinking=config.ADDRESSEE_THINKING),
-                    timeout=config.ADDRESSEE_TIMEOUT)
+                result = await _hedged(
+                    lambda: gemini.ask_json(
+                        ADDRESSEE_SYSTEM, prompt, schema=schema,
+                        temperature=0.0,
+                        model=config.ADDRESSEE_MODEL or None,
+                        thinking=config.ADDRESSEE_THINKING),
+                    config.ADDRESSEE_HEDGE_AFTER, config.ADDRESSEE_TIMEOUT,
+                    f"מגדר {window[0]}-{window[-1]}")
             except (gemini.GeminiError, asyncio.TimeoutError) as first:
                 # מעבר המגדר הוא התיקון הנראה ביותר בעברית, ולכן הוא
                 # מקבל ניסיון שני ותקרה משלו. נמדד על אותו סרט לפני

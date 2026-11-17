@@ -5482,6 +5482,62 @@ def _geo_blocked_retries_abroad() -> None:
         shutil.rmtree(work, ignore_errors=True)
 
 
+@check("בקשה איטית מקבלת בקשת גיבוי, והראשונה שחוזרת זוכה")
+def _hedged_request_cuts_the_tail() -> None:
+    import time as _time
+    from zovexsub import hebrew
+
+    calls = {"n": 0}
+
+    async def slow_then_fast():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await asyncio.sleep(5)      # החלון התקוע
+            return "slow"
+        await asyncio.sleep(0.05)
+        return "fast"
+
+    began = _time.monotonic()
+    got = asyncio.run(hebrew._hedged(slow_then_fast, 0.1, 3.0, "בדיקה"))
+    assert got == "fast" and calls["n"] == 2, (got, calls)
+    assert _time.monotonic() - began < 1.0
+
+    # בקשה מהירה אינה שולחת גיבוי
+    calls["n"] = 0
+
+    async def quick():
+        calls["n"] += 1
+        return "ok"
+
+    assert asyncio.run(hebrew._hedged(quick, 0.5, 3.0)) == "ok"
+    assert calls["n"] == 1
+
+    # כשל של הראשונה כשהגיבוי עוד רץ אינו מפיל
+    calls["n"] = 0
+
+    async def fail_then_ok():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            await asyncio.sleep(0.2)
+            raise RuntimeError("נפל")
+        await asyncio.sleep(0.3)
+        return "ok"
+
+    assert asyncio.run(hebrew._hedged(fail_then_ok, 0.05, 3.0)) == "ok"
+
+    # ושתיהן תקועות: תקרת הזמן הכוללת נשמרת
+    async def stuck():
+        await asyncio.sleep(10)
+
+    began = _time.monotonic()
+    try:
+        asyncio.run(hebrew._hedged(stuck, 0.1, 0.4))
+        raise AssertionError("לא נעצר")
+    except asyncio.TimeoutError:
+        pass
+    assert _time.monotonic() - began < 1.5
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
