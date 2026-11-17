@@ -218,7 +218,11 @@ BURN_PROFILE = (os.getenv("BURN_PROFILE") or "auto").strip().lower()
 # את הפלט פי עשרות, וההעלאה של קובץ כזה עולה יותר ממה שנחסך — ובשרת
 # סטרימינג גם גוזלת רוחב פס מהמשתמשים
 QUICK_UNDER_MB = _int("QUICK_UNDER_MB", 300)
-SMALL_OVER_MB = _int("SMALL_OVER_MB", 3072)
+# 0 = כבוי. קודם כל מקור מעל 3GB קפץ ישר ל-preset medium, האיטי פי
+# שניים עד שלושה, גם כשהפלט המהיר נכנס בתקרה בשפע. נמדד אצל המשתמש:
+# סרט של 6.3GB צרב שעתיים, ואצל חבר על אותו שרת ב-x265 מהיר — 40 דקות
+# ופלט של כ-4GB שעלה לטלגרם. הדחיסה הכבדה נשארת רק כשהפלט לא נכנס
+SMALL_OVER_MB = _int("SMALL_OVER_MB", 0)
 
 
 # נמדד על מקור 1080p עם כתוביות, שני חוטים לקטע — בדיוק מה שקטע
@@ -257,7 +261,7 @@ def profile_for(source_bytes: int, duration: float = 0.0,
     megabytes = source_bytes / 1024 ** 2
     if megabytes <= QUICK_UNDER_MB:
         start = 0
-    elif megabytes >= SMALL_OVER_MB:
+    elif SMALL_OVER_MB and megabytes >= SMALL_OVER_MB:
         start = 2
     else:
         start = 1
