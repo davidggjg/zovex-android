@@ -106,20 +106,28 @@ async def run(source: Path, work: Path, *, progress: Progress,
 
     # יישור כפוי קודם לכל השאר: הוא מתקן את התזמונים עצמם, ולא רק מזיז
     # כתוביות שנחתו על שקט. אחריו ההצמדה ל-VAD נוגעת רק בשאריות
-    if native_times:
+    verify_only = native_times and config.ALIGN_VERIFY
+    if native_times and not verify_only:
         log.info("התזמונים הגיעו מהמודל עצמו — אין צורך ביישור")
     elif align.available():
-        stage = make("📐 מיישר תזמונים")
+        stage = make("🔎 בודק הזיות" if verify_only else "📐 מיישר תזמונים")
         stage.pulse()
 
         async def on_align(done: int, total: int) -> None:
             await stage.show(done / total, note=f"{done}/{total} חלונות")
 
         try:
-            await align.refine(transcript.segments, audio, on_step=on_align)
+            await align.refine(transcript.segments, audio, on_step=on_align,
+                               move=not verify_only)
         finally:
             stage.stop()
         await stage.finish()
+        # שורות שהיישור מצא שלא נאמרו התרוקנו שם. מסירים אותן לפני
+        # התרגום, אחרת הן מתורגמות כאילו הן דיאלוג
+        transcript.segments[:] = [s for s in transcript.segments
+                                  if s.text.strip()]
+        if not transcript.segments:
+            raise RuntimeError("לא זוהה דיבור בקובץ.")
 
     await progress("🔇 מזהה דיבור ושקט…")
     # VAD אמיתי קודם; אם הוא לא זמין נופלים לזיהוי לפי עוצמת קול

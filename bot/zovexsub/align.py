@@ -177,9 +177,52 @@ def _windows(segments: list, limit: float) -> list[list[int]]:
     return groups
 
 
+def _word_scores(log_probs, targets: list[int], words: list[str],
+                 path: list[int]) -> list[float]:
+    """כמה כל מילה באמת נשמעת באודיו.
+
+    לכל פריים שהמסלול הכפוי הצמיד לאות, משווים את הסבירות של האות הזאת
+    לסבירות של הדבר הסביר ביותר באותו פריים. מילה שנאמרה מקבלת קרוב
+    ל-0, כי המודל היה בוחר בה גם בלי שהכריחו אותו. מילה שהמודל המציא
+    נכפית על שקט או על מילים אחרות, ומקבלת ציון שלילי מאוד.
+
+    נמדד על הקלטה אמיתית: מילים שנאמרו בין 0 ל-1-, "thank you for
+    watching" שהודבק על שקט בין 6- ל-12-, ומשפט שלם של מילים לא
+    נכונות על דיבור אמיתי סביב 4- בממוצע
+    """
+    import numpy as np
+    steps = np.asarray(path)
+    best = log_probs.max(-1)
+    scores: list[float] = []
+    index = 0
+    for word in words:
+        gaps: list[float] = []
+        for offset in range(len(word)):
+            frames = np.flatnonzero(steps == (index + offset) * 2 + 1)
+            if frames.size:
+                token = targets[index + offset]
+                gaps.extend((log_probs[frames, token] - best[frames]).tolist())
+        index += len(word)
+        scores.append(float(np.mean(gaps)) if gaps else -20.0)
+    return scores
+
+
+def invented(scores: list[float]) -> bool:
+    """האם סגמנט נראה כמו טקסט שלא נאמר בכלל.
+
+    סגמנט קצר מקבל רף מחמיר יותר: מילה אחת בקצה החלון יכולה לקבל ציון
+    נמוך גם כשנאמרה (נמדד: המילה האחרונה בהקלטה קיבלה 5-)
+    """
+    if not scores:
+        return False
+    mean = sum(scores) / len(scores)
+    limit = config.ALIGN_INVENTED if len(scores) >= 3 else config.ALIGN_INVENTED_SHORT
+    return mean < limit
+
+
 def _align_window(audio: Path, segments: list, indices: list[int],
-                  vocabulary: dict) -> list[tuple[int, float, float]]:
-    """מיישר חלון אחד ומחזיר זמנים מוחלטים לכל סגמנט שבו."""
+                  vocabulary: dict) -> list[tuple[int, float, float, list]]:
+    """מיישר חלון אחד ומחזיר זמנים מוחלטים וציוני מילים לכל סגמנט."""
     pad = config.ALIGN_PAD
     begin = max(0.0, segments[indices[0]].start - pad)
     finish = segments[indices[-1]].end + pad
@@ -204,19 +247,29 @@ def _align_window(audio: Path, segments: list, indices: list[int],
     log_probs = _emissions(samples)
     path = _viterbi(log_probs, targets, vocabulary["<blank>"])
     times = _word_times(spoken, path)
+    scores = _word_scores(log_probs, targets, spoken, path)
 
     bounds: dict[int, list[float]] = {}
-    for owner, (start, end) in zip(owners, times):
+    marks: dict[int, list[float]] = {}
+    for owner, (start, end), score in zip(owners, times, scores):
+        marks.setdefault(owner, []).append(score)
         if end <= start:
             continue
         edge = bounds.setdefault(owner, [start, end])
         edge[0] = min(edge[0], start)
         edge[1] = max(edge[1], end)
-    return [(owner, begin + a, begin + b) for owner, (a, b) in bounds.items()]
+    return [(owner, begin + a, begin + b, marks.get(owner, []))
+            for owner, (a, b) in bounds.items()]
 
 
-async def refine(segments: list, audio: Path, on_step=None) -> int:
-    """מתקן את זמני הסגמנטים לפי יישור מול האודיו. מחזיר כמה שונו."""
+async def refine(segments: list, audio: Path, on_step=None,
+                 move: bool = True) -> int:
+    """מתקן את זמני הסגמנטים לפי יישור מול האודיו. מחזיר כמה שונו.
+
+    באותו מעבר בודק גם אם כל סגמנט נאמר באמת. סגמנט שהמודל המציא
+    מתרוקן (text = ""), והקורא מסיר אותו לפני התרגום. move=False בודק
+    בלבד ולא נוגע בזמנים — למסלול שהתזמונים בו כבר מדויקים
+    """
     loaded = _model()
     if loaded is None or not segments:
         return 0
@@ -232,6 +285,7 @@ async def refine(segments: list, audio: Path, on_step=None) -> int:
     loop = asyncio.get_running_loop()
     moved = 0
     done = 0
+    emptied: list[str] = []
 
     async def one(token: int, indices: list[int]) -> None:
         nonlocal moved, done
@@ -242,8 +296,14 @@ async def refine(segments: list, audio: Path, on_step=None) -> int:
             except Exception as exc:  # noqa: BLE001 — עדיף תזמון ישן מכישלון
                 log.warning("יישור חלון נכשל: %s", exc)
                 fixed = []
-        for index, start, end in fixed:
+        for index, start, end, scores in fixed:
             segment = segments[index]
+            if config.ALIGN_DROP_INVENTED and invented(scores):
+                emptied.append(f"{segment.start:.0f}s {segment.text.strip()[:60]}")
+                segment.text = ""
+                continue
+            if not move:
+                continue
             if abs(segment.start - start) > 0.08:
                 moved += 1
             segment.start = start
@@ -254,5 +314,8 @@ async def refine(segments: list, audio: Path, on_step=None) -> int:
 
     async with pool.job() as token:
         await asyncio.gather(*(one(token, group) for group in groups))
+    if emptied:
+        log.warning("נמחקו %d שורות שלא נשמעות באודיו (הזיות): %s",
+                    len(emptied), " · ".join(emptied[:20]))
     log.info("היישור הזיז %d מתוך %d סגמנטים", moved, len(segments))
     return moved

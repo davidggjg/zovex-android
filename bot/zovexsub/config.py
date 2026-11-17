@@ -764,6 +764,14 @@ ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
 # יעיל יותר. תפוקה לליבה בשני חוטים — 15 שניות: 3.7x · 25: 2.75x · 40: 1.85x
 ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 15)   # שניות לחלון
 ALIGN_PAD = float(os.getenv("ALIGN_PAD") or 0.5)        # ריפוד סביב החלון
+# זיהוי הזיות מתוך היישור: ממוצע ציוני המילים בסגמנט. מילים שנאמרו
+# נמדדו בין 0 ל-1-, טקסט מומצא בין 6- ל-12-. הרף באמצע, עם מרווח
+ALIGN_DROP_INVENTED = os.getenv("ALIGN_DROP_INVENTED", "1") != "0"
+ALIGN_INVENTED = float(os.getenv("ALIGN_INVENTED") or -5.0)
+ALIGN_INVENTED_SHORT = float(os.getenv("ALIGN_INVENTED_SHORT") or -8.0)
+# גם כשהתזמונים הגיעו מהמודל עצמו מריצים את המעבר לבדיקת הזיות בלבד.
+# זה מוסיף את זמן היישור, ולכן אפשר לכבות
+ALIGN_VERIFY = os.getenv("ALIGN_VERIFY", "1") != "0"
 # חוטים לכל חלון יישור. שווה ל-BURN_SEGMENT_THREADS בכוונה: שניהם
 # לוקחים מקום אחד מאותה בריכה, ומקום חייב להיות באותו גודל לשניהם
 ALIGN_THREADS = _int("ALIGN_THREADS", 2)

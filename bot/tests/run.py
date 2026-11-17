@@ -5538,6 +5538,26 @@ def _hedged_request_cuts_the_tail() -> None:
     assert _time.monotonic() - began < 1.5
 
 
+@check("יישור מזהה שורה מומצאת: מילה שלא נשמעת מקבלת ציון נמוך ונמחקת")
+def _():
+    import numpy as np
+    from zovexsub import align
+    # שלוש "אותיות" ו-blank. בפריימים 0-5 נשמעת אות 1, אחריהם רק שקט
+    lp = np.full((12, 4), -12.0)
+    lp[:6, 1] = -0.1
+    lp[6:, 0] = -0.1
+    path = [1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3]
+    scores = align._word_scores(lp, [1, 2], ["a", "b"], path)
+    assert scores[0] > -1 and scores[1] < -10, scores
+    assert not align.invented([-0.2, -0.5, -1.0])
+    assert align.invented([-9.0, -11.0, -7.0])
+    # קצרה: רף מחמיר, כדי לא למחוק מילה אמיתית בקצה החלון
+    assert not align.invented([-6.0])
+    assert align.invented([-10.0])
+    src = inspect.getsource(pipeline.run)
+    assert "if s.text.strip()" in src and "move=not verify_only" in src
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:
