@@ -935,7 +935,7 @@ async def main() -> None:
         # למידה בזמן מת: רצה ברקע, רק כשאף עבודה אינה פעילה
         from . import idle
         _idle_task = asyncio.create_task(idle.run_forever(
-            lambda: any(not task.done() for task in botjob._jobs.values())))
+            botjob.busy))
         _background.add(_idle_task)
         try:
             log.info("מסלול הבוט פעיל: @%s — שלח אליו סרטון ישירות",

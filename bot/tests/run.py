@@ -5588,6 +5588,48 @@ def _():
     assert "_send_extras" in inspect.getsource(botjob._from_link)
 
 
+@check("עצור מבטל את כל העבודות בצ'אט, גם צריבה ישנה שעבודה חדשה נרשמה אחריה")
+def _():
+    from zovexsub import botjob, localbot
+    said = []
+
+    async def fake_say(chat, text, **kw):
+        said.append(text)
+        return {}
+
+    async def scenario():
+        old_say = localbot.say
+        localbot.say = fake_say
+        try:
+            async def job(chat):
+                botjob.claim(chat)
+                try:
+                    await asyncio.sleep(30)
+                finally:
+                    botjob.release(chat)
+
+            burn = asyncio.create_task(job(77))
+            await asyncio.sleep(0.01)
+            fresh = asyncio.create_task(job(77))
+            await asyncio.sleep(0.01)
+            assert botjob.busy()
+            await botjob.stop(77)
+            await asyncio.sleep(0.01)
+            assert burn.cancelled() and fresh.cancelled(), (burn, fresh)
+            assert not botjob.busy()
+        finally:
+            localbot.say = old_say
+
+    import tempfile
+    saved = config.WORK_DIR
+    config.WORK_DIR = Path(tempfile.mkdtemp())
+    try:
+        asyncio.run(scenario())
+    finally:
+        config.WORK_DIR = saved
+    assert "נעצרו 2" in said[-1], said
+
+
 def main() -> int:
     failed = 0
     for name, fn in CHECKS:

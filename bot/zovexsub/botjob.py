@@ -76,7 +76,24 @@ class Screen:
 
 # העבודה שרצה בכל צ'אט, כדי שכפתור עצור יוכל לבטל אותה. העבודה
 # רצה מנותקת (botmenu._detach), ולכן יש מה לבטל
-_jobs: dict[int, "asyncio.Task"] = {}
+_jobs: dict[int, set] = {}
+# כל העבודות של הצ'אט, ולא רק האחרונה. כשהיה כאן מקום אחד, עבודה חדשה
+# שנשלחה בזמן שצריבה רצה דרסה אותה ברישום: "עצור" ביטל רק את החדשה,
+# והצריבה הישנה המשיכה בלי שום דרך לעצור אותה. נמדד אצל המשתמש:
+# "עשיתי ביטול על צריבה וזה ממשיך לצרוב"
+
+
+def _live(chat: int) -> set:
+    tasks = {t for t in _jobs.get(chat, set()) if not t.done()}
+    if tasks:
+        _jobs[chat] = tasks
+    else:
+        _jobs.pop(chat, None)
+    return tasks
+
+
+def busy() -> bool:
+    return any(_live(chat) for chat in list(_jobs))
 
 
 def _publish() -> None:
@@ -87,7 +104,7 @@ def _publish() -> None:
     שום עבודה. הבוט הוא היחיד שיודע באמת
     """
     live = {str(chat): int(time.time())
-            for chat, task in _jobs.items() if not task.done()}
+            for chat in list(_jobs) if _live(chat)}
     try:
         config.WORK_DIR.mkdir(parents=True, exist_ok=True)
         (config.WORK_DIR / "active.json").write_text(
@@ -97,28 +114,37 @@ def _publish() -> None:
 
 
 def claim(chat_id) -> None:
-    """רושם את העבודה הנוכחית כשל הצ'אט הזה."""
+    """רושם את העבודה הנוכחית כאחת מעבודות הצ'אט."""
     task = asyncio.current_task()
     if task is not None:
-        _jobs[int(chat_id)] = task
+        _jobs.setdefault(int(chat_id), set()).add(task)
         _publish()
 
 
 def release(chat_id) -> None:
-    _jobs.pop(int(chat_id), None)
+    """משחרר רק את העבודה הנוכחית — לא את האחרות שרצות באותו צ'אט."""
+    task = asyncio.current_task()
+    tasks = _jobs.get(int(chat_id))
+    if tasks is not None:
+        tasks.discard(task)
+        if not tasks:
+            _jobs.pop(int(chat_id), None)
     _publish()
 
 
 async def stop(chat_id) -> None:
-    """מבטל את העבודה שרצה בצ'אט. נקרא מכפתור עצור."""
-    task = _jobs.pop(int(chat_id), None)
+    """מבטל את כל העבודות שרצות בצ'אט. נקרא מכפתור עצור."""
+    tasks = _live(int(chat_id))
+    _jobs.pop(int(chat_id), None)
     _publish()
-    if task is None or task.done():
+    if not tasks:
         await localbot.say(chat_id, "אין עבודה פעילה לעצור.")
         return
-    log.warning("המשתמש עצר את העבודה בצ'אט %s", chat_id)
-    task.cancel()
-    await localbot.say(chat_id, "🛑 העבודה נעצרה.")
+    log.warning("המשתמש עצר %d עבודות בצ'אט %s", len(tasks), chat_id)
+    for task in tasks:
+        task.cancel()
+    await localbot.say(chat_id, "🛑 העבודה נעצרה." if len(tasks) == 1
+                       else f"🛑 נעצרו {len(tasks)} עבודות.")
 
 
 def _banner(chat_id) -> str:
