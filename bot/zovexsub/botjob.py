@@ -1171,7 +1171,13 @@ async def _relay_video(chat_id, dst: Path, info: dict, stream: dict,
     """
     size = dst.stat().st_size
     user, which = botapi.uploader(size, botapi.premium())
-    log.info("העלאה: %.2fGB ← חשבון %s", size / 1024 ** 3, which)
+    # המזהה עצמו ולא רק שם התפקיד: נמדד שבערוץ ההודעה נראתה כאילו
+    # עלתה מה-Premium בעוד הלוג אמר "רגיל". רק המזהה מכריע
+    try:
+        who = (await user.get_me()).id if user is not None else "אין"
+    except Exception:  # noqa: BLE001
+        who = "?"
+    log.info("העלאה: %.2fGB ← חשבון %s (id=%s)", size / 1024 ** 3, which, who)
     first = await _relay_with(user, which, chat_id, dst, info, stream,
                               thumb, screen, full_cover, caption)
     if first or which != "רגיל" or botapi.premium() is None:
