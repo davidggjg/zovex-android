@@ -561,6 +561,9 @@ async def run(choice) -> None:
     # שתי הבקשות נפתחו במקביל ואף אחת לא ידעה על השנייה — המשתמש ראה
     # שני דברים פתוחים ולא ידע מה לשלוח ראשון
     both = choice.cover == "כן" and _brings_own(choice)
+    if choice.cover == "אופציונלי":
+        # הורדה בלבד: מקבלים תמונה אם תגיע, ולא מחכים לה
+        _cover_wait.add(int(chat_id))
     if choice.cover == "כן":
         _cover_wait.add(int(chat_id))
         await localbot.say(
@@ -579,6 +582,7 @@ async def run(choice) -> None:
                                   work, screen, choice.size_bytes,
                                   choice.source_message)
         if source is None:
+            _cover_wait.discard(int(chat_id))
             _waiting.pop(int(chat_id), None)
             _given.pop(int(chat_id), None)
             _translating.discard(int(chat_id))
@@ -1187,13 +1191,22 @@ async def _deliver_raw(chat_id, source: Path, work: Path, screen) -> None:
     info = await media.probe(source)
     stream = next((s for s in info.get("streams", [])
                    if s.get("codec_type") == "video"), {})
-    poster = await media.poster(source, work)
+    # תמונה שהמשתמש שלח תוך כדי ההורדה גוברת על פריים מהסרטון, ונשלחת
+    # גם כעטיפה במלוא הרזולוציה — כמו בסרטון צרוב
+    _cover_wait.discard(int(chat_id))
+    poster = _cover.pop(int(chat_id), None)
+    full_cover = _cover_full.pop(int(chat_id), None)
+    if poster is None or not poster.exists():
+        poster = await media.poster(source, work)
+    else:
+        log.info("הורדה בלבד עם פוסטר שהמשתמש שלח")
     size_gb = source.stat().st_size / 1024 ** 3
     log.info("הורדה בלבד: %.2fGB, %sx%s", size_gb,
              stream.get("width"), stream.get("height"))
     await screen.show(f"📤 מעלה כמו שהוא · {size_gb:.2f}GB", force=True)
     relayed = await _relay_video(chat_id, source, info, stream, poster,
-                                 screen, caption="⬇️ הורדה מקישור")
+                                 screen, full_cover=full_cover,
+                                 caption="⬇️ הורדה מקישור")
     if not relayed:
         if source.stat().st_size > localbot.MAX_BYTES:
             raise RuntimeError(
@@ -1203,7 +1216,8 @@ async def _deliver_raw(chat_id, source: Path, work: Path, screen) -> None:
             chat_id, source, caption="⬇️ הורדה מקישור",
             duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
             width=int(stream.get("width", 0) or 0),
-            height=int(stream.get("height", 0) or 0), thumb=poster)
+            height=int(stream.get("height", 0) or 0), thumb=poster,
+            cover=full_cover)
     await screen.show("✅ הועלה", force=True)
 
 
@@ -1306,7 +1320,10 @@ async def _relay_with(user, which: str, chat_id, dst: Path, info: dict,
                 peer=where, media=tt.InputMediaUploadedPhoto(file=picture)))
             photo = answer.photo
             parcel = tt.InputMediaUploadedDocument(
-                file=handle, mime_type="video/mp4", attributes=attributes,
+                file=handle, attributes=attributes,
+                # הורדה בלבד מעלה גם mkv ו-webm כמו שהם
+                mime_type={".mkv": "video/x-matroska", ".webm": "video/webm"}
+                .get(dst.suffix.lower(), "video/mp4"),
                 thumb=await user.upload_file(str(thumb)) if thumb else None,
                 video_cover=tt.InputPhoto(
                     id=photo.id, access_hash=photo.access_hash,
