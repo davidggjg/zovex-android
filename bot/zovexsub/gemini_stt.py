@@ -106,7 +106,11 @@ def _one_chunk(path: Path, key: str, diarize: bool) -> list[dict]:
     """מעלה קטע, מתמלל אותו ומוחק אותו מהשרת של גוגל."""
     from google import genai
 
-    client = genai.Client(api_key=key)
+    # v1beta במפורש: המודל קיים ברשימת המודלים של v1beta בכל המפתחות
+    # (נבדק אצל המשתמש, 7 מתוך 7), אבל הקריאה נשלחה לגרסה אחרת וחזרה
+    # 404 עם ההנחיה "set the API version to 'v1beta'"
+    client = genai.Client(api_key=key, http_options={
+        "api_version": config.GEMINI_STT_API_VERSION})
     uploaded = None
     try:
         uploaded = client.files.upload(file=str(path))
