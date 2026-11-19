@@ -780,6 +780,8 @@ ALIGN_MODEL = os.getenv("ALIGN_MODEL") or "/opt/zovexsub/models/aligner"
 # יעיל יותר. תפוקה לליבה בשני חוטים — 15 שניות: 3.7x · 25: 2.75x · 40: 1.85x
 ALIGN_WINDOW = float(os.getenv("ALIGN_WINDOW") or 15)   # שניות לחלון
 ALIGN_PAD = float(os.getenv("ALIGN_PAD") or 0.5)        # ריפוד סביב החלון
+# חלון ארוך מזה לא מיושר כלל: הזמן גדל ריבועית, וחלון של דקות תוקע הכול
+ALIGN_MAX_SPAN = float(os.getenv("ALIGN_MAX_SPAN") or 45)
 # זיהוי הזיות מתוך היישור: ממוצע ציוני המילים בסגמנט. מילים שנאמרו
 # נמדדו בין 0 ל-1-, טקסט מומצא בין 6- ל-12-. הרף באמצע, עם מרווח
 ALIGN_DROP_INVENTED = os.getenv("ALIGN_DROP_INVENTED", "1") != "0"

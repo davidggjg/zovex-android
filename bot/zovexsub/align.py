@@ -248,6 +248,14 @@ def _align_window(audio: Path, segments: list, indices: list[int],
     pad = config.ALIGN_PAD
     begin = max(0.0, segments[indices[0]].start - pad)
     finish = segments[indices[-1]].end + pad
+    # הקשב של המודל גדל ריבועית עם אורך הקטע. סגמנט עם זמנים שבורים —
+    # ג'ימיני מחזיר לפעמים מילה שנמתחת על פני דקות — הופך חלון אחד
+    # לקטע של כמה דקות, והוא לבדו תוקע את כל השלב ("אין תזוזה" על 0%).
+    # חלון כזה נשאר עם הזמנים שלו, בלי יישור
+    if finish - begin > config.ALIGN_MAX_SPAN:
+        log.warning("חלון יישור ארוך מדי (%.0f שניות ב-%.0f) — מדלגים עליו",
+                    finish - begin, begin)
+        return []
 
     spoken: list[str] = []
     owners: list[int] = []
