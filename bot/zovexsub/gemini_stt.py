@@ -21,11 +21,23 @@ from .stt import Segment, Transcript, Word
 
 log = logging.getLogger(__name__)
 
-MODEL = "gemini-3.5-transcribe"
+MODEL = config.GEMINI_STT_MODEL
+
+
+class ModelMissing(RuntimeError):
+    """המודל אינו קיים בחשבון. אין טעם לנסות מפתח אחר או קטע אחר."""
+
+
+# נמדד אצל המשתמש: 404 "Model not found" על כל המפתחות ובכל 16 הקטעים,
+# וכל קטע ניסה את כל המפתחות עם קירור — רבע שעה עד שנפל ל-Groq. שגיאה
+# כזו זהה בכל מפתח, ולכן הראשונה עוצרת הכול, וגם העבודות הבאות מדלגות
+_missing: list[str] = []
 
 
 def available() -> bool:
     if not config.GEMINI_API_KEYS or not config.GEMINI_STT:
+        return False
+    if _missing:
         return False
     try:
         __import__("google.genai")
@@ -142,6 +154,12 @@ async def _chunk_words(path: Path, diarize: bool) -> tuple[list[dict], bool, str
         except Exception as exc:  # noqa: BLE001 — מנסים את המפתח הבא
             last = exc
             text = str(exc).lower()
+            if "not_found" in text or ("404" in text and "model" in text):
+                _missing.append(str(exc)[:200])
+                log.error("המודל %s אינו קיים בחשבון — מפסיקים את תמלול "
+                          "ג'ימיני ועוברים מיד ל-Groq. לשינוי: GEMINI_STT_MODEL "
+                          "ב-.env", MODEL)
+                raise ModelMissing(str(exc)) from exc
             # התיעוד מראה זיהוי דוברים יחד עם תזמונים, אבל חלק
             # מהשילובים נדחים. במקרה כזה מוותרים על הדוברים ולא על הכל
             if diarize and ("diariz" in text or "invalid" in text
@@ -251,6 +269,8 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
         if length <= 0.5:
             return
         async with gate:
+            if _missing:
+                raise ModelMissing(_missing[0])
             # .flac ולא .wav: cut_audio כותב FLAC, וה-SDK גוזר את
             # mime_type משם הקובץ. סיומת שגויה פירושה שאנחנו מצהירים
             # audio/wav על בייטים של FLAC
@@ -282,6 +302,8 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
         outcome = await asyncio.gather(
             *(one(i, b) for i, b in enumerate(starts)),
             return_exceptions=True)
+        if any(isinstance(r, ModelMissing) for r in outcome):
+            return None
         broke = [r for r in outcome if isinstance(r, BaseException)]
         for problem in broke:
             log.warning("חלק תמלול נכשל (%s: %s)",

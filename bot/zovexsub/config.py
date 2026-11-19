@@ -913,6 +913,9 @@ GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)
 
 # תמלול דרך gemini-3.5-transcribe: מודל ASR ייעודי שמחזיר תזמוני מילים
 # ומי אמר אותן. התזמונים שלו מדויקים במקור, בלי צורך ביישור בדיעבד
+# שם מודל התמלול. היה קבוע בקוד, ונמדד אצל המשתמש שגוגל מחזירה עליו
+# 404 — עכשיו אפשר להחליף בלי עדכון קוד
+GEMINI_STT_MODEL = os.getenv("GEMINI_STT_MODEL") or "gemini-3.5-transcribe"
 GEMINI_STT = (os.getenv("GEMINI_STT") or "0").strip().lower() not in ("0", "off", "no", "")
 GEMINI_STT_SPEAKERS = (os.getenv("GEMINI_STT_SPEAKERS") or "1").strip() not in ("0", "off", "no")
 # עם תזמוני מילים המודל מקבל עד שלושים דקות לבקשה, אז עשרים בטוח
