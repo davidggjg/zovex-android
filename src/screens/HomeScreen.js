@@ -21,6 +21,7 @@ import {
   Share,
   PanResponder,
 } from 'react-native';
+import {tvStyles, OVERSCAN_X, OVERSCAN_Y} from '../theme/tvScale';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
 import {setCurrentEmail} from '../api/access';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -91,9 +92,14 @@ const NUM_COLS = IS_TV ? 6 : 3;
 const OverlayWrap = IS_TV
   ? ({style, children}) => <View style={style}>{children}</View>
   : TouchableOpacity;
-// לכל אריח 5px שוליים מכל צד (10) + לרשת 8px ריפוד מכל צד (16):
-// SW = N*CARD_W + N*10 + 16  →  CARD_W = (SW - 16 - N*10) / N
-const CARD_W = Math.floor((SW - 16 - NUM_COLS * 10) / NUM_COLS);
+// לכל אריח 5px שוליים מכל צד (10) + לרשת 8px ריפוד מכל צד (16), ובטלוויזיה
+// גם האזור הבטוח מ-overscan משני הצדדים:
+// SW = N*CARD_W + N*10 + 16 + 2*OVERSCAN_X
+//
+// ה-overscan **חייב** להיכנס לנוסחה הזו. בלעדיו שש העמודות מחושבות על
+// רוחב המסך המלא בעוד שהרשת מרופדת פנימה, כלומר השורה רחבה מהמקום שיש
+// לה — האריח השישי נדחף החוצה והרשת נשברת.
+const CARD_W = Math.floor((SW - 16 - 2 * OVERSCAN_X - NUM_COLS * 10) / NUM_COLS);
 const CARD_H = Math.floor(CARD_W * 1.48);
 // באנר הראשי. בטלפון הפוסטרים לאורך (2:3), ולכן הגובה נגזר מהרוחב. בטלוויזיה
 // אותה נוסחה נתנה 1.25 × 1920 = 2400 פיקסלים על מסך שגובהו 1080 — באנר גבוה
@@ -695,7 +701,7 @@ iframe{border:0;width:100%;height:100%;display:block}</style></head><body>
   );
 }
 
-const mdStyles = StyleSheet.create({
+const mdStyles = StyleSheet.create(tvStyles({
   trailerWeb: {flex: 1, backgroundColor: '#000'},
   trailerBox: {marginBottom: 16},
   trailerHead: {flexDirection: 'row', alignItems: 'center',
@@ -849,7 +855,7 @@ const mdStyles = StyleSheet.create({
   epNum: {color: colors.primaryHi, fontSize: 11, fontWeight: '700', textAlign: 'right'},
   epTitle: {color: colors.text, fontSize: 13, fontWeight: '600', textAlign: 'right', marginTop: 3},
   epPlayIcon: {color: colors.primary, fontSize: 14},
-});
+}));
 
 // ── HeroBanner ────────────────────────────────────────────────────────────────
 
@@ -878,12 +884,12 @@ function HomeFooter({navigation}) {
   );
 }
 
-const ftStyles = StyleSheet.create({
+const ftStyles = StyleSheet.create(tvStyles({
   wrap: {borderTopWidth: 1, borderTopColor: '#1c1c1c', marginTop: 20, paddingTop: 18, paddingBottom: IS_TV ? 30 : 220, paddingHorizontal: 16},
   row: {flexDirection: 'row-reverse', flexWrap: 'wrap', justifyContent: 'center', gap: 16, marginBottom: 10},
   link: {color: '#888', fontSize: 13},
   note: {color: '#555', fontSize: 11, textAlign: 'center', marginTop: 4},
-});
+}));
 
 // ── FreeBar ───────────────────────────────────────────────────────────────────
 
@@ -937,7 +943,7 @@ const FreeBar = memo(function FreeBar({onSupport}) {
   );
 });
 
-const fbStyles = StyleSheet.create({
+const fbStyles = StyleSheet.create(tvStyles({
   wrap: {
     alignItems: 'center',
     backgroundColor: 'rgba(229,9,20,0.10)',
@@ -951,7 +957,7 @@ const fbStyles = StyleSheet.create({
   cta: {color: '#8ab4f8', fontWeight: '700'},
   x: {paddingHorizontal: 8, paddingVertical: 4},
   xTxt: {color: '#888', fontSize: 14, fontWeight: '700'},
-});
+}));
 
 // memo: הבאנר מחזיק טיימר ואנימציה משלו, ובלי memo הוא צויר מחדש בכל רינדור
 // של מסך הבית — כלומר בכל לחיצה, בכל מעבר focus ובכל שינוי חיפוש.
@@ -2782,7 +2788,7 @@ export default function HomeScreen({navigation, route}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   container: {flex: 1, backgroundColor: colors.bg},
   exitCard: {
     backgroundColor: '#161616', borderRadius: 18, paddingVertical: 28,
@@ -2930,7 +2936,7 @@ const styles = StyleSheet.create({
   searchScreenInput: {
     color: colors.text, fontSize: font.body, paddingHorizontal: 16, paddingVertical: 12,
   },
-  // ── צ'יפי סינון (ז'אנר/שנה) בדף החיפוש ──
+  // ── צ'יפי סינון (ז'אנר/שנה)) בדף החיפוש ──
   searchFilters: {paddingBottom: 6},
   filterRow: {flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 5},
   filterChip: {
@@ -3006,13 +3012,16 @@ const styles = StyleSheet.create({
 
   // ── Netflix rows ──
   rowWrap: {marginBottom: 24},
-  rowHeader: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, marginBottom: 10, justifyContent: 'flex-end'},
+  // ‎+OVERSCAN_X‎: טלוויזיות רבות חותכות את שולי התמונה. גוגל מנחה
+  // להשאיר 48dp בצדדים ו-27dp למעלה/למטה לכל מה שחייב להיראות.
+  // הרקע והבאנר נשארים במסך מלא בכוונה — רק התוכן נכנס פנימה.
+  rowHeader: {flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 + OVERSCAN_X, marginBottom: 10, justifyContent: 'flex-end'},
   // מבטא אדום קטן ליד כותרת השורה — אותה שפה כמו הפס האדום שמסמן שידור חי,
   // רק כאן קבוע. באתר זה מגיע מ-gradient על הטקסט; כאן, בלי ליצור תלות
   // חדשה, פס צר ומעוגל נותן אפקט דומה בעלות אפסית.
   liveIconWrap: {marginLeft: 8, justifyContent: 'center'},
   rowTitle: {color: colors.text, fontSize: font.section + 1, fontWeight: '800', textAlign: 'right', letterSpacing: 0.2},
-  rowList: {paddingHorizontal: 10},
+  rowList: {paddingHorizontal: 10 + OVERSCAN_X},
 
   // ── Card ──
   // 14 ולא 10: אותו רדיוס עיגול שכבר כויל באתר (.zv-card__art), כדי
@@ -3057,8 +3066,8 @@ const styles = StyleSheet.create({
   // הסרגל יושב ב-bottom:56, וגובהו padding 6 + 7 + אייקון 24 + תווית ~16
   // + 7 + 6 ≈ 66. יחד ~122, ועוד אוויר כדי שהשם האחרון לא ייצמד לסרגל.
   // בטלוויזיה אין סרגל (BottomNav הוא ‎!IS_TV‎) ולכן שם לא השתנה כלום.
-  grid: {paddingHorizontal: 8, paddingTop: 4,
-         paddingBottom: IS_TV ? 20 : 150},
+  grid: {paddingHorizontal: 8 + OVERSCAN_X, paddingTop: 4 + OVERSCAN_Y,
+         paddingBottom: IS_TV ? 20 + OVERSCAN_Y : 150},
   empty: {color: colors.textSecondary, textAlign: 'center', marginTop: 60, fontSize: font.body},
   emptySearchWrap: {marginTop: 30, alignItems: 'center'},
   emptyClearBtn: {marginTop: 4, paddingVertical: 10, paddingHorizontal: 20,
@@ -3144,4 +3153,4 @@ const styles = StyleSheet.create({
   donBitTxt: {color: '#fff', fontSize: 16, fontWeight: '700'},
   donContinueBtn: {width: '100%', backgroundColor: '#1e1e1e', borderRadius: 14, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#333'},
   donContinueTxt: {color: '#888', fontSize: 14},
-});
+}));

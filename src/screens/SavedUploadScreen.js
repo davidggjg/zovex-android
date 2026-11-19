@@ -12,6 +12,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   ActivityIndicator, TextInput, Alert, NativeModules, Image,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 
 // בורר משלנו ולא react-native-image-picker: זה פתח את גוגל תמונות, שמציג
 // פריטים שיושבים בענן ולא במכשיר — וסרט שהורדת יושב ב"הורדות" ובכלל לא מופיע
@@ -408,7 +409,7 @@ export default function SavedUploadScreen({route, navigation}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   container: {flex: 1, backgroundColor: '#0a0a0a'},
   header: {flexDirection: 'row-reverse', alignItems: 'center', gap: 12,
            padding: 16, borderBottomWidth: 1, borderBottomColor: '#1c1c1e'},
@@ -449,4 +450,4 @@ const styles = StyleSheet.create({
        alignItems: 'center', marginTop: 4},
   goOff: {backgroundColor: '#3a2023'},
   goTxt: {color: '#fff', fontSize: 16, fontWeight: '800'},
-});
+}));

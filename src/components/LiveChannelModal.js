@@ -3,6 +3,7 @@ import {t} from '../i18n';
 import {
   View, Text, Image, ScrollView, StyleSheet, Modal, ActivityIndicator,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import TvFocusable from './TvFocusable';
 import {fetchChannelSchedule, splitNowNext, channelSlug} from '../api/epg';
 import {
@@ -151,7 +152,7 @@ export default function LiveChannelModal({channel, onPlay, onClose}) {
   );
 }
 
-const s = StyleSheet.create({
+const s = StyleSheet.create(tvStyles({
   overlay: {...StyleSheet.absoluteFillObject, backgroundColor: '#0a0a0a'},
   closeBtn: {
     position: 'absolute', top: 14, right: 14, zIndex: 10,
@@ -201,4 +202,4 @@ const s = StyleSheet.create({
   remindBtnOn: {backgroundColor: '#e50914', borderColor: '#e50914'},
   remindTxt: {color: '#bbb', fontSize: 12, fontWeight: '700'},
   remindTxtOn: {color: '#fff'},
-});
+}));

@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {View, StyleSheet, ActivityIndicator, Text} from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import Video from 'react-native-video';
 import {buildStreamSource, variantCount} from '../utils/liveSource';
 import {vtFallbackSrc} from './NativePlayer';
@@ -143,11 +144,11 @@ export default function TvNativePlayer({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   wrap: {flex: 1, backgroundColor: '#000'},
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0, justifyContent: 'center', alignItems: 'center'},
   err: {color: '#ddd', fontSize: 16},
   diag: {position: 'absolute', top: 0, left: 0, right: 0,
     backgroundColor: 'rgba(0,0,0,0.75)', paddingHorizontal: 8, paddingVertical: 6},
   diagTxt: {color: '#9ad', fontSize: 11, textAlign: 'left'},
-});
+}));

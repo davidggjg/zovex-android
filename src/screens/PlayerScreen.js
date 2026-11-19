@@ -1,5 +1,6 @@
 import React, {useCallback, useEffect, useRef, useMemo, useState} from 'react';
 import {View, Text, TouchableOpacity, StyleSheet, StatusBar, NativeModules, Platform} from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {colors} from '../theme/tokens';
 import {WebView} from 'react-native-webview';
 import TvNativePlayer from '../components/TvNativePlayer';
@@ -1707,7 +1708,7 @@ export default function PlayerScreen({route, navigation}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   // חלון "להמשיך מאיפה שעצרת". יושב מעל הנגן (zIndex גבוה) כי הווידאו
   // ממשיך להתקיים מתחתיו — הוא רק מושהה עד שהצופה עונה.
   resumeWrap: {
@@ -1746,4 +1747,4 @@ const styles = StyleSheet.create({
   errorBtnTxt: {color: '#fff', fontSize: 15, fontWeight: '700'},
   errorBox: {width: 60, height: 60, borderRadius: 30, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center'},
   errorClose: {width: 24, height: 3, backgroundColor: '#555', borderRadius: 2},
-});
+}));

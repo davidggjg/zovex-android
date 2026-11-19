@@ -103,6 +103,11 @@ jobs:
       - name: Check live stream type detection
         run: node scripts/test-stream-source.js
 
+      # הפרופורציות בטלוויזיה. רגרסיה כאן נוגעת בכל מסך בבת אחת, ובטלפון
+      # היא בלתי נראית לגמרי — ולכן היא נבדקת ולא נבחנת בעין.
+      - name: Check TV proportional scaling
+        run: node scripts/test-tv-scale.js
+
       # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
       # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)

@@ -13,6 +13,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import {tvStyles} from './theme/tvScale';
 import {NavigationContainer} from '@react-navigation/native';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import SettingsScreen from './screens/SettingsScreen';
@@ -26,6 +27,7 @@ import SavedUploadScreen from './screens/SavedUploadScreen';
 import LegalScreen from './screens/LegalScreen';
 import ZovexIntro from './components/ZovexIntro';
 import {initUserId} from './api/userStore';
+import CrashBoundary from './components/CrashBoundary';
 import BlockedScreen from './components/BlockedScreen';
 import {checkAccess, loadStoredEmail, subscribeEmail} from './api/access';
 
@@ -393,6 +395,9 @@ export default function App() {
   }
 
   return (
+    // עוטף את כל הניווט: שגיאת JS בכל מסך נתפסת כאן במקום לפרק את העץ
+    // ולהשאיר מסך שחור בלי שום הסבר.
+    <CrashBoundary>
     <NavigationContainer linking={linking} key={`lang-${langEpoch}`}>
       <StatusBar barStyle="light-content" backgroundColor="#0a0a0a" />
       <Stack.Navigator screenOptions={{headerShown: false}}>
@@ -404,10 +409,11 @@ export default function App() {
         <Stack.Screen name="Settings" component={SettingsScreen} />
       </Stack.Navigator>
     </NavigationContainer>
+    </CrashBoundary>
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   splash: {
     flex: 1,
     justifyContent: 'center',
@@ -497,4 +503,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textAlign: 'center',
   },
-});
+}));

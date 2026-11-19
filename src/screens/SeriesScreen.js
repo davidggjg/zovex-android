@@ -10,6 +10,7 @@ import {
   Image,
   ScrollView,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 
 import {getUserId} from '../api/userStore';
 
@@ -131,7 +132,7 @@ export default function SeriesScreen({route, navigation}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   container: {flex: 1, backgroundColor: colors.bg},
   header: {flexDirection: 'row', padding: 16, alignItems: 'flex-start'},
   poster: {width: 80, height: 115, borderRadius: 10, resizeMode: 'cover'},
@@ -195,4 +196,4 @@ const styles = StyleSheet.create({
     marginTop: 4,
     textAlign: 'right',
   },
-});
+}));

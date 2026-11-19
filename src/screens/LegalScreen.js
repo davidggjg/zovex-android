@@ -3,6 +3,7 @@ import TvFocusable from '../components/TvFocusable';
 import {
   View, Text, ScrollView, TouchableOpacity, StyleSheet, Linking, StatusBar,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {getLegalDocs, getUpdated} from '../config/legal';
 import {TELEGRAM_URL, DISCORD_URL} from '../config/links';
 
@@ -71,7 +72,7 @@ export default function LegalScreen({route, navigation}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   container: {flex: 1, backgroundColor: '#0b0b0b'},
   topBar: {
     flexDirection: 'row-reverse', alignItems: 'center', justifyContent: 'space-between',
@@ -103,4 +104,4 @@ const styles = StyleSheet.create({
     paddingTop: 16, marginTop: 10,
   },
   link: {fontSize: 14, fontWeight: '700', marginLeft: 16},
-});
+}));

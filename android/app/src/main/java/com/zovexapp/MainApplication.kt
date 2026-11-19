@@ -69,6 +69,9 @@ class MainApplication : Application(), ReactApplication {
 
     override fun onCreate() {
         super.onCreate()
+        // ראשון, לפני כל אתחול אחר: קריסה בעלייה היא בדיוק מה שאין עליו
+        // שום מידע היום, ו-handler שנרשם מאוחר לא יתפוס אותה.
+        CrashLog.install(this)
         SoLoader.init(this, false)
         if (BuildConfig.IS_NEW_ARCHITECTURE_ENABLED) load()
     }

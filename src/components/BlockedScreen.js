@@ -12,6 +12,7 @@
 
 import React from 'react';
 import {View, Text, StyleSheet, StatusBar} from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {IS_TV} from '../theme/tokens';
 
 const DEFAULT_MESSAGE = 'הגישה שלך נחסמה';
@@ -31,7 +32,7 @@ export default function BlockedScreen({message}) {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   wrap: {
     flex: 1,
     backgroundColor: '#000',
@@ -69,4 +70,4 @@ const styles = StyleSheet.create({
     lineHeight: IS_TV ? 40 : 26,
     textAlign: 'center',
   },
-});
+}));

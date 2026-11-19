@@ -10,6 +10,7 @@ import {
   View, Text, Modal, TouchableOpacity, TextInput, ScrollView,
   StyleSheet, Linking, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {TELEGRAM_URL, DISCORD_URL} from '../config/links';
 import {sendFeedback, fetchMyFeedback} from '../api/movies';
 
@@ -195,7 +196,7 @@ export default function SupportModal({visible, onClose, user, onLoginWithGoogle}
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   overlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end'},
   sheet: {
     backgroundColor: '#141414', borderTopLeftRadius: 20, borderTopRightRadius: 20,
@@ -248,4 +249,4 @@ const styles = StyleSheet.create({
   dcRow: {backgroundColor: '#5865F2', borderRadius: 14, paddingVertical: 12,
     alignItems: 'center', marginTop: 14},
   dcTxt: {color: '#fff', fontSize: 14, fontWeight: '800'},
-});
+}));

@@ -13,8 +13,8 @@ android {
         applicationId "com.zovexapp"
         minSdk rootProject.ext.minSdkVersion
         targetSdk rootProject.ext.targetSdkVersion
-        versionCode 66
-        versionName "1.0.64"
+        versionCode 67
+        versionName "1.0.65"
     }
 
     // libVLC נושאת מפענחי FFmpeg מלאים, וב-APK אוניברסלי הם נכנסים פעם אחת

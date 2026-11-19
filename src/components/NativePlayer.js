@@ -4,6 +4,7 @@ import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image,
   PanResponder, Pressable, Animated, Easing,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {nextEpLead} from '../utils/nextEpLead';
 // ExoPlayer. ניסיון המעבר ל-libVLC בוטל: הוא הקריס בלחיצה על פליי, וגם
 // אחרי שאותר ותוקן בו באג אמיתי (ראה scripts/fix-vlc-autoplay-crash.sh)
@@ -643,7 +644,7 @@ export default function NativePlayer({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   // הכיוון נקבע ב-render דרך ltrRow, אחרת "1.5x" והגלגל התחלפו ביניהם.
   gearBtn: {paddingHorizontal: 10, paddingVertical: 4, alignItems: 'center',
             justifyContent: 'center'},
@@ -748,4 +749,4 @@ const styles = StyleSheet.create({
   diag: {position: 'absolute', top: 0, left: 0, right: 0,
     backgroundColor: 'rgba(0,0,0,0.75)', paddingHorizontal: 8, paddingVertical: 6},
   diagTxt: {color: '#9ad', fontSize: 11, textAlign: 'left'},
-});
+}));

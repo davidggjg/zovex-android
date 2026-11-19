@@ -41,10 +41,25 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
      *  משנה גודל או מיקום של שום דבר, ולא מזיז את השורה כמו מסגרת רגילה. */
     private val focusRect = GradientDrawable().apply {
         shape = GradientDrawable.RECTANGLE
-        cornerRadius = dp(8f)
+        cornerRadius = dp(10f)
         setColor(Color.TRANSPARENT)
-        setStroke(dp(3f).toInt(), Color.WHITE)
+        // 4dp ולא 3: נקרא ממרחק של שלושה מטרים, וזה ההבדל בין "רואים
+        // איפה אני" לבין "צריך לחפש". מיקרוסופט וגוגל שתיהן מנחות שסימון
+        // ה-focus בטלוויזיה חייב להיות חד-משמעי.
+        setStroke(dp(4f).toInt(), Color.WHITE)
     }
+
+    /** הגדלה קלה של הפריט הממוקד.
+     *
+     *  המסגרת לבדה נבלעת בקטלוג צפוף במסך גדול. הגדלה קטנה היא מה שכל
+     *  ממשק טלוויזיה עושה (נטפליקס, Google TV), והיא נקראת מיידית גם
+     *  בראייה היקפית. 1.06 ולא יותר: מעבר לזה הכרטיס דורס את שכניו,
+     *  ובשורה צפופה זה נראה שבור.
+     *
+     *  מצויר כאן ולא ב-JS מאותה סיבה כמו המסגרת — אפס מעורבות של React
+     *  בתזוזת חץ, וזה מה ששומר על השלט מגיב.
+     */
+    private val FOCUS_SCALE = 1.06f
 
     init {
         isFocusable = true
@@ -90,6 +105,11 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         // דרך elevation; ה-shadow* שלצידו הוא iOS בלבד ולא צויר כאן מעולם.
         // translationZ ולא elevation, כדי לא לדרוס ערך שמגיע מהסגנון.
         translationZ = if (gainFocus) dp(9f) else 0f
+        // ההגדלה חייבת לבוא *אחרי* translationZ, אחרת הכרטיס המוגדל נחתך
+        // על ידי שכניו במקום לעלות מעליהם.
+        val target = if (gainFocus) FOCUS_SCALE else 1f
+        animate().cancel()
+        animate().scaleX(target).scaleY(target).setDuration(130).start()
         if (dimUnfocused) alpha = if (gainFocus) 1f else 0.55f
         if (reportFocus) emit("topFocusChange", gainFocus)
     }
@@ -133,6 +153,26 @@ class TvFocusableView(context: Context) : ReactViewGroup(context) {
         }
         // נמצא יעד מחוץ לקבוצה — זו הבריחה. נשארים במקום.
         return this
+    }
+
+    // ── גלילה עם מרווח נשימה ────────────────────────────────────────────
+    //
+    // דווח: "לא כיף לגלול עם השלט". זו הסיבה המרכזית — כשהסמן עובר
+    // לכרטיס שמחוץ למסך, ‎ScrollView‎ גולל בדיוק כמה שצריך כדי שהכרטיס
+    // ייכנס, ולא פיקסל יותר. התוצאה: הכרטיס הממוקד תמיד נצמד לקצה
+    // המסך, אין שום רמז למה שבא אחריו, וכל לחיצה מזיזה את כל הרשימה
+    // בדיוק ברוחב כרטיס אחד. זה מרגיש כמו לדחוף קיר.
+    //
+    // ‎requestRectangleOnScreen‎ הוא הנקודה שבה הילד אומר להורה "גלול
+    // אליי". מנפחים כאן את המרובע לפני שמעבירים הלאה, ולכן ההורה גולל
+    // קצת יותר ונשארת הצצה לפריט הבא — בדיוק ההתנהגות של כל ממשק
+    // טלוויזיה. הניפוח הוא באחוזים מגודל הפריט עצמו, כך שהוא נכון גם
+    // לכרטיס פוסטר וגם לכפתור קטן.
+    private fun lead(size: Int) = (size * 0.6f).toInt().coerceAtMost(dp(220f).toInt())
+
+    override fun requestRectangleOnScreen(rect: android.graphics.Rect, immediate: Boolean): Boolean {
+        rect.inset(-lead(width), -lead(height))
+        return super.requestRectangleOnScreen(rect, immediate)
     }
 
     /** true לשדה החיפוש: לחיצה על המקש המרכזי מעבירה את ה-focus לתיבת הטקסט

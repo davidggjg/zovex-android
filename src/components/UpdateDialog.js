@@ -20,6 +20,7 @@ import {
   Linking,
   NativeModules,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import RNFS from 'react-native-fs';
 import {fetchAppVersion, cmpVersion, APP_VERSION} from '../api/movies';
 
@@ -162,7 +163,7 @@ export default function UpdateDialog() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   overlay: {flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30},
   card: {backgroundColor: '#161616', borderRadius: 20, padding: 26, alignItems: 'center', width: '100%', borderWidth: 1, borderColor: '#2a2a2a'},
   emoji: {fontSize: 46, marginBottom: 8},
@@ -178,4 +179,4 @@ const styles = StyleSheet.create({
   progFill: {height: '100%', backgroundColor: '#e50914', borderRadius: 6},
   progTxt: {color: '#ddd', fontSize: 14, textAlign: 'center', marginTop: 10, fontWeight: '700'},
   err: {color: '#ff8a8a', fontSize: 13, textAlign: 'center', marginTop: 12, lineHeight: 19},
-});
+}));

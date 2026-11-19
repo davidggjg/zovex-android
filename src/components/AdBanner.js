@@ -1,5 +1,6 @@
 import React from 'react';
 import {View, StyleSheet, Linking} from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {WebView} from 'react-native-webview';
 
 const AD_KEY = '8050516fd44627d57aee36c0f8306419';
@@ -56,7 +57,7 @@ export default function AdBanner() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   wrap: {
     position: 'absolute',
     bottom: 0,
@@ -70,4 +71,4 @@ const styles = StyleSheet.create({
     height: 50,
     backgroundColor: 'transparent',
   },
-});
+}));

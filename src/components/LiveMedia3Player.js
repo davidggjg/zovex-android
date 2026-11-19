@@ -3,6 +3,7 @@ import Video from 'react-native-video';
 import {
   View, Text, StyleSheet, ActivityIndicator, TouchableOpacity, Image, Pressable,
 } from 'react-native';
+import {tvStyles} from '../theme/tvScale';
 import {FS_ENTER, FS_EXIT} from './playerIcons';
 import {ltrRow} from '../i18n';
 import {buildStreamSource, variantCount, variantLabel} from '../utils/liveSource';
@@ -186,7 +187,7 @@ export default function LiveMedia3Player({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create(tvStyles({
   wrap: {flex: 1, backgroundColor: '#000'},
   center: {position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     justifyContent: 'center', alignItems: 'center'},
@@ -213,4 +214,4 @@ const styles = StyleSheet.create({
               writingDirection: 'ltr'},
   retryBtn: {paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8, backgroundColor: '#e91e8c'},
   retryText: {color: '#fff', fontWeight: '700'},
-});
+}));
