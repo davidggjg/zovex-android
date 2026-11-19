@@ -5559,7 +5559,7 @@ def _():
     assert not align.invented([-6.0])
     assert align.invented([-10.0])
     src = inspect.getsource(pipeline.run)
-    assert "if s.text.strip()" in src and "move=not verify_only" in src
+    assert "if s.text.strip()" in src and "move=guarded or not verify_only" in src
 
 
 @check("טורנט: magnet וקובץ מזוהים, הסרטון הגדול נבחר והנלווים נאספים")

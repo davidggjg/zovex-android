@@ -12,3 +12,4 @@ numpy
 google-genai
 # בדיקת איות עברית מול מילון hunspell, בפייתון טהור
 spylls
+uroman

@@ -788,6 +788,10 @@ ALIGN_INVENTED_SHORT = float(os.getenv("ALIGN_INVENTED_SHORT") or -8.0)
 # גם כשהתזמונים הגיעו מהמודל עצמו מריצים את המעבר לבדיקת הזיות בלבד.
 # זה מוסיף את זמן היישור, ולכן אפשר לכבות
 ALIGN_VERIFY = os.getenv("ALIGN_VERIFY", "1") != "0"
+# בתמלול ג'ימיני: המעבר גם מתקן זמנים, אבל רק תיקון קטן מזה. ג'ימיני
+# הוא מודל שפה, וזמניו נסחפים; היישור מדויק לעשרות אלפיות — אבל
+# בקטע של מוזיקה הוא עלול לטעות בגדול, ושם עדיף לא לזוז. 0 = בדיקה בלבד
+ALIGN_GEMINI_MAX_SHIFT = float(os.getenv("ALIGN_GEMINI_MAX_SHIFT") or 2.0)
 # חוטים לכל חלון יישור. שווה ל-BURN_SEGMENT_THREADS בכוונה: שניהם
 # לוקחים מקום אחד מאותה בריכה, ומקום חייב להיות באותו גודל לשניהם
 ALIGN_THREADS = _int("ALIGN_THREADS", 2)
@@ -934,7 +938,10 @@ GEMINI_STT_TIMEOUT = float(os.getenv("GEMINI_STT_TIMEOUT") or 900)
 # כמה מהחלקים מספיק שיצליחו כדי להשתמש בתוצאה. מתחת לזה עדיף Groq
 # על תמלול מחורר, כי חור פירושו דקות שלמות בלי כתוביות
 GEMINI_STT_MIN_GOOD = float(os.getenv("GEMINI_STT_MIN_GOOD") or 0.8)
-GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 1200)
+# עשר דקות ולא עשרים: דיווחים חוזרים על סחיפת תזמונים בג'מיני שגדלה
+# עם אורך הקטע (בערבית במיוחד), וגם — סרט של 95 דקות בחלקים של 20
+# הפעיל רק 5 מפתחות מתוך 10. בחלקים של 10 כל המפתחות עובדים במקביל
+GEMINI_STT_CHUNK = float(os.getenv("GEMINI_STT_CHUNK") or 600)
 GEMINI_STT_OVERLAP = float(os.getenv("GEMINI_STT_OVERLAP") or 10)
 # איך לקבץ מילים לשורות כתוביות
 GEMINI_STT_PAUSE = float(os.getenv("GEMINI_STT_PAUSE") or 0.72)

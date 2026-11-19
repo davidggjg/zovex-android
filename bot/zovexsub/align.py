@@ -59,8 +59,30 @@ def available() -> bool:
     return _model() is not None
 
 
+@lru_cache(maxsize=1)
+def _uroman():
+    """uroman: הממיר שחוקרי MMS עצמם משתמשים בו, לכל כתב.
+
+    בלעדיו ההמרה ידעה רק אותיות לטיניות: ערבית ואמהרית יצאו ריקות,
+    כלומר בלי יישור ובלי בדיקת הזיות בכלל, וב-טורקית ה-ı נמחקה —
+    "nasılsın" הפך ל-"nas ls n" ושבר כל מילה כזאת לחתיכות. נמדד כאן
+    """
+    try:
+        import uroman
+        return uroman.Uroman()
+    except Exception as exc:  # noqa: BLE001 — בלי uroman: לטינית בלבד
+        log.warning("uroman אינו זמין (%s) — יישור לכתב לטיני בלבד", exc)
+        return None
+
+
 def romanize(text: str, vocabulary: dict) -> str:
     """מצמצם טקסט לאותיות שהמודל מכיר: a-z וגרש בלבד."""
+    converter = _uroman()
+    if converter is not None:
+        try:
+            text = converter.romanize_string(text)
+        except Exception as exc:  # noqa: BLE001
+            log.debug("uroman נכשל על שורה: %s", exc)
     folded = unicodedata.normalize("NFKD", text.lower())
     folded = "".join(c for c in folded if unicodedata.category(c) != "Mn")
     folded = folded.replace("’", "'")
@@ -263,7 +285,7 @@ def _align_window(audio: Path, segments: list, indices: list[int],
 
 
 async def refine(segments: list, audio: Path, on_step=None,
-                 move: bool = True) -> int:
+                 move: bool = True, max_shift: float = 0.0) -> int:
     """מתקן את זמני הסגמנטים לפי יישור מול האודיו. מחזיר כמה שונו.
 
     באותו מעבר בודק גם אם כל סגמנט נאמר באמת. סגמנט שהמודל המציא
@@ -303,6 +325,10 @@ async def refine(segments: list, audio: Path, on_step=None,
                 segment.text = ""
                 continue
             if not move:
+                continue
+            # max_shift: לזמנים שכבר טובים בערך, תיקון גדול חשוד יותר
+            # מהזמן המקורי
+            if max_shift and abs(segment.start - start) > max_shift:
                 continue
             if abs(segment.start - start) > 0.08:
                 moved += 1

@@ -110,15 +110,18 @@ async def run(source: Path, work: Path, *, progress: Progress,
     if native_times and not verify_only:
         log.info("התזמונים הגיעו מהמודל עצמו — אין צורך ביישור")
     elif align.available():
-        stage = make("🔎 בודק הזיות" if verify_only else "📐 מיישר תזמונים")
+        stage = make("🔎 מדייק ובודק הזיות" if verify_only else "📐 מיישר תזמונים")
         stage.pulse()
 
         async def on_align(done: int, total: int) -> None:
             await stage.show(done / total, note=f"{done}/{total} חלונות")
 
         try:
+            guarded = verify_only and config.ALIGN_GEMINI_MAX_SHIFT > 0
             await align.refine(transcript.segments, audio, on_step=on_align,
-                               move=not verify_only)
+                               move=guarded or not verify_only,
+                               max_shift=config.ALIGN_GEMINI_MAX_SHIFT
+                               if guarded else 0.0)
         finally:
             stage.stop()
         await stage.finish()
