@@ -10,10 +10,13 @@ import {Platform, TouchableOpacity, requireNativeComponent} from 'react-native';
 //
 // בטלוויזיה: רכיב נייטיב focusable שמדווח focus ומזהה את מקש האישור, ומקבל
 // הדגשה אוטומטית. בטלפון: TouchableOpacity רגיל, בלי שינוי התנהגות.
-const NativeTvFocusable =
-  Platform.isTV ? requireNativeComponent('TvFocusable') : null;
+import {IS_TV} from '../theme/isTv';
+export {IS_TV};
 
-export const IS_TV = Platform.isTV;
+// ‎IS_TV‎ ולא ‎Platform.isTV‎: במצב הבדיקה על טלפון צריך את אותו רכיב
+// נייטיב, אחרת אין למה לתת focus ולשלט שעל המסך אין על מה לפעול.
+// ה-ViewManager רשום תמיד (ראה PipPackage), ולכן זה עובד גם בטלפון.
+const NativeTvFocusable = IS_TV ? requireNativeComponent('TvFocusable') : null;
 
 export default function TvFocusable({
   style,

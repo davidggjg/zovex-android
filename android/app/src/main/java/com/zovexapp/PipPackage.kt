@@ -9,7 +9,7 @@ class PipPackage : ReactPackage {
     override fun createNativeModules(ctx: ReactApplicationContext): List<NativeModule> =
         listOf(PipModule(ctx), ApkInstallerModule(ctx), ReminderModule(ctx),
                VideoPickerModule(ctx), UploadModule(ctx), SecureDownloadModule(ctx),
-               CrashLog(ctx))
+               CrashLog(ctx), DevTvModule(ctx))
 
     override fun createViewManagers(ctx: ReactApplicationContext): List<ViewManager<*, *>> =
         listOf(TvFocusableViewManager())

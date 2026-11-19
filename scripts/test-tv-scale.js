@@ -21,9 +21,16 @@ function load(isTV,w,h){
   let code=fs.readFileSync(f,'utf8');
   const out=babel.transformSync(code,{configFile:false,babelrc:false,filename:f,
     presets:[[require.resolve('@babel/preset-env'),{targets:{node:'current'},modules:'commonjs'}]]}).code;
-  const fake={Platform:{isTV},Dimensions:{get:()=>({width:w,height:h})}};
+  const fake={Platform:{isTV},Dimensions:{get:()=>({width:w,height:h})},NativeModules:{}};
+  // ‎./isTv‎ מזויף גם הוא: הוא קורא מודול נייטיב שלא קיים כאן, והערך
+  // שלו הוא בדיוק מה שהבדיקה רוצה לשלוט בו.
+  const fakeIsTv={IS_TV:isTV,IS_REAL_TV:isTV,IS_TV_EMULATED:false,default:isTV};
   const orig=Module._load;
-  Module._load=function(r,...a){ if(r==='react-native') return fake; return orig.call(this,r,...a); };
+  Module._load=function(r,...a){
+    if(r==='react-native') return fake;
+    if(r==='./isTv'||r.endsWith('/isTv')) return fakeIsTv;
+    return orig.call(this,r,...a);
+  };
   const m=new Module(f,null); m.filename=f; m.paths=Module._nodeModulePaths(path.dirname(f));
   try{ m._compile(out,f); } finally { Module._load=orig; }
   return m.exports;

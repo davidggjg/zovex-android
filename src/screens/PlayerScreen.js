@@ -17,6 +17,7 @@ import SHAKA_PLAYER_SOURCE from '../assets/shakaPlayerSource';
 import HLS_JS_SOURCE from '../assets/hlsJsSource';
 import {TG_PROXY, TG_CHANNELS, cleanVideoRef} from '../utils/videoSource';
 import {nextEpLead, NEXT_EP_MIN_LEAD, NEXT_EP_MAX_LEAD, NEXT_EP_LEAD_RATIO} from '../utils/nextEpLead';
+import {IS_TV} from '../theme/isTv';
 
 // Live streams used to feel like they hung forever on some networks. Root
 // cause: the player waited on fetching shaka-player.compiled.js (~560KB) and,
@@ -1084,7 +1085,9 @@ export default function PlayerScreen({route, navigation}) {
   }, [movie.id, userId, startTime]);
   const seriesEpisodesRef = useRef(seriesEpisodes);
   const isLive = !!movie.is_live;
-  const isTv = Platform.isTV; // טלוויזיה חכמה (Android TV) — WebView חלש יותר
+  // ‎IS_TV‎ (כולל מצב הבדיקה) ולא ‎Platform.isTV‎: זה בוחר את נגן
+  // הטלוויזיה ואת הפקדים שלו, וזה בדיוק מה שצריך לבדוק.
+  const isTv = IS_TV;
   const webViewRef = useRef(null);
   const nextEpIdx = seriesEpisodes ? seriesEpisodes.findIndex(e => e.id === movie.id) : -1;
   const hasNext = nextEpIdx >= 0 && nextEpIdx < (seriesEpisodes?.length ?? 0) - 1;

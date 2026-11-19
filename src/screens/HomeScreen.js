@@ -20,6 +20,7 @@ import {
   BackHandler,
   Share,
   PanResponder,
+  NativeModules,
 } from 'react-native';
 import {tvStyles, OVERSCAN_X, OVERSCAN_Y} from '../theme/tvScale';
 import {GoogleSignin} from '@react-native-google-signin/google-signin';
@@ -81,12 +82,24 @@ const YEAR_FILTERS = [
 // בטלוויזיה מודדים לפי המסך ולא לפי החלון: החלון עלול להימסר קטן יותר
 // (למשל אחרי חזרה מהנגן), וזה מה שהפך את הרשת ל"מסך של טלפון". המסך תמיד
 // מדווח את הרוחב המלא של הטלוויזיה.
+// ‎Platform.isTV‎ ולא ‎IS_TV‎: זו שאלה על החומרה. בטלוויזיה אמיתית אין
+// סרגלי מערכת ו-'window' מחזיר לפעמים 0; על טלפון במצב בדיקה 'window'
+// הוא הנכון, אחרת הפריסה מחושבת על שטח שאינו קיים.
 const {width: SW, height: SH} = Dimensions.get(Platform.isTV ? 'screen' : 'window');
 // בטלוויזיה המסך רחב וברירת המחדל של 3 עמודות ייצרה אריחים ענקיים שקשה
 // לנווט ביניהם. בטלוויזיה עוברים ל-6 עמודות (אריחים קטנים כמו בטלפון,
 // מותאמים למרחק צפייה) ובטלפון נשארים 3.
 const MAIN_SITE = 'https://zovex.duckdns.org';
-const IS_TV = Platform.isTV;
+import {IS_TV, IS_TV_EMULATED} from '../theme/isTv';
+import TvRemote from '../components/TvRemote';
+import {sha256hex} from '../utils/sha256';
+
+// ── מצב בדיקת טלוויזיה ───────────────────────────────────────────────────
+// הקוד נשמר כ-hash ולא כטקסט. טקסט גלוי בקוד נמצא בשנייה אחת ב-APK
+// (‎strings‎ על ה-bundle), ואז זה לא סוד אלא כתובת. hash אינו הופך את זה
+// להגנה אמיתית — מי שמפרק את האפליקציה רואה את המנגנון — אבל הוא מונע
+// את הדרך הקלה.
+const DEV_TV_HASH = '35527531dd7ae589e5ce3026ad0e80acc3c34b458f152bc29bee133203159644';
 const NUM_COLS = IS_TV ? 6 : 3;
 // בטלוויזיה שכבת רקע לוחצת היא יעד focus מיותר; בטלפון היא הדרך לסגור.
 const OverlayWrap = IS_TV
@@ -1962,11 +1975,43 @@ export default function HomeScreen({navigation, route}) {
     if (IS_TV) searchRef.current?.clear();
   }, []);
 
+  // מצב בדיקה: מדליק את מסלול הטלוויזיה על הטלפון ומפעיל מחדש. ההפעלה
+  // מחדש אינה פשרה אלא חלק מהמנגנון — IS_TV נקרא בזמן טעינת המודולים
+  // (StyleSheet, מספר העמודות, גובה הבאנר), ודגל שמשתנה אחרי זה לא היה
+  // משנה מהם דבר.
+  const tryDevTvCode = useCallback(v => {
+    const c = (v || '').trim();
+    if (c.length < 20) return false;
+    if (sha256hex(c) !== DEV_TV_HASH) return false;
+    clearSearch();
+    Alert.alert(
+      IS_TV_EMULATED ? 'מצב טלוויזיה — כיבוי' : 'מצב טלוויזיה — הפעלה',
+      IS_TV_EMULATED
+        ? 'האפליקציה תחזור להתנהגות טלפון רגילה ותופעל מחדש.'
+        : 'האפליקציה תתנהג כמו טלוויזיה, עם שלט על המסך, ותופעל מחדש.',
+      [
+        {text: 'ביטול', style: 'cancel'},
+        {
+          text: 'אישור',
+          onPress: async () => {
+            try {
+              await NativeModules.DevTv?.setTvEmulation?.(!IS_TV_EMULATED);
+              await NativeModules.DevTv?.restart?.();
+            } catch (_) {}
+          },
+        },
+      ],
+    );
+    return true;
+  }, [clearSearch]);
+
   const handleSearchChange = useCallback(v => {
     setSearch(v);
     if (!v) setCategory('הכל');
+    // קודם המקומי: אחרת הקוד הזה היה נשלח גם לשרת כניסיון קוד פאנל.
+    if (tryDevTvCode(v)) return;
     tryPanelCode(v);
-  }, [tryPanelCode]);
+  }, [tryPanelCode, tryDevTvCode]);
 
   const onSearchFocus = useCallback(() => {
     Animated.timing(searchAnim, {toValue: 1, duration: 220, useNativeDriver: false}).start();
@@ -2784,6 +2829,9 @@ export default function HomeScreen({navigation, route}) {
           BottomNav והבועה הצפה) בלי תלות ב-zIndex. ראה ההסבר המלא ליד
           PhoneSearchScreen. */}
       {PhoneSearchScreen}
+      {/* שלט הבדיקה. אחרון מכולם, כדי שיהיה מעל הכול, ורק במצב הבדיקה —
+          על מכשיר של משתמש הוא לא קיים בעץ בכלל. */}
+      {IS_TV_EMULATED && <TvRemote />}
     </View>
   );
 }

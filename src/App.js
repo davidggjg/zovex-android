@@ -28,6 +28,7 @@ import LegalScreen from './screens/LegalScreen';
 import ZovexIntro from './components/ZovexIntro';
 import {initUserId} from './api/userStore';
 import CrashBoundary from './components/CrashBoundary';
+import {IS_TV} from './theme/isTv';
 import BlockedScreen from './components/BlockedScreen';
 import {checkAccess, loadStoredEmail, subscribeEmail} from './api/access';
 
@@ -176,7 +177,7 @@ export default function App() {
   const [langEpoch, setLangEpoch] = useState(0);
   useEffect(() => onLanguageChange(() => setLangEpoch(n => n + 1)), []);
   // פתיח קולנועי — משחק פעם אחת בפתיחה. מדלגים עליו בטלוויזיה (WebView חלש).
-  const [introDone, setIntroDone] = useState(Platform.isTV);
+  const [introDone, setIntroDone] = useState(IS_TV);
   const [dialogConfig, setDialogConfig] = useState(null);
   const glowAnim = useRef(new Animated.Value(0)).current;
 

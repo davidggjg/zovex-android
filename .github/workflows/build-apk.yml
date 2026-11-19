@@ -108,6 +108,11 @@ jobs:
       - name: Check TV proportional scaling
         run: node scripts/test-tv-scale.js
 
+      # מצב בדיקת הטלוויזיה. שתי סכנות שקטות: שהקוד הסודי ידלוף כטקסט
+      # גלוי לתוך ה-APK, ושהמצב יידלק אצל משתמש רגיל.
+      - name: Check TV emulation mode
+        run: node scripts/test-dev-tv.js
+
       # npm install דורס את node_modules, ולכן זה חייב לרוץ אחריו ולפני
       # הבנייה. הסקריפט נופל בקול אם השורה שהוא מחפש כבר לא שם.
       - name: Enable Media3 FFmpeg decoder (ec-3 / Dolby)

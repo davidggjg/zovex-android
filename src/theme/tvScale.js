@@ -31,7 +31,8 @@
 
 import {Platform, Dimensions} from 'react-native';
 
-export const IS_TV = Platform.isTV;
+import {IS_TV} from './isTv';
+export {IS_TV};
 
 // 'screen' ולא 'window': בטלוויזיה אין סרגלי מערכת שמקטינים את החלון,
 // ו-'window' מחזיר לפעמים 0 ברגע הראשון.
