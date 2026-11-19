@@ -132,15 +132,20 @@ else
   echo "   $($PY -V 2>&1)"
   REQ="$BOT/requirements.txt"
   if [[ -f "$REQ" ]]; then
-    # pip install --dry-run אומר מה **היה** משתנה, בלי לשנות. זו
-    # הדרך לשאול "האם חסר משהו" בלי להתקין בסריקה בלבד
-    PLAN=$("$PIP" install --dry-run -q -r "$REQ" 2>&1 | \
-           grep -i "Would install" || true)
-    if [[ -n "$PLAN" ]]; then
-      old "ספריות חסרות או מיושנות: ${PLAN#*Would install }"
+    # ‏--dry-run עם -q הסתיר את השורה "Would install" עצמה, ולכן הבדיקה
+    # תמיד אמרה "הכול מותקן" — כך uroman לא הותקן אף פעם. עכשיו בודקים
+    # שכל חבילה ברשימה באמת מותקנת, לפי pip show
+    MISSING=""
+    while read -r line; do
+      name=$(echo "$line" | sed -E 's/[#;].*//; s/[<>=!~\[ ].*//' | tr -d '[:space:]')
+      [[ -z "$name" ]] && continue
+      "$PIP" show -q "$name" >/dev/null 2>&1 || MISSING="$MISSING $name"
+    done < "$REQ"
+    if [[ -n "$MISSING" ]]; then
+      old "ספריות חסרות:$MISSING"
       if [[ $MODE != check ]]; then
         if "$PIP" install -q -r "$REQ"; then
-          ok "הספריות עודכנו"
+          ok "הספריות הותקנו"
           NEED_RESTART=1
         else
           bad "התקנת הספריות נכשלה"
