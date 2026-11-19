@@ -210,6 +210,39 @@ def _segments(words: list[dict]) -> list[Segment]:
     return out
 
 
+async def _hedged_chunk(path: Path, diarize: bool,
+                        took: list[float]) -> tuple[list[dict], bool, str]:
+    """מתמלל חלק, ואם הוא מתעכב הרבה מעבר לאחרים — שולח אותו שוב במקביל.
+
+    נמדד אצל המשתמש: 15 מתוך 16 חלקים הסתיימו, ואחד עמד יותר מעשר
+    דקות, וכל העבודה חיכתה לו. בקשה תקועה אצל גוגל לא מתאוששת מעצמה,
+    אבל אותה בקשה במפתח אחר חוזרת בזמן רגיל. הראשונה שחוזרת זוכה
+    (Dean & Barroso, "The Tail at Scale")
+    """
+    first = asyncio.ensure_future(_chunk_words(path, diarize))
+    typical = sorted(took)[len(took) // 2] if took else 0.0
+    wait = max(config.GEMINI_STT_HEDGE_MIN,
+               typical * config.GEMINI_STT_HEDGE_FACTOR)
+    done, _ = await asyncio.wait({first}, timeout=wait)
+    if done:
+        return first.result()
+    log.warning("חלק תמלול מתעכב %.0f שניות (חציון %.0f) — שולח גיבוי "
+                "במפתח אחר", wait, typical)
+    second = asyncio.ensure_future(_chunk_words(path, diarize))
+    racing = {first, second}
+    try:
+        while racing:
+            done, racing = await asyncio.wait(
+                racing, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if not task.exception():
+                    return task.result()
+        return first.result()   # שתיהן נכשלו: מפיצים את השגיאה
+    finally:
+        for task in (first, second):
+            task.cancel()
+
+
 async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     """מתמלל קובץ שלם. מחזיר None אם הספק אינו זמין או נכשל."""
     if not available():
@@ -249,6 +282,7 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
     # ובחלקים של 20 דקות פירושו "0%" לאורך דקות ארוכות — שנראה זהה
     # לתהליך מת. זו הייתה התלונה, והיא הייתה מוצדקת
     live: dict[int, tuple[str, float]] = {}
+    took: list[float] = []   # כמה זמן לקח כל חלק שהסתיים, לחישוב הגיבוי
 
     async def refresh() -> None:
         if not on_step:
@@ -283,16 +317,18 @@ async def transcribe(audio: Path, on_step=None) -> Transcript | None:
             await refresh()
             await media.cut_audio(audio, begin, begin + length, piece)
             live[index] = ("מתמלל", time.monotonic())
+            started = time.monotonic()
             await refresh()
             try:
                 # תקרה לחלק בודד: בלעדיה חלק תקוע מחזיק את כל העבודה,
                 # כי gather ממתין לאיטי שבהם ואין לו גבול
                 words, flags[0], found = await asyncio.wait_for(
-                    _chunk_words(piece, flags[0]),
+                    _hedged_chunk(piece, flags[0], took),
                     timeout=config.GEMINI_STT_TIMEOUT)
             finally:
                 piece.unlink(missing_ok=True)
                 live.pop(index, None)
+        took.append(time.monotonic() - started)
         found_any[0] = found_any[0] or found
         results[index] = [{**w, "start": begin + w["start"],
                            "end": begin + w["end"]} for w in words]
