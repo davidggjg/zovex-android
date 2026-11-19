@@ -23,8 +23,17 @@ class MainActivity : ReactActivity() {
         // בטלפון: נעל portrait (ה-UI מעוצב אנכית). בטלוויזיה: אפשר landscape,
         // אחרת התצוגה מופיעה מסובבת. מזהים טלוויזיה לפי UiMode.
         val uiMode = getSystemService(Context.UI_MODE_SERVICE) as android.app.UiModeManager
-        if (uiMode.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) {
-            requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        val realTv = uiMode.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+        if (!realTv) {
+            // מצב בדיקת הטלוויזיה: טלוויזיה היא לרוחב, ובדיקה במסך אנכי
+            // לא מראה את מה שבאמת צריך לבדוק — הפריסה, מספר העמודות
+            // וכיוון תנועת ה-focus כולם נגזרים מהיחס. לכן שם לרוחב,
+            // ובכל שאר המקרים נשאר אנכי כרגיל.
+            requestedOrientation = if (DevTvModule.isEnabled(this)) {
+                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else {
+                ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            }
         }
         // Most robust fix: listen for insets being (re)applied at all —
         // this fires on rotation, fold/unfold, split-screen, keyboard
@@ -34,24 +43,61 @@ class MainActivity : ReactActivity() {
         // miss, which is what was still leaving the bar visible on some
         // large-screen / tablet transitions.
         window.decorView.setOnApplyWindowInsetsListener { view, insets ->
-            if (PipModule.isFullscreen) {
-                PipModule.applyImmersiveMode(this, true)
-            }
+            applyChrome()
             view.onApplyWindowInsets(insets)
+        }
+        applyChrome()
+    }
+
+    /**
+     * סרגלי המערכת.
+     *
+     * סרגל הניווט של אנדרואיד מוסתר **תמיד**, בכל טלפון, ולא רק בזמן
+     * סרט. הוא אינו משמש את האפליקציה בשום מסך — יש לה ניווט תחתון משלה
+     * ו"אחורה" עובד בתנועה — והוא רק אוכל שורה מהמסך. שורת הסטטוס
+     * (שעה, סוללה, קליטה) נשארת: היא כן נותנת מידע, והמשתמש מצפה לראות
+     * אותה.
+     *
+     * ‎BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE‎ ולא הסתרה קשיחה: החלקה מהקצה
+     * מחזירה את הסרגל לרגע, ולכן מי שרוצה את כפתורי הניווט עדיין מגיע
+     * אליהם. בלי זה היינו נועלים מכשירים עם ניווט בשלושה כפתורים.
+     *
+     * בזמן מסך מלא בנגן ממשיכים למסלול הקיים, שמסתיר גם את שורת הסטטוס.
+     */
+    private fun applyChrome() {
+        if (PipModule.isFullscreen) {
+            PipModule.applyImmersiveMode(this, true)
+            return
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val ctrl = window.insetsController ?: return
+                ctrl.hide(android.view.WindowInsets.Type.navigationBars())
+                ctrl.systemBarsBehavior =
+                    android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility =
+                    (android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        or android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
+            }
+        } catch (_: Exception) {
+            // תקלה ספציפית ליצרן לא תפיל את האפליקציה בגלל סרגל.
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (PipModule.isFullscreen) {
-            PipModule.applyImmersiveMode(this, true)
-        }
+        applyChrome()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus || !PipModule.isFullscreen) return
-        PipModule.applyImmersiveMode(this, true)
+        // רק כשהחלון שלנו בחזית: החלת מצב סרגלים על חלון שאיבד focus
+        // נלחמת במקלדת ובחלונות מערכת.
+        if (hasFocus) applyChrome()
     }
 
     // The manifest declares configChanges for orientation/screenLayout/
@@ -63,9 +109,7 @@ class MainActivity : ReactActivity() {
     // immersive state here too so fullscreen sticks on large screens.
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        if (PipModule.isFullscreen) {
-            PipModule.applyImmersiveMode(this, true)
-        }
+        applyChrome()
     }
 
     override fun onUserLeaveHint() {
@@ -100,8 +144,6 @@ class MainActivity : ReactActivity() {
         // מ-PiP (חלון צף) למסך מלא. בלעדיו הסרגלים של המערכת יכולים להישאר
         // גלויים ולשנות את גודל האזור הזמין, מה שיכול לטלטל את הפריסה בדיוק
         // ברגע שהצופה מצפה לחזור ישר לנגן.
-        if (!isInPictureInPictureMode && PipModule.isFullscreen) {
-            PipModule.applyImmersiveMode(this, true)
-        }
+        if (!isInPictureInPictureMode) applyChrome()
     }
 }
