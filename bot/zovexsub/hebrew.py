@@ -901,8 +901,16 @@ async def build_hebrew(segments: list[Segment], language: str,
         # לקובץ הסופי, בתרגום מכתוביות ערביות. תשובה אחת של המודל לא
         # תמיד מתקנת הכול — ניסיון נוסף, במפתח אחר, תופס את רובן
         if left:
+            # המתנה לפני הסבב השני. נמדד אצל המשתמש: הסבב הראשון נכשל
+            # תוך שנייה כי כל תשעת המפתחות היו בקירור בסוף העבודה —
+            # התרגום והמגדר כבר מיצו את המכסה לדקה. הקירור הוא 15 שניות,
+            # ולכן המתנה קצרה מספיקה כדי שהתיקון יקבל מפתח פנוי
             log.warning("אחרי התיקון נשארו %d שורות עם אותיות זרות — "
-                        "סבב נוסף", len(left))
+                        "ממתין %.0f שניות למפתח פנוי וסבב נוסף",
+                        len(left), config.REPAIR_RETRY_REST)
+            if on_step:
+                await on_step("ממתין למפתח פנוי ומתקן שוב", QUALITY_TO)
+            await asyncio.sleep(config.REPAIR_RETRY_REST)
             lines = await repair_foreign(segments, lines, left, on_step)
             lines, left = cleanup.clean(lines)
             if left:

@@ -540,6 +540,8 @@ UPLOAD_VIA_ACCOUNT = _int("UPLOAD_VIA_ACCOUNT", 1)
 # שניות לניסיון, והוא מנסה על פני כמה מפתחות — כלומר רבע שעה חוקית
 # לגמרי על כמה שורות פגומות, בלי שהמסך יזוז. ראו hebrew.repair_foreign
 REPAIR_TIMEOUT = float(os.getenv("REPAIR_TIMEOUT") or 120)
+# המתנה לפני סבב התיקון השני — זמן לקירור המפתחות להסתיים
+REPAIR_RETRY_REST = float(os.getenv("REPAIR_RETRY_REST") or 45)
 TG_GROW_EVERY = _int("TG_GROW_EVERY", 8)
 # תקרות זמן למסלול המהיר. בלעדיהן חיבור שלא עונה תוקע את העבודה לנצח
 # במקום ליפול חזרה למסלול הרגיל של טלתון
