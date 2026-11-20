@@ -1864,8 +1864,19 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
     await say("🎵 מצמיד את השמע ואורז ל-MP4…")
     cmd = ["ffmpeg", "-nostdin", "-y", "-i", str(video_part)]
     if audio is not None:
-        cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0",
-                "-c:a", "aac", "-b:a", config.AUDIO_BITRATE]
+        # שמע שאפשר לשים ב-MP4 כמו שהוא — מועתק, בלי פענוח. נמדד אצל
+        # המשתמש: קובץ xHE-AAC ("Audio object type 42") שה-ffmpeg בשרת
+        # אינו יודע לפענח, וההמרה נכשלה. העתקה אינה צריכה פענוח, כמו
+        # שעבד לו בטרמוקס עם ‎-c copy. ממירים רק כשאין ברירה
+        sound = await probe(audio)
+        kind = next((x.get("codec_name", "") for x in sound.get("streams", [])
+                     if x.get("codec_type") == "audio"), "")
+        keeps = kind in ("aac", "mp3", "ac3", "eac3", "opus", "flac", "alac")
+        cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0"]
+        cmd += (["-c:a", "copy"] if keeps
+                else ["-c:a", "aac", "-b:a", config.AUDIO_BITRATE])
+        log.info("שמע להחלפה: %s — %s", kind or "?",
+                 "מועתק כמו שהוא" if keeps else "מומר ל-AAC")
     else:
         cmd += ["-map", "0:v:0", "-an"]
     cmd += ["-c:v", "copy", "-sn", "-dn", "-map_metadata", "-1",
