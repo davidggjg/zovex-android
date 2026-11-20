@@ -1854,13 +1854,12 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
                     "-i", str(listing), "-c", "copy", "-f", "mpegts",
                     str(video_part)])
     else:
+        # בלי קרדיט אין מה לחבר, ולכן אין קובץ ביניים בכלל: הווידאו נארז
+        # ישר מהמקור. נמדד אצל המשתמש: סרטון מקישור (AV1/VP9 של יוטיוב)
+        # הועתק ל-TS, ו-TS אינו שומר את הקודקים האלה כווידאו — הרצועה
+        # "נעלמה" ("Stream map '0:v:0' matches no streams")
         await say("📼 מעתיק את הסרטון כמו שהוא…")
-        copy_args = ["-c:v", "copy"]
-        if codec in ("h264", "hevc"):
-            copy_args += ["-bsf:v", annexb]
-        await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
-                    "-map", "0:v:0", "-an", "-sn"] + copy_args
-                   + ["-f", "mpegts", str(video_part)])
+        video_part = video
 
     await say("🎵 מצמיד את השמע ואורז ל-MP4…")
     cmd = ["ffmpeg", "-nostdin", "-y", "-i", str(video_part)]

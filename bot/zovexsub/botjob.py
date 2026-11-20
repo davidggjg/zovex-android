@@ -462,6 +462,11 @@ async def _from_link(choice, work: Path, screen: "Screen") -> Path | None:
         await screen.show("🔗 מוריד · " + " · ".join(parts))
 
     want = fetch.format_for(choice.quality, getattr(choice, "audio", ""))
+    if choice.source == "dub":
+        # החלפת שמע מוסיפה קרדיט בלי צריבה רק ב-H.264 או HEVC. יוטיוב
+        # נותן ברירת מחדל VP9/AV1, ושם הקרדיט היה נופל — לכן מבקשים
+        # H.264 קודם, ונופלים לכל השאר רק אם אין
+        want = fetch.prefer_avc(want)
     log.info("הורדה מקישור באיכות %s (%s)", choice.quality or "ברירת מחדל", want)
     await screen.show(f"🔗 מוריד מהקישור · {choice.quality or 'איכות ברירת מחדל'}",
                       force=True)

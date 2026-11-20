@@ -521,6 +521,18 @@ def format_for(quality: str, audio: str = "") -> str:
             f"best[height<={quality}]/best")
 
 
+def prefer_avc(fmt: str) -> str:
+    """אותה תבנית, אבל עם עדיפות לווידאו H.264 (avc1) ולשמע m4a."""
+    base = fmt or "bestvideo+bestaudio/best"
+    picks = []
+    for option in base.split("/"):
+        if option.startswith("bestvideo"):
+            picks.append(option.replace("bestvideo", "bestvideo[vcodec^=avc1]", 1))
+        elif option.startswith("best") and "+" not in option:
+            picks.append(option.replace("best", "best[vcodec^=avc1]", 1))
+    return "/".join(picks + [base])
+
+
 async def download(url: str, work: Path, on_progress=None,
                    fmt: str = "") -> Path:
     """מוריד מקישור. cobalt קודם אם הוגדר, אחרת yt-dlp."""
