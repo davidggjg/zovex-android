@@ -896,7 +896,19 @@ async def build_hebrew(segments: list[Segment], language: str,
         if on_step:
             await on_step("מתקן אותיות זרות", QUALITY_TO)
         lines = await repair_foreign(segments, lines, foreign, on_step)
-        lines, _ = cleanup.clean(lines)
+        lines, left = cleanup.clean(lines)
+        # סבב שני על מה שנשאר. נמדד אצל המשתמש: שבע שורות עם ערבית שרדו
+        # לקובץ הסופי, בתרגום מכתוביות ערביות. תשובה אחת של המודל לא
+        # תמיד מתקנת הכול — ניסיון נוסף, במפתח אחר, תופס את רובן
+        if left:
+            log.warning("אחרי התיקון נשארו %d שורות עם אותיות זרות — "
+                        "סבב נוסף", len(left))
+            lines = await repair_foreign(segments, lines, left, on_step)
+            lines, left = cleanup.clean(lines)
+            if left:
+                log.warning("%d שורות עם אותיות זרות נשארו גם אחרי שני "
+                            "סבבים: %s", len(left),
+                            " · ".join(lines[i][:40] for i in left[:8]))
 
     # אחרון: שגיאות כתיב. אחרי כל מה שמשנה טקסט, כדי שלא ייווצרו חדשות
     lines = await repair_spelling(segments, lines, notes, on_step)
