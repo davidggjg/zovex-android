@@ -1806,7 +1806,11 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
     cut = 0.0
     # AV1 רק כשיש מקודד AV1 בשרת: הפתיחה חייבת להיות באותו קודק כמו
     # שאר הסרט — רצועת וידאו אחת אינה יכולה לעבור באמצע בין קודקים
-    smart = ("h264", "hevc") + (("av1",) if await _has_encoder("libsvtav1") else ())
+    # SVT-AV1 מהיר; libaom איטי יותר אבל קיים ב-ffmpeg של אובונטו, וזה
+    # מה שיש בשרת (נבדק: אין libsvtav1). לעשר שניות פתיחה האיטיות זניחה
+    av1_encoder = ("libsvtav1" if await _has_encoder("libsvtav1") else
+                   "libaom-av1" if await _has_encoder("libaom-av1") else "")
+    smart = ("h264", "hevc") + (("av1",) if av1_encoder else ())
     if config.CREDIT_TEXT.strip() and codec in smart:
         duration = await duration_seconds(video)
         credit = credit_file(work, await letterbox_top(video, duration))
@@ -1828,7 +1832,10 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
                     "-profile:v", stream.get("profile", "high").lower()
                     .replace(" ", "") if stream.get("profile") else "high"]
                    if codec == "h264" else
-                   ["-c:v", "libsvtav1", "-preset", "6", "-crf", "20"]
+                   (["-c:v", "libsvtav1", "-preset", "6", "-crf", "20"]
+                    if av1_encoder == "libsvtav1" else
+                    ["-c:v", "libaom-av1", "-cpu-used", "6", "-row-mt", "1",
+                     "-crf", "20", "-b:v", "0"])
                    if is_av1 else
                    ["-c:v", "libx265", "-preset", "medium", "-crf", "16",
                     "-x265-params", "log-level=error:repeat-headers=1"])
