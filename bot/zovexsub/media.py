@@ -1743,3 +1743,139 @@ async def scene_cuts(video: Path, threshold: float = 0.35) -> list[float]:
     cuts.sort()
     log.info("זוהו %d חיתוכי צילום", len(cuts))
     return cuts
+
+
+# ── החלפת שמע בלי צריבה ────────────────────────────────────────
+async def _first_keyframe_after(video: Path, seconds: float) -> float:
+    """זמן פריים המפתח הראשון שאחרי seconds. 0 אם לא נמצא."""
+    raw = await _run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-skip_frame", "nokey", "-read_intervals", f"%+{seconds + 30:.0f}",
+         "-show_entries", "frame=pts_time,best_effort_timestamp_time",
+         "-of", "csv=p=0", str(video)], nice=False)
+    for row in raw.splitlines():
+        for cell in row.split(","):
+            try:
+                value = float(cell)
+            except ValueError:
+                continue
+            if value >= seconds:
+                return value
+    return 0.0
+
+
+async def replace_audio(video: Path, audio: Path | None, dst: Path,
+                        on_progress=None) -> Path:
+    """מחליף את השמע ומוסיף קרדיט — בלי לקודד את הסרטון מחדש.
+
+    רק הפתיחה, עד פריים המפתח שאחרי הקרדיט, מקודדת מחדש עם הקרדיט עליה.
+    כל השאר מועתק כמו שהוא, ולכן זה לוקח שניות ולא שעות. כל רצועות
+    הכתוביות והשמע המקוריות נמחקות; נשאר רק השמע שהמשתמש שלח.
+
+    הקטעים מחוברים כ-MPEG-TS ולא כ-MP4: ב-TS כל קטע נושא את פרמטרי
+    המקודד שלו בתוך הזרם, ולכן נגן עובר בין הפתיחה המקודדת לשאר בלי
+    שבירה, גם כשההגדרות שלהם שונות. רק אחרי החיבור הכול נארז ל-MP4
+    """
+    info = await probe(video)
+    stream = next((s for s in info.get("streams", [])
+                   if s.get("codec_type") == "video"), {})
+    codec = stream.get("codec_name", "")
+    work = dst.parent / "dub"
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
+
+    async def say(text: str) -> None:
+        if on_progress:
+            await on_progress(text)
+
+    credit = None
+    cut = 0.0
+    if config.CREDIT_TEXT.strip() and codec in ("h264", "hevc"):
+        duration = await duration_seconds(video)
+        credit = credit_file(work, await letterbox_top(video, duration))
+        cut = await _first_keyframe_after(video, config.CREDIT_SECONDS + 0.3)
+        if cut <= 0 or cut > duration - 1:
+            cut = 0.0
+    video_part = work / "video.ts"
+    annexb = "h264_mp4toannexb" if codec == "h264" else "hevc_mp4toannexb"
+
+    if credit is not None and cut > 0:
+        await say(f"✍️ מוסיף קרדיט לפתיחה ({cut:.0f} שניות)…")
+        fps = await video_fps(video)
+        encoder = (["-c:v", "libx264", "-preset", "medium", "-crf", "16",
+                    "-profile:v", stream.get("profile", "high").lower()
+                    .replace(" ", "") if stream.get("profile") else "high"]
+                   if codec == "h264" else
+                   ["-c:v", "libx265", "-preset", "medium", "-crf", "16",
+                    "-x265-params", "log-level=error:repeat-headers=1"])
+        if stream.get("pix_fmt"):
+            encoder += ["-pix_fmt", stream["pix_fmt"]]
+        if fps > 0:
+            encoder += ["-r", f"{fps:.6f}"]
+        # הפתיחה מקודדת מהמקור עם מספר פריימים מדויק, והשאר מועתק בלי
+        # חיפוש בכלל. נמדד: חיפוש עם העתקה ב-MKV נוחת על פריים מפתח לא
+        # נכון (שתי שניות כפולות או חסרות). ובמקום חיפוש — כל חבילה שזמן
+        # התצוגה שלה לפני נקודת החיתוך נזרקת. זה מטפל גם ב-"open GOP"
+        # של HEVC: הפריימים שמיד אחרי פריים המפתח תלויים בפריימים שלפניו,
+        # ומוצגים לפניו — בדיוק אלה שהפתיחה המקודדת כבר מכילה. בלי זריקתם
+        # נמדדו 47 פריימים חסרים ותמונה מוזזת בכל שאר הסרט
+        start = float(stream.get("start_time") or 0.0)
+        frames = round((cut - start) * fps) if fps > 0 else 0
+        head = work / "head.ts"
+        await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
+                    "-map", "0:v:0", "-an", "-sn"]
+                   + (["-frames:v", str(frames)] if frames
+                      else ["-t", f"{cut - start:.3f}"])
+                   + ["-vf", f"subtitles='{_escape(credit)}'"] + encoder
+                   + ["-bsf:v", annexb, "-f", "mpegts", str(head)])
+        await say("📼 מעתיק את שאר הסרטון כמו שהוא…")
+        edge = cut - (0.5 / fps if fps > 0 else 0.01)
+        tail = work / "tail.ts"
+        if codec == "hevc":
+            # זריקה לפי זמן תצוגה — הדרך היחידה שעבדה ב-open GOP
+            await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
+                        "-map", "0:v:0", "-an", "-sn", "-c:v", "copy",
+                        "-bsf:v",
+                        f"{annexb},noise=drop='lt(pts*tb\\,{edge:.4f})'",
+                        "-f", "mpegts", str(tail)])
+        else:
+            # ב-H.264 הזריקה לפי זמן השאירה פריים שבור (נמדד: 960 פריימים
+            # ושגיאת פענוח), ואילו מפצל הקטעים חתך בדיוק — 959, זהה למקור
+            await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
+                        "-map", "0:v:0", "-an", "-sn", "-c:v", "copy",
+                        "-bsf:v", annexb, "-f", "segment",
+                        "-segment_times", f"{edge:.4f}",
+                        "-reset_timestamps", "0", str(work / "seg%d.ts")])
+            (work / "seg1.ts").replace(tail)
+        listing = work / "parts.txt"
+        listing.write_text(f"file '{head.name}'\nfile '{tail.name}'\n",
+                           encoding="utf-8")
+        await _run(["ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
+                    "-i", str(listing), "-c", "copy", "-f", "mpegts",
+                    str(video_part)])
+    else:
+        await say("📼 מעתיק את הסרטון כמו שהוא…")
+        copy_args = ["-c:v", "copy"]
+        if codec in ("h264", "hevc"):
+            copy_args += ["-bsf:v", annexb]
+        await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
+                    "-map", "0:v:0", "-an", "-sn"] + copy_args
+                   + ["-f", "mpegts", str(video_part)])
+
+    await say("🎵 מצמיד את השמע ואורז ל-MP4…")
+    cmd = ["ffmpeg", "-nostdin", "-y", "-i", str(video_part)]
+    if audio is not None:
+        cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0",
+                "-c:a", "aac", "-b:a", config.AUDIO_BITRATE]
+    else:
+        cmd += ["-map", "0:v:0", "-an"]
+    cmd += ["-c:v", "copy", "-sn", "-dn", "-map_metadata", "-1",
+            "-map_chapters", "-1"]
+    if codec == "hevc":
+        cmd += ["-tag:v", "hvc1"]
+    cmd += ["-movflags", "+faststart", str(dst)]
+    await _run(cmd)
+    shutil.rmtree(work, ignore_errors=True)
+    log.info("החלפת שמע הסתיימה: %s (%.0fMB), קרדיט עד %.1f שניות",
+             dst.name, dst.stat().st_size / 1024 ** 2, cut)
+    return dst
