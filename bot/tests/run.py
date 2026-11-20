@@ -2285,7 +2285,7 @@ def _segment_plan_guard():
     # הקבצים שנמחקו יחד עם התיקייה נוצרים מחדש
     after = body[body.index("shutil.rmtree(work, ignore_errors=True)"):]
     assert "marked = rtl_copy(srt)" in after[:400], "הכתוביות לא נוצרו מחדש"
-    assert "credit = credit_file(work)" in after[:400], "הקרדיט לא נוצר מחדש"
+    assert "credit = credit_file(work, top_bar)" in after[:400], "הקרדיט לא נוצר מחדש"
 
 
 @check("הרכבה שנכשלה מנסה דרך חיבור שנייה, ולא צורבת הכל מחדש")
