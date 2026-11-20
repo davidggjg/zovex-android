@@ -1868,10 +1868,17 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
         # המשתמש: קובץ xHE-AAC ("Audio object type 42") שה-ffmpeg בשרת
         # אינו יודע לפענח, וההמרה נכשלה. העתקה אינה צריכה פענוח, כמו
         # שעבד לו בטרמוקס עם ‎-c copy. ממירים רק כשאין ברירה
-        sound = await probe(audio)
-        kind = next((x.get("codec_name", "") for x in sound.get("streams", [])
-                     if x.get("codec_type") == "audio"), "")
-        keeps = kind in ("aac", "mp3", "ac3", "eac3", "opus", "flac", "alac")
+        # גם הבדיקה עצמה יכולה להיכשל על פורמט כזה — ffprobe יצא שם בקוד
+        # 1 בלי שום הסבר. כשאי אפשר לבדוק, מעתיקים: העתקה אינה צריכה
+        # לקרוא את השמע, וזה מה שעבד בטרמוקס
+        try:
+            sound = await probe(audio)
+            kind = next((x.get("codec_name", "") for x in sound.get("streams", [])
+                         if x.get("codec_type") == "audio"), "")
+        except Exception as exc:  # noqa: BLE001
+            log.warning("בדיקת קובץ השמע נכשלה (%s) — מעתיקים כמו שהוא", exc)
+            kind = "?"
+        keeps = kind in ("aac", "mp3", "ac3", "eac3", "opus", "flac", "alac", "?")
         cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0"]
         cmd += (["-c:a", "copy"] if keeps
                 else ["-c:a", "aac", "-b:a", config.AUDIO_BITRATE])
