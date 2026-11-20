@@ -317,6 +317,8 @@ SUB_FONT = os.getenv("SUB_FONT", "Noto Sans Hebrew")
 # שתי שורות בראש התמונה. "|" מפריד בין שורות
 CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד ע״י zovex|& עולם הדרמות הטורקיות")
 CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
+# החלפת שמע: כמה זמן לחכות לקובץ השמע אחרי שהסרטון ירד
+DUB_WAIT = float(os.getenv("DUB_WAIT") or 1800)
 CREDIT_SIZE = _int("CREDIT_SIZE", 44)
 # ריווח מהקצה העליון של התמונה (בסקאלה של 720), ורוחב האותיות באחוזים.
 # בלי ריווח בין אותיות (\fsp): ב-libass הוא שובר את כיוון העברית, ונמדד

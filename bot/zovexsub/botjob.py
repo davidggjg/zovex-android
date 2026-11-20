@@ -561,6 +561,8 @@ async def run(choice) -> None:
     # שתי הבקשות נפתחו במקביל ואף אחת לא ידעה על השנייה — המשתמש ראה
     # שני דברים פתוחים ולא ידע מה לשלוח ראשון
     both = choice.cover == "כן" and _brings_own(choice)
+    if choice.source == "dub":
+        _audio_wait[int(chat_id)] = asyncio.get_running_loop().create_future()
     if choice.cover == "אופציונלי":
         # הורדה בלבד: מקבלים תמונה אם תגיע, ולא מחכים לה
         _cover_wait.add(int(chat_id))
@@ -592,6 +594,11 @@ async def run(choice) -> None:
 
         if choice.source == "raw":
             await _deliver_raw(chat_id, source, work, screen)
+            pipeline.cleanup(work)
+            return
+
+        if choice.source == "dub":
+            await _dub(chat_id, source, work, screen)
             pipeline.cleanup(work)
             return
 
@@ -689,6 +696,66 @@ async def run(choice) -> None:
         pipeline.cleanup(work)
     finally:
         release(chat_id)
+
+
+# החלפת שמע: הצ'אט ממתין לקובץ שמע, והקובץ עצמו כשהגיע. מקום נרשם
+# לפני ההורדה, כדי שקובץ שנשלח תוך כדי לא ייזרק
+_audio_wait: dict[int, "asyncio.Future"] = {}
+
+
+def wanting_audio(chat_id) -> bool:
+    future = _audio_wait.get(int(chat_id))
+    return future is not None and not future.done()
+
+
+async def take_audio(chat_id, file_id: str, name: str) -> None:
+    """קובץ שמע שהמנהל שלח לעבודת החלפת שמע."""
+    chat = int(chat_id)
+    future = _audio_wait.get(chat)
+    if future is None or future.done():
+        return
+    found, why = await localbot.locate(file_id)
+    if found is None:
+        await localbot.say(chat_id, "לא הצלחתי לקרוא את קובץ השמע.\n"
+                           + localbot.code(why))
+        return
+    keep = config.WORK_DIR / f"audio-{chat}-{uuid.uuid4().hex[:6]}{Path(name).suffix or '.audio'}"
+    keep.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(found, keep)
+    future.set_result(keep)
+    log.info("קובץ שמע להחלפה התקבל (%s, %.1fMB)", name,
+             keep.stat().st_size / 1048576)
+    await localbot.say(chat_id, "✅ קיבלתי את קובץ השמע.")
+
+
+async def _dub(chat_id, source: Path, work: Path, screen) -> None:
+    """מחליף את השמע ומוסיף קרדיט, בלי צריבה, ומעלה."""
+    chat = int(chat_id)
+    future = _audio_wait.get(chat)
+    if future is None:
+        future = asyncio.get_running_loop().create_future()
+        _audio_wait[chat] = future
+    try:
+        if not future.done():
+            await screen.show("🎵 הסרטון ירד. שלח עכשיו את קובץ השמע.",
+                              force=True)
+        audio = await asyncio.wait_for(future, timeout=config.DUB_WAIT)
+    except asyncio.TimeoutError:
+        await screen.show("⌛ לא הגיע קובץ שמע — העבודה בוטלה.", force=True)
+        return
+    finally:
+        _audio_wait.pop(chat, None)
+
+    async def say(text: str) -> None:
+        await screen.show(text, force=True)
+
+    dst = work / f"{source.stem}.dub.mp4"
+    try:
+        await media.replace_audio(source, audio, dst, on_progress=say)
+    finally:
+        Path(audio).unlink(missing_ok=True)
+    await _deliver_raw(chat_id, dst, work, screen,
+                       caption="🎵 עלה וקודד ע״י zovex & עולם הדרמות הטורקיות")
 
 
 # צ'אטים שממתינים לתמונת תצוגה מקדימה, והתמונה המוכנה כשהגיעה.
@@ -1186,7 +1253,8 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
         pipeline.cleanup(work)
 
 
-async def _deliver_raw(chat_id, source: Path, work: Path, screen) -> None:
+async def _deliver_raw(chat_id, source: Path, work: Path, screen,
+                       caption: str = "⬇️ הורדה מקישור") -> None:
     """מעלה את הקובץ שירד כמו שהוא: בלי קידוד, בלי כתוביות. למנהל בלבד."""
     info = await media.probe(source)
     stream = next((s for s in info.get("streams", [])
@@ -1206,14 +1274,14 @@ async def _deliver_raw(chat_id, source: Path, work: Path, screen) -> None:
     await screen.show(f"📤 מעלה כמו שהוא · {size_gb:.2f}GB", force=True)
     relayed = await _relay_video(chat_id, source, info, stream, poster,
                                  screen, full_cover=full_cover,
-                                 caption="⬇️ הורדה מקישור")
+                                 caption=caption)
     if not relayed:
         if source.stat().st_size > localbot.MAX_BYTES:
             raise RuntimeError(
                 f"{size_gb:.2f}GB מעל תקרת הבוט, והמסירה דרך ערוץ "
                 "האחסון לא זמינה.")
         await localbot.send_video(
-            chat_id, source, caption="⬇️ הורדה מקישור",
+            chat_id, source, caption=caption,
             duration=int(float(info.get("format", {}).get("duration", 0) or 0)),
             width=int(stream.get("width", 0) or 0),
             height=int(stream.get("height", 0) or 0), thumb=poster,
@@ -1378,3 +1446,5 @@ def install() -> None:
     botmenu.on_cover = take_cover
     botmenu.on_wanting_cover = wanting_cover
     botmenu.on_studio = take_studio
+    botmenu.on_audio = take_audio
+    botmenu.on_wanting_audio = wanting_audio

@@ -196,6 +196,11 @@ def source_screen(chat_id, note: str = "",
     # אינו רואה את הכפתור בכלל, וגם לחיצה מזויפת נחסמת ב-_press
     if link and allowlist.owner() and int(chat_id) == allowlist.owner():
         keys.append([("⬇️ רק הורדה — בלי קידוד (רק לך)", "src:raw")])
+    # החלפת שמע: מוחק כתוביות ושמע, מצמיד קובץ שמע שהמנהל שולח, ומוסיף
+    # קרדיט — בלי לצרוב את הסרט. גם לקישור וגם לקובץ, רק למנהל
+    if allowlist.owner() and int(chat_id) == allowlist.owner():
+        keys.append([("🎵 החלפת שמע + קרדיט — בלי צריבה (רק לך)",
+                      "src:dub")])
     # כתוביות שכבר קיימות בקישור קודמות לכל השאר: התזמונים שלהן
     # נכונים, וזה הדבר שהכי קשה לנו לייצר. קישור שיש לו כתוביות
     # אינו צריך תמלול בכלל — ואיתו גם אף אחת מההזיות שלו
@@ -241,6 +246,27 @@ on_wanting_cover = None
 # on_studio כשהמנהל שלח כתוביות אולפן בלי וידאו, כדי שהבוט יתאמן
 # עליהן. גם קובץ בודד וגם חבילת ZIP
 on_studio = None
+# on_audio כשהמנהל שלח קובץ שמע להחלפה, on_wanting_audio כדי לדעת אם
+# עבודה ממתינה לאחד
+on_audio = None
+on_wanting_audio = None
+
+AUDIO_EXT = (".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus",
+             ".ac3", ".eac3", ".mka", ".wma")
+
+
+def audio_of(message: dict) -> tuple[str, str]:
+    """(file_id, שם) של קובץ שמע בהודעה, או ריק."""
+    for key in ("audio", "voice"):
+        item = message.get(key)
+        if item:
+            return item.get("file_id", ""), item.get("file_name", "") or f"{key}.ogg"
+    item = message.get("document") or {}
+    name = (item.get("file_name") or "").lower()
+    kind = (item.get("mime_type") or "").lower()
+    if item and (kind.startswith("audio/") or name.endswith(AUDIO_EXT)):
+        return item.get("file_id", ""), item.get("file_name", "") or "audio"
+    return "", ""
 
 
 def _applies(index: int, choice: "Choice") -> bool:
@@ -501,7 +527,7 @@ async def _press(query: dict) -> None:
 
     if data.startswith("src:"):
         choice.source = data.split(":", 1)[1]
-        if choice.source == "raw":
+        if choice.source in ("raw", "dub"):
             who, _, _ = _who(query)
             if not allowlist.owner() or who != allowlist.owner():
                 log.warning("לחיצה על הורדה בלבד ממי שאינו המנהל: %s", who)
@@ -521,7 +547,18 @@ async def _press(query: dict) -> None:
             "linked": "מושך את הכתוביות מהקישור ומתרגם לעברית…",
             "linked_raw": "מושך את הכתוביות מהקישור וצורב כמו שהן…",
             "raw": "מוריד ומעלה לך כמו שהוא, בלי קידוד…",
+            "dub": "החלפת שמע: מוחק כתוביות ושמע ומוסיף קרדיט, בלי צריבה.",
         }.get(choice.source, "ממשיך…")
+        if choice.source == "dub":
+            choice.cover = "אופציונלי"
+            await localbot.edit(choice.chat_id, message_id,
+                                f"🎵 <b>{label}</b>\n\n"
+                                "שלח עכשיו את קובץ השמע (אפשר גם תוך כדי "
+                                "ההורדה). תמונה לפוסטר — לא חובה.")
+            _open.pop(message_id, None)
+            if on_choice:
+                _detach(on_choice(choice), "החלפת שמע")
+            return
         if choice.source == "raw":
             # הורדה בלבד אינה מבקשת תמונה. כאן, ולא לפני טעינת ההגדרות
             # השמורות: שם "כן" השמור דרס את זה, ונמדד אצל המשתמש —
@@ -735,6 +772,15 @@ async def _incoming(message: dict) -> None:
         if shot:
             if on_cover:
                 _detach(on_cover(chat, shot), "תמונת תצוגה מקדימה")
+            return
+
+    # קובץ שמע לעבודת החלפת שמע שממתינה — לפני כל זיהוי אחר, כי שמע
+    # שנשלח כמסמך היה נבלע כ"סרטון"
+    if on_wanting_audio and on_wanting_audio(chat):
+        sound, sound_name = audio_of(message)
+        if sound:
+            if on_audio:
+                _detach(on_audio(chat, sound, sound_name), "קובץ שמע")
             return
 
     file_id, size, name = localbot.media_of(message)

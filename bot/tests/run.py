@@ -5332,7 +5332,7 @@ def _raw_download_is_owner_only() -> None:
         config.BOT_OWNER = was
     source = Path("zovexsub/botmenu.py").read_text(encoding="utf-8")
     # וגם לחיצה מזויפת נחסמת, לא רק הכפתור מוסתר
-    assert 'if choice.source == "raw":\n            who, _, _ = _who(query)' \
+    assert 'if choice.source in ("raw", "dub"):\n            who, _, _ = _who(query)' \
         in source
 
 
@@ -5628,6 +5628,28 @@ def _():
     finally:
         config.WORK_DIR = saved
     assert "נעצרו 2" in said[-1], said
+
+
+@check("החלפת שמע: כפתור רק למנהל, קובץ שמע מזוהה, והעבודה ממתינה לו")
+def _():
+    from zovexsub import botmenu, botjob, allowlist
+    saved = allowlist.owner
+    allowlist.owner = lambda: 8658294616
+    try:
+        def has_dub(chat, link):
+            _, keys = botmenu.source_screen(chat, link=link)
+            return any(data == "src:dub" for row in keys for _, data in row)
+        assert has_dub(8658294616, True) and has_dub(8658294616, False)
+        assert not has_dub(1179463907, True)
+    finally:
+        allowlist.owner = saved
+    assert botmenu.audio_of({"audio": {"file_id": "a", "file_name": "x.mp3"}})[0] == "a"
+    assert botmenu.audio_of({"document": {"file_id": "b", "file_name": "dub.M4A"}})[0] == "b"
+    assert botmenu.audio_of({"document": {"file_id": "c", "mime_type": "audio/flac"}})[0] == "c"
+    assert botmenu.audio_of({"document": {"file_id": "d", "file_name": "film.mkv"}}) == ("", "")
+    body = inspect.getsource(botjob._dub)
+    assert "replace_audio" in body and "DUB_WAIT" in body
+    assert "on_wanting_audio(chat)" in inspect.getsource(botmenu._incoming)
 
 
 def main() -> int:
