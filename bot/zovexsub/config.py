@@ -919,6 +919,10 @@ GEMINI_COOLDOWN = float(os.getenv("GEMINI_COOLDOWN") or 50)
 # 404 — עכשיו אפשר להחליף בלי עדכון קוד
 GEMINI_STT_MODEL = os.getenv("GEMINI_STT_MODEL") or "gemini-3.5-transcribe"
 GEMINI_STT_API_VERSION = os.getenv("GEMINI_STT_API_VERSION") or "v1beta"
+# בתרגום של קובץ כתוביות שהמשתמש הביא: תמלול מלא של הסרט רק כדי לזהות
+# דוברים (בשביל המגדר). מועיל, אבל כבד — ולכן עם תקרת זמן ואפשרות כיבוי
+SPEAKER_SCAN = os.getenv("SPEAKER_SCAN", "1") != "0"
+SPEAKER_SCAN_MAX = float(os.getenv("SPEAKER_SCAN_MAX") or 480)
 # גיבוי לחלק תמלול תקוע: אחרי פי כמה מהחציון של החלקים שהסתיימו (ולא
 # פחות מהמינימום) נשלחת אותה בקשה שוב במפתח אחר
 GEMINI_STT_HEDGE_FACTOR = float(os.getenv("GEMINI_STT_HEDGE_FACTOR") or 2.0)

@@ -1,6 +1,7 @@
 """הצינור המלא: וידאו ⇒ אודיו ⇒ תמלול ⇒ חקר ⇒ עברית ⇒ SRT ⇒ (צריבה)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import time
@@ -310,12 +311,28 @@ async def translate_given(source: Path, srt_path: Path, work: Path,
     # תוויות דובר התרגום עדיין רץ, רק שהמגדר חוזר להישען על ההקשר
     language = ""
     measured: dict[str, str] = {}
-    if await media.has_audio(source):
+    if not config.SPEAKER_SCAN:
+        log.info("סריקת דוברים כבויה (SPEAKER_SCAN=0) — המגדר לפי ההקשר")
+    elif await media.has_audio(source):
         await progress("🎧 סורק את האודיו כדי לזהות מי מדבר…")
+
+        async def on_scan(done: int, total: int, note: str = "") -> None:
+            # בלי זה השלב עמד על אותה שורה עשר דקות ונראה תקוע
+            await progress(f"🎧 מזהה דוברים · {note or f'{done}/{total} חלקים'}")
+
         try:
             audio = await media.extract_audio(source, work / "audio.flac",
                                               track)
-            spoken = await gemini_stt.transcribe(audio)
+            # תקרת זמן: זה תמלול מלא של הסרט רק בשביל הדוברים. אם ג'ימיני
+            # איטי, עדיף להמשיך בלעדיהם מאשר לעכב את כל העבודה
+            spoken = await asyncio.wait_for(
+                gemini_stt.transcribe(audio, on_step=on_scan),
+                timeout=config.SPEAKER_SCAN_MAX)
+        except asyncio.TimeoutError:
+            log.warning("סריקת הדוברים עברה %.0f דקות — ממשיכים בלעדיה",
+                        config.SPEAKER_SCAN_MAX / 60)
+            await progress("🎧 זיהוי הדוברים ארך מדי — ממשיך לפי ההקשר")
+            spoken = None
         except Exception as exc:  # noqa: BLE001
             log.warning("סריקת הדוברים נכשלה (%s) — ממשיכים בלעדיה", exc)
             spoken = None
