@@ -314,9 +314,15 @@ UPLOAD_LIMIT_MB = _int("UPLOAD_LIMIT_MB", 0)
 # גודל הכתוביות: קטן / בינוני / גדול. אפשר לבחור גם לכל צריבה בנפרד
 SUB_SIZE = (os.getenv("SUB_SIZE") or "קטן").strip()
 SUB_FONT = os.getenv("SUB_FONT", "Noto Sans Hebrew")
-CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד על ידי|zovex|ועולם הדרמות הטורקיות")
+# שתי שורות בראש התמונה. "|" מפריד בין שורות
+CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד ע״י zovex|& עולם הדרמות הטורקיות")
 CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
-CREDIT_SIZE = _int("CREDIT_SIZE", 34)
+CREDIT_SIZE = _int("CREDIT_SIZE", 44)
+# ריווח מהקצה העליון של התמונה (בסקאלה של 720), ורוחב האותיות באחוזים.
+# בלי ריווח בין אותיות (\fsp): ב-libass הוא שובר את כיוון העברית, ונמדד
+# כאן — "עלה" יצא "הלע". הרחבת האותיות (\fscx) לא פוגעת בכיוון
+CREDIT_MARGIN = _int("CREDIT_MARGIN", 26)
+CREDIT_WIDTH = _int("CREDIT_WIDTH", 115)
 
 # תקרת ההעלאה של טלגרם פרימיום, לבחירת פרופיל בלבד (לא תקרת bitrate)
 UPLOAD_CEILING_MB = _int("UPLOAD_CEILING_MB", 3800)

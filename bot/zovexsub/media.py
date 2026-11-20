@@ -550,11 +550,11 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: credit,Noto Sans Hebrew,{size},&H00FFFFFF,&H00000000,&H64000000,-1,0,1,2,1,5,20,20,20,1
+Style: credit,Noto Sans Hebrew,{size},&H00FFFFFF,&H00000000,&H64000000,-1,0,1,2.4,1.2,8,20,20,{margin},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.20,{end},credit,,0,0,0,,{{\\fad(400,600)}}{text}
+Dialogue: 0,0:00:00.20,{end},credit,,0,0,0,,{{\\fad(400,600)\\fscx{wide}}}{text}
 """
 
 
@@ -565,7 +565,45 @@ def _ass_time(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}.{int(seconds % 1 * 100):02d}"
 
 
-def credit_file(work: Path) -> Path | None:
+async def letterbox_top(video: Path, duration: float = 0.0) -> float:
+    """איזה חלק מגובה המסגרת הוא פס שחור עליון (0 כשאין).
+
+    הקרדיט יושב בראש התמונה האמיתית, ולא בראש המסגרת: בסרט עם פסים
+    שחורים הוא היה נוחת על הפס עצמו או מחוץ לתמונה. cropdetect בשלוש
+    נקודות לאורך הסרט, וה-y השכיח הוא גבול התמונה
+    """
+    import collections
+    if duration <= 0:
+        try:
+            duration = await duration_seconds(video)
+        except Exception:  # noqa: BLE001
+            duration = 0.0
+    found: list[tuple[int, int]] = []
+    for share in (0.25, 0.5, 0.75):
+        at = duration * share if duration > 30 else 0.0
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-nostdin", "-hide_banner", "-ss", f"{at:.1f}",
+            "-i", str(video), "-t", "3", "-an", "-sn",
+            "-vf", "cropdetect=24:2:0", "-f", "null", "-",
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=60)
+        except asyncio.TimeoutError:
+            proc.kill()
+            continue
+        for h, y in re.findall(r"crop=\d+:(\d+):\d+:(\d+)",
+                               err.decode("utf-8", "replace")):
+            found.append((int(h), int(y)))
+    if not found:
+        return 0.0
+    height, top = collections.Counter(found).most_common(1)[0][0]
+    full = height + 2 * top
+    share = top / full if full else 0.0
+    # מעבר לשליש זה כבר לא פס שחור אלא סצנה חשוכה
+    return share if 0.0 < share < 0.33 else 0.0
+
+
+def credit_file(work: Path, top: float = 0.0) -> Path | None:
     """קרדיט פתיחה כקובץ ASS נפרד.
 
     נכתב כ-ASS ולא כטקסט על הווידאו כי libass מטפל נכון בכיווניות של
@@ -582,8 +620,12 @@ def credit_file(work: Path) -> Path | None:
 
     body = "\\N".join(RLE + line + PDF for line in lines)
     dst = work / "credit.ass"
+    # בראש התמונה, מתחת לפס השחור אם יש. PlayResY הוא 720, ולכן החלק
+    # היחסי מומר לאותה סקאלה
+    margin = int(config.CREDIT_MARGIN + top * 720)
     dst.write_text(
-        CREDIT_ASS.format(size=config.CREDIT_SIZE,
+        CREDIT_ASS.format(size=config.CREDIT_SIZE, margin=margin,
+                          wide=config.CREDIT_WIDTH,
                           end=_ass_time(config.CREDIT_SECONDS), text=body),
         encoding="utf-8",
     )
@@ -1117,7 +1159,7 @@ async def _burn_single(video: Path, srt: Path, dst: Path, duration: float,
                        on_progress=None, style: Style | None = None,
                        profile: str = "", track: int = 0) -> Path:
     marked = rtl_copy(srt)
-    credit = credit_file(dst.parent)
+    credit = credit_file(dst.parent, await letterbox_top(video, duration))
     settings = await _settings_for(video, duration, await video_height(video),
                                    profile, on_progress)
     _describe_profile(settings, video, duration)
@@ -1168,7 +1210,8 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
     work = dst.parent / "parallel"
     work.mkdir(parents=True, exist_ok=True)
     marked = rtl_copy(srt)
-    credit = credit_file(work)
+    top_bar = await letterbox_top(video, duration)
+    credit = credit_file(work, top_bar)
     settings = await _settings_for(video, duration, await video_height(video),
                                    profile, on_progress)
     _describe_profile(settings, video, duration)
@@ -1248,7 +1291,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True, exist_ok=True)
         marked = rtl_copy(srt)
-        credit = credit_file(work)
+        credit = credit_file(work, top_bar)
     elif card.exists():
         try:
             old_plan = json.loads(card.read_text(encoding="utf-8"))
@@ -1260,7 +1303,7 @@ async def _burn_parallel(video: Path, srt: Path, dst: Path, duration: float,
             shutil.rmtree(work, ignore_errors=True)
             work.mkdir(parents=True, exist_ok=True)
             marked = rtl_copy(srt)
-            credit = credit_file(work)
+            credit = credit_file(work, top_bar)
     card.write_text(json.dumps(plan), encoding="utf-8")
 
     done = [0.0] * segments
