@@ -1746,6 +1746,20 @@ async def scene_cuts(video: Path, threshold: float = 0.35) -> list[float]:
 
 
 # ── החלפת שמע בלי צריבה ────────────────────────────────────────
+_encoders: dict[str, bool] = {}
+
+
+async def _has_encoder(name: str) -> bool:
+    """האם ה-ffmpeg בשרת כולל את המקודד הזה."""
+    if name not in _encoders:
+        try:
+            out = await _run(["ffmpeg", "-hide_banner", "-encoders"], nice=False)
+            _encoders[name] = f" {name} " in out
+        except Exception:  # noqa: BLE001
+            _encoders[name] = False
+    return _encoders[name]
+
+
 async def _first_keyframe_after(video: Path, seconds: float) -> float:
     """זמן פריים המפתח הראשון שאחרי seconds. 0 אם לא נמצא."""
     raw = await _run(
@@ -1790,14 +1804,22 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
 
     credit = None
     cut = 0.0
-    if config.CREDIT_TEXT.strip() and codec in ("h264", "hevc"):
+    # AV1 רק כשיש מקודד AV1 בשרת: הפתיחה חייבת להיות באותו קודק כמו
+    # שאר הסרט — רצועת וידאו אחת אינה יכולה לעבור באמצע בין קודקים
+    smart = ("h264", "hevc") + (("av1",) if await _has_encoder("libsvtav1") else ())
+    if config.CREDIT_TEXT.strip() and codec in smart:
         duration = await duration_seconds(video)
         credit = credit_file(work, await letterbox_top(video, duration))
         cut = await _first_keyframe_after(video, config.CREDIT_SECONDS + 0.3)
         if cut <= 0 or cut > duration - 1:
             cut = 0.0
-    video_part = work / "video.ts"
+    # AV1 אינו נשמר ב-TS כווידאו, ולכן הוא עובר דרך MKV. ב-H.264 וב-HEVC
+    # נשאר TS, שבו כל קטע נושא את פרמטרי המקודד שלו בתוך הזרם
+    is_av1 = codec == "av1"
+    ext, box = (".mkv", "matroska") if is_av1 else (".ts", "mpegts")
+    video_part = work / f"video{ext}"
     annexb = "h264_mp4toannexb" if codec == "h264" else "hevc_mp4toannexb"
+    bsf = [] if is_av1 else ["-bsf:v", annexb]
 
     if credit is not None and cut > 0:
         await say(f"✍️ מוסיף קרדיט לפתיחה ({cut:.0f} שניות)…")
@@ -1806,6 +1828,8 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
                     "-profile:v", stream.get("profile", "high").lower()
                     .replace(" ", "") if stream.get("profile") else "high"]
                    if codec == "h264" else
+                   ["-c:v", "libsvtav1", "-preset", "6", "-crf", "20"]
+                   if is_av1 else
                    ["-c:v", "libx265", "-preset", "medium", "-crf", "16",
                     "-x265-params", "log-level=error:repeat-headers=1"])
         if stream.get("pix_fmt"):
@@ -1821,17 +1845,23 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
         # נמדדו 47 פריימים חסרים ותמונה מוזזת בכל שאר הסרט
         start = float(stream.get("start_time") or 0.0)
         frames = round((cut - start) * fps) if fps > 0 else 0
-        head = work / "head.ts"
+        head = work / f"head{ext}"
         await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
                     "-map", "0:v:0", "-an", "-sn"]
                    + (["-frames:v", str(frames)] if frames
                       else ["-t", f"{cut - start:.3f}"])
                    + ["-vf", f"subtitles='{_escape(credit)}'"] + encoder
-                   + ["-bsf:v", annexb, "-f", "mpegts", str(head)])
+                   + bsf + ["-f", box, str(head)])
         await say("📼 מעתיק את שאר הסרטון כמו שהוא…")
         edge = cut - (0.5 / fps if fps > 0 else 0.01)
-        tail = work / "tail.ts"
-        if codec == "hevc":
+        tail = work / f"tail{ext}"
+        if is_av1:
+            # כמו ב-HEVC: זריקה לפי זמן תצוגה (נבדק: 959/959, זהה למקור)
+            await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
+                        "-map", "0:v:0", "-an", "-sn", "-c:v", "copy",
+                        "-bsf:v", f"noise=drop='lt(pts*tb\\,{edge:.4f})'",
+                        "-f", box, str(tail)])
+        elif codec == "hevc":
             # זריקה לפי זמן תצוגה — הדרך היחידה שעבדה ב-open GOP
             await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
                         "-map", "0:v:0", "-an", "-sn", "-c:v", "copy",
@@ -1851,7 +1881,7 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
         listing.write_text(f"file '{head.name}'\nfile '{tail.name}'\n",
                            encoding="utf-8")
         await _run(["ffmpeg", "-nostdin", "-y", "-f", "concat", "-safe", "0",
-                    "-i", str(listing), "-c", "copy", "-f", "mpegts",
+                    "-i", str(listing), "-c", "copy", "-f", box,
                     str(video_part)])
     else:
         # בלי קרדיט אין מה לחבר, ולכן אין קובץ ביניים בכלל: הווידאו נארז
