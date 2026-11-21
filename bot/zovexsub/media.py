@@ -1760,6 +1760,18 @@ async def _has_encoder(name: str) -> bool:
     return _encoders[name]
 
 
+async def _has_noise_drop() -> bool:
+    """האם ‎noise=drop‎ קיים (ffmpeg 5.1 ומעלה)."""
+    if "noise-drop" not in _encoders:
+        try:
+            out = await _run(["ffmpeg", "-hide_banner", "-h", "bsf=noise"],
+                             nice=False)
+            _encoders["noise-drop"] = "drop" in out
+        except Exception:  # noqa: BLE001
+            _encoders["noise-drop"] = False
+    return _encoders["noise-drop"]
+
+
 async def _first_keyframe_after(video: Path, seconds: float) -> float:
     """זמן פריים המפתח הראשון שאחרי seconds. 0 אם לא נמצא."""
     raw = await _run(
@@ -1810,7 +1822,14 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
     # מה שיש בשרת (נבדק: אין libsvtav1). לעשר שניות פתיחה האיטיות זניחה
     av1_encoder = ("libsvtav1" if await _has_encoder("libsvtav1") else
                    "libaom-av1" if await _has_encoder("libaom-av1") else "")
-    smart = ("h264", "hevc") + (("av1",) if av1_encoder else ())
+    # HEVC צריך לזרוק את הפריימים המובילים של open GOP, וזה דורש את
+    # ‎noise=drop‎ — קיים רק מ-ffmpeg 5.1. ב-ffmpeg 4.4 של אובונטו 22.04
+    # (השרת) אין אותו, ובלעדיו התוצאה שבורה; עדיף בלי קרדיט מאשר כך
+    hevc_ok = await _has_noise_drop()
+    smart = ("h264",) + (("hevc",) if hevc_ok else ()) + (("av1",) if av1_encoder else ())
+    if codec == "hevc" and not hevc_ok:
+        log.warning("HEVC עם ffmpeg ישן (בלי noise=drop) — מחליפים שמע בלי "
+                    "קרדיט, כדי לא לשבור את הסרטון")
     if config.CREDIT_TEXT.strip() and codec in smart:
         duration = await duration_seconds(video)
         credit = credit_file(work, await letterbox_top(video, duration))
@@ -1863,11 +1882,16 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
         edge = cut - (0.5 / fps if fps > 0 else 0.01)
         tail = work / f"tail{ext}"
         if is_av1:
-            # כמו ב-HEVC: זריקה לפי זמן תצוגה (נבדק: 959/959, זהה למקור)
+            # מפצל הקטעים, כמו ב-H.264: ב-AV1 אין פריימים מובילים שתלויים
+            # בקודמים, ולכן החיתוך על פריים המפתח נקי. עובד גם ב-ffmpeg 4.4
+            # (נבדק: 959/959, זהה למקור). ‎noise=drop‎ נכשל בשרת: "Option
+            # 'drop' not found"
             await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
                         "-map", "0:v:0", "-an", "-sn", "-c:v", "copy",
-                        "-bsf:v", f"noise=drop='lt(pts*tb\\,{edge:.4f})'",
-                        "-f", box, str(tail)])
+                        "-f", "segment", "-segment_format", "matroska",
+                        "-segment_times", f"{edge:.4f}",
+                        "-reset_timestamps", "0", str(work / "seg%d.mkv")])
+            (work / "seg1.mkv").replace(tail)
         elif codec == "hevc":
             # זריקה לפי זמן תצוגה — הדרך היחידה שעבדה ב-open GOP
             await _run(["ffmpeg", "-nostdin", "-y", "-i", str(video),
