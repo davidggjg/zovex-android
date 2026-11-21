@@ -1965,7 +1965,11 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
         except Exception as exc:  # noqa: BLE001
             log.warning("בדיקת קובץ השמע נכשלה (%s) — מעתיקים כמו שהוא", exc)
             kind = "?"
-        keeps = kind in ("aac", "mp3", "ac3", "eac3", "opus", "flac", "alac", "?")
+        # ריק = הבדיקה לא מצאה רצועת שמע. זה בדיוק מה שקורה עם xHE-AAC:
+        # הבדיקה החלופית של probe בודקת רק וידאו, וקובץ שמע יוצא ממנה בלי
+        # רצועות — ואז הבוט המיר במקום להעתיק, וההמרה נכשלה. נמדד אצל המשתמש
+        keeps = kind in ("aac", "mp3", "ac3", "eac3", "opus", "flac", "alac",
+                         "?", "")
         cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0"]
         cmd += (["-c:a", "copy"] if keeps
                 else ["-c:a", "aac", "-b:a", config.AUDIO_BITRATE])
