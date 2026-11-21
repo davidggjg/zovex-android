@@ -760,7 +760,8 @@ async def _dub(chat_id, source: Path, work: Path, screen) -> None:
     finally:
         Path(audio).unlink(missing_ok=True)
     await _deliver_raw(chat_id, dst, work, screen,
-                       caption="🎵 עלה וקודד ע״י zovex & עולם הדרמות הטורקיות")
+                       caption="🎵 עלה וקודד ע״י zovex & עולם הדרמות הטורקיות",
+                       like=source)
 
 
 # צ'אטים שממתינים לתמונת תצוגה מקדימה, והתמונה המוכנה כשהגיעה.
@@ -1259,9 +1260,17 @@ async def _burn(chat_id, source: Path, srt_path: Path, work: Path,
 
 
 async def _deliver_raw(chat_id, source: Path, work: Path, screen,
-                       caption: str = "⬇️ הורדה מקישור") -> None:
-    """מעלה את הקובץ שירד כמו שהוא: בלי קידוד, בלי כתוביות. למנהל בלבד."""
+                       caption: str = "⬇️ הורדה מקישור",
+                       like: Path | None = None) -> None:
+    """מעלה את הקובץ שירד כמו שהוא: בלי קידוד, בלי כתוביות. למנהל בלבד.
+
+    like: קובץ אחר שממנו לקחת אורך ומידות, כשאת הקובץ עצמו אי אפשר
+    לבדוק. נמדד אצל המשתמש: אחרי החלפת שמע ל-xHE-AAC הבדיקה נכשלה,
+    והסרטון עלה עם "0:00" — מתנגן, אבל בלי אורך ובלי מידות
+    """
     info = await media.probe(source)
+    if like is not None and not info.get("format", {}).get("duration"):
+        info = await media.probe(like)
     stream = next((s for s in info.get("streams", [])
                    if s.get("codec_type") == "video"), {})
     # תמונה שהמשתמש שלח תוך כדי ההורדה גוברת על פריים מהסרטון, ונשלחת
