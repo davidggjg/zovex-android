@@ -88,12 +88,19 @@ async def probe(path: Path) -> dict:
         # בדיקה של רצועת הווידאו בלבד אינה נוגעת בשמע
         log.warning("ffprobe נכשל על %s (%s) — בודקים רק את הווידאו",
                     path.name, str(exc)[:80])
-        raw = await _run(
-            ["ffprobe", "-v", "error", "-print_format", "json",
-             "-select_streams", "v:0", "-show_format", "-show_streams",
-             str(path)],
-            nice=False,
-        )
+        try:
+            raw = await _run(
+                ["ffprobe", "-v", "error", "-print_format", "json",
+                 "-select_streams", "v:0", "-show_format", "-show_streams",
+                 str(path)],
+                nice=False,
+            )
+        except FFmpegError:
+            # בלי שום מידע: הקורא שולח את הקובץ בלי מידות ובלי משך,
+            # במקום להפיל עבודה שכבר הסתיימה
+            log.warning("גם בדיקת הווידאו נכשלה על %s — ממשיכים בלי מידע",
+                        path.name)
+            return {"streams": [], "format": {}}
     return json.loads(raw)
 
 
