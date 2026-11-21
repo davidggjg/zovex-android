@@ -1,0 +1,601 @@
+"""תמלול עם Groq Whisper large-v3 — חותמות זמן ברמת סגמנט ומילה."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import httpx
+
+from . import config, media
+from .keypool import KeyPool
+from .media import Chunk
+
+log = logging.getLogger(__name__)
+
+URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
+
+@dataclass
+class Word:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass
+class Segment:
+    index: int
+    start: float
+    end: float
+    text: str
+    words: list[Word] = field(default_factory=list)
+    no_speech: float = 0.0
+    speaker: str = ""        # מי דיבר, כשהספק מחזיר זיהוי דוברים
+
+
+@dataclass
+class Transcript:
+    language: str
+    segments: list[Segment]
+
+    @property
+    def plain(self) -> str:
+        return " ".join(s.text for s in self.segments)
+
+
+async def _post_chunk(client: httpx.AsyncClient, pool: KeyPool, chunk: Chunk,
+                      prompt: str | None, model: str) -> dict | None:
+    """שולח קטע לתמלול. מחזיר None אם הספק לא הצליח לענות אחרי כל הנסיונות.
+
+    502 ו-503 מ-Groq הם עומס זמני אצלם ולא תקלה בקובץ, ולכן מנסים שוב
+    בסבלנות ומחליפים מפתח בכל פעם. שגיאה שמעידה על הקובץ עצמו נזרקת מיד.
+    """
+    data = {
+        "model": model,
+        "response_format": "verbose_json",
+        "timestamp_granularities[]": ["segment", "word"],
+        "temperature": "0",
+    }
+    if prompt:
+        data["prompt"] = prompt[:800]
+
+    last_error = "לא ידוע"
+    for attempt in range(1, config.STT_ATTEMPTS + 1):
+        key = await pool.wait_for_free()
+        with chunk.path.open("rb") as fh:
+            files = {"file": (chunk.path.name, fh, "audio/flac")}
+            try:
+                resp = await client.post(
+                    URL, headers={"Authorization": f"Bearer {key}"},
+                    data=data, files=files, timeout=httpx.Timeout(900.0, connect=30.0),
+                )
+            except httpx.HTTPError as exc:
+                last_error = f"רשת: {exc}"
+                await asyncio.sleep(min(2 ** attempt, 60))
+                continue
+
+        if resp.status_code == 200:
+            pool.report_ok(key)
+            return resp.json()
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("retry-after")
+            pool.penalize(key, float(retry_after) if retry_after else None)
+            last_error = "מכסה"
+            await asyncio.sleep(min(2 ** attempt, 30))
+            continue
+
+        if resp.status_code >= 500:
+            # תקלה אצל הספק. מחליפים מפתח ומחכים יותר בכל סיבוב
+            pool.penalize(key, 15)
+            last_error = f"HTTP {resp.status_code} אצל Groq"
+            wait = min(5 * attempt, 60)
+            log.warning("%s (נסיון %d/%d), ממתין %ds",
+                        last_error, attempt, config.STT_ATTEMPTS, wait)
+            await asyncio.sleep(wait)
+            continue
+
+        if resp.status_code in (401, 403):
+            pool.penalize(key, 3600)
+            last_error = f"מפתח נדחה (HTTP {resp.status_code})"
+            continue
+
+        if resp.status_code == 413:
+            log.warning("הקטע גדול מדי עבור ה-API")
+            return None
+
+        if resp.status_code == 404:
+            # Groq מסירים ומחליפים מודלים מדי פעם — עוברים לבא בתור
+            log.warning("המודל %s אינו קיים אצל Groq", model)
+            return None
+
+        raise RuntimeError(f"Groq החזיר HTTP {resp.status_code}: {resp.text[:300]}")
+
+    log.warning("הקטע לא תומלל במודל %s: %s", model, last_error)
+    return None
+
+
+async def _transcribe_chunk(client: httpx.AsyncClient, pool: KeyPool, chunk: Chunk,
+                            prompt: str | None, work: Path, depth: int = 0) -> dict | None:
+    """מנסה מודל ראשי, אחריו מודל גיבוי, ולבסוף מפצל את הקטע לשניים."""
+    for model in (config.GROQ_STT_MODEL, config.GROQ_STT_FALLBACK):
+        if not model:
+            continue
+        payload = await _post_chunk(client, pool, chunk, prompt, model)
+        if payload is not None:
+            if model != config.GROQ_STT_MODEL:
+                log.info("הקטע תומלל במודל הגיבוי %s", model)
+            return payload
+
+    # Groq לא הצליח. חמשת מפתחות Gemini יושבים בטלים — עדיף תמלול עם
+    # תזמון בינוני, שההקשבה החוזרת תדייק, על פני חור בכתוביות
+    if config.GEMINI_FALLBACK_STT and config.GEMINI_API_KEYS:
+        from . import gemini
+        payload = await gemini.transcribe_audio(chunk.path)
+        if payload is not None:
+            return payload
+
+    # ייתכן שהקטע עצמו בעייתי או גדול מדי — מנסים אותו בשני חצאים
+    if depth >= 2:
+        return None
+    length = await media.duration_seconds(chunk.path)
+    if length < 60:
+        return None
+
+    log.warning("מפצל קטע של %.0f שניות ומנסה שוב", length)
+    middle = length / 2
+    merged: dict = {"segments": [], "words": [], "language": ""}
+    for part, (begin, end) in enumerate(((0.0, middle), (middle, length))):
+        piece = work / f"{chunk.path.stem}_{depth}{part}.flac"
+        await media.cut_audio(chunk.path, begin, end, piece)
+        half = Chunk(piece, chunk.offset + begin)
+        payload = await _transcribe_chunk(client, pool, half, prompt, work, depth + 1)
+        piece.unlink(missing_ok=True)
+        if payload is None:
+            continue
+        merged["language"] = merged["language"] or payload.get("language", "")
+        for seg in payload.get("segments") or []:
+            seg = dict(seg)
+            seg["start"] = float(seg.get("start", 0)) + begin
+            seg["end"] = float(seg.get("end", 0)) + begin
+            merged["segments"].append(seg)
+        for word in payload.get("words") or []:
+            word = dict(word)
+            word["start"] = float(word.get("start", 0)) + begin
+            word["end"] = float(word.get("end", 0)) + begin
+            merged["words"].append(word)
+
+    return merged if merged["segments"] else None
+
+
+def _segments_from(payload: dict, offset: float) -> list[Segment]:
+    """בונה סגמנטים מתשובת תמלול אחת, מוזזים לזמן האמיתי בסרטון."""
+    out: list[Segment] = []
+    raw_words = payload.get("words") or []
+    for seg in payload.get("segments") or []:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", start))
+        words = [
+            Word(float(w["start"]) + offset, float(w["end"]) + offset,
+                 str(w.get("word", "")).strip())
+            for w in raw_words
+            if w.get("start") is not None
+            and start - 0.01 <= float(w["start"]) <= end + 0.01
+        ]
+        out.append(Segment(
+            index=0, start=start + offset,
+            end=max(end + offset, start + offset + 0.2),
+            text=text, words=_unstretch(words),
+            no_speech=float(seg.get("no_speech_prob") or 0.0),
+        ))
+    return out
+
+
+def speech_gaps(segments: list[Segment], speech: list[tuple[float, float]],
+                least: float) -> list[tuple[float, float]]:
+    """קטעים שבהם זוהה דיבור והתמלול כמעט שתק.
+
+    הדרישה המקורית הייתה אפס חפיפה: מקטע תמלול אחד שנגע בקצה הקטע
+    הכשיר אותו כמכוסה. אבל מקטע של תמלול נמתח הרבה מעבר למה שנאמר
+    בו, ולכן בדיוק המקומות שבהם התמלול פספס דיבור הם המקומות שבהם
+    מקטע שכן נמתח עליהם — והם נפסלו מהצלה. נמדד מול קובץ רשמי:
+    119 שורות רשמיות לא היה להן שום כיסוי אצלנו.
+
+    לכן הכיסוי נמדד בשברים: קטע דיבור שהתמלול מכסה פחות מ-
+    ‏RECOVER_COVER ממנו נחשב חור, ומתומלל שוב
+    """
+    need = min(1.0, max(0.0, config.RECOVER_COVER))
+    found = []
+    for begin, end in speech:
+        width = end - begin
+        if width < least:
+            continue
+        covered = sum(min(end, s.end) - max(begin, s.start)
+                      for s in segments
+                      if s.start < end and s.end > begin)
+        if covered < width * need:
+            found.append((begin, end))
+    return found
+
+
+def drop_nonspeech(segments: list[Segment],
+                   speech: list[tuple[float, float]]) -> int:
+    """מוחק קטעים שיושבים היכן שה-VAD לא שמע דיבור. מחזיר כמה נמחקו.
+
+    זה התיקון שהמחקר מצביע עליו כחזק ביותר להזיות: המודל אומן על
+    קורפוס כתוביות, ולכן על שקט הוא פולט קרדיט של מתרגם או "תודה
+    שצפיתם". הדרך לעצור את זה היא לא לנחש לפי מילים אלא לבדוק אם
+    בכלל נשמע שם דיבור.
+
+    זה עובד גם למסלול ג'מיני, שאינו מחזיר no_speech_prob בכלל —
+    ולכן היה חשוף לגמרי. הסינון שהיה קיים רץ רק במסלול Groq.
+
+    שתי ראיות נדרשות, ולא אחת: גם שהקטע יושב מחוץ לדיבור, וגם
+    שהטקסט עצמו נראה כמו הזיה. הגרסה שדרשה VAD בלבד מחקה בקובץ
+    אמיתי שלוש דקות דיבור וחמישה חורים חדשים — VAD מפספס לחישה
+    ודיבור מעל מוזיקה, ובדרמה זה חלק גדול מהסרט
+    """
+    if not speech:
+        return 0
+    edge = config.NONSPEECH_COVER
+    gone = 0
+    for seg in list(segments):
+        width = seg.end - seg.start
+        body = seg.text.strip()
+        if width <= 0 or len(body) > config.NONSPEECH_MAX_CHARS:
+            continue
+        # ‏VAD לבדו אינו עילה למחיקה, וזה נמדד ביוקר: הגרסה הראשונה
+        # מחקה כל קטע שישב מחוץ לדיבור, ובקובץ של המשתמש נעלמו
+        # שלוש דקות דיבור ונפתחו חמישה חורים חדשים — מול שלוש
+        # שורות הזיה שנחסכו. ‏VAD מפספס לחישה ודיבור מעל מוזיקה,
+        # ובדרמה זה חלק גדול מהסרט.
+        #
+        # לכן נדרשת ראיה שנייה: הטקסט עצמו חייב להיראות כמו הזיה —
+        # קרדיט מתרגם, ביטוי מוכר, או שורה בלי שום תוכן
+        low = body.lower().strip(".!?,- ")
+        suspect = (_CREDIT.search(low)
+                   or any(j in low for j in _JUNK)
+                   or not any(ch.isalnum() for ch in body))
+        if not suspect:
+            continue
+        heard = sum(min(seg.end, stop) - max(seg.start, start)
+                    for start, stop in speech
+                    if start < seg.end and stop > seg.start)
+        if heard <= width * edge:
+            log.info("נמחק קטע ללא דיבור ב-%.0f שניות: %s",
+                     seg.start, seg.text[:60])
+            segments.remove(seg)
+            gone += 1
+    if gone:
+        for position, segment in enumerate(segments):
+            segment.index = position
+    return gone
+
+
+def _already_there(found: Segment, settled: list[tuple[float, float]],
+                   share: float = 0.5) -> bool:
+    """האם הקטע שהוצל חופף למה שכבר תומלל.
+
+    חפיפה של חצי ומעלה פירושה שזה אותו דיבור, ולהוסיף אותו שוב זה
+    להכפיל שורה שכבר נמצאת בכתוביות
+    """
+    width = found.end - found.start
+    if width <= 0:
+        return True
+    covered = sum(min(found.end, stop) - max(found.start, start)
+                  for start, stop in settled
+                  if start < found.end and stop > found.start)
+    return covered >= width * share
+
+
+def pick_gaps(gaps: list[tuple[float, float]],
+              most: int) -> list[tuple[float, float]]:
+    """החורים הארוכים ביותר, מוחזרים בסדר הזמנים.
+
+    התקרה חייבת לחתוך לפי אורך ולא לפי זמן. כשהחיתוך היה gaps[:MAX]
+    על רשימה ממוינת בזמן, סרט שלם קיבל הצלה רק בעשרים הדקות
+    הראשונות — ב"כוכבי הכלב" החור ב-1:45:24, 239 שניות ושלוש־עשרה
+    שורות בכתוביות הרשמיות, היה החור השלוש־מאות ולכן מעולם לא נגעו בו
+    """
+    if most <= 0 or len(gaps) <= most:
+        return sorted(gaps)
+    longest = sorted(gaps, key=lambda g: g[1] - g[0], reverse=True)[:most]
+    return sorted(longest)
+
+
+async def recover_gaps(segments: list[Segment],
+                       speech: list[tuple[float, float]],
+                       audio: Path, work: Path, on_step=None) -> int:
+    """מתמלל שוב רק היכן שהדיבור נשמע והתמלול שתק. מחזיר כמה נוספו.
+
+    נמדד בשטח: בין 19 ל-45 שניות דיבור בכל פרק זוהו על ידי ה-VAD
+    וחזרו מהתמלול ריקות. עד כה זה רק נרשם ללוג.
+
+    החור אינו נשאר חור: הכתוביות סביבו נמתחות כדי לכסות אותו, וכתובית
+    שנמתחה על פני עשר שניות מופיעה בזמן הלא נכון. לכן מילים חסרות
+    נראות למשתמש כבעיית תזמון, ותיקון התזמון לבדו לא היה עוזר.
+
+    קטע קצר ומבודד מקבל את מלוא תשומת הלב של המודל, בניגוד לאותו
+    דיבור בתוך קטע של עשרים דקות — ולכן הניסיון החוזר מצליח היכן
+    שהראשון ויתר
+    """
+    gaps = speech_gaps(segments, speech, config.RECOVER_MIN)
+    if not gaps:
+        log.info("אין קטעי דיבור ללא תמלול — אין מה להציל")
+        return 0
+    total_gaps = len(gaps)
+    gaps = pick_gaps(gaps, config.RECOVER_MAX)
+    lost = sum(end - begin for begin, end in gaps)
+    log.warning("%d קטעי דיבור ללא תמלול (מתוך %d), %.0f שניות — מתמלל שוב",
+                len(gaps), total_gaps, lost)
+
+    pool = KeyPool("groq", config.GROQ_API_KEYS)
+    pad = config.RECOVER_PAD
+    added = 0
+    # תצלום של מה שהיה לפני ההצלה. ההשוואה היא מולו ולא מול הרשימה
+    # החיה, שאליה מתווספים קטעים תוך כדי
+    settled = sorted(((seg.start, seg.end) for seg in segments))
+    # הטור היה חונק: חיתוך ffmpeg וקריאת Groq לכל חור, אחד-אחד. עם
+    # תקרה של 160 חורים זה שעה. הם בלתי תלויים לחלוטין, ולכן רצים יחד
+    gate = asyncio.Semaphore(max(1, config.RECOVER_WORKERS))
+    done = 0
+    async with httpx.AsyncClient(timeout=httpx.Timeout(300.0,
+                                                       connect=20.0)) as web:
+        async def one(number: int, begin: float, end: float):
+            nonlocal done
+            # ריפוד משני הצדדים: מילה שנחתכה בדיוק בגבול הקטע אינה
+            # ניתנת לזיהוי, וההקשר שלפניה עוזר למודל
+            start = max(0.0, begin - pad)
+            piece = work / f"gap{number:03d}.flac"
+            async with gate:
+                try:
+                    await media.cut_audio(audio, start, end + pad, piece)
+                    payload = await _transcribe_chunk(
+                        web, pool, Chunk(piece, start), None, work)
+                except Exception as exc:  # noqa: BLE001 — חור אחד אינו מפיל
+                    log.warning("הצלת קטע %d נכשלה: %s", number, exc)
+                    payload = None
+                finally:
+                    piece.unlink(missing_ok=True)
+            done += 1
+            if on_step:
+                await on_step(done, len(gaps))
+            if not payload:
+                return []
+            # רק מה שנופל בתוך החור עצמו. הריפוד נועד להקשר,
+            # והטקסט שבו כבר קיים בכתוביות השכנות.
+            #
+            # ומה שכבר תומלל נזרק. כשהחור הוגדר כאפס חפיפה זה היה
+            # מיותר, כי חור היה בהכרח ריק. מאז ש-RECOVER_COVER מכיר
+            # גם בכיסוי חלקי, קטע שכבר תומלל למחצה מתומלל שוב —
+            # והטקסט נכנס פעמיים. נמדד בקובץ של המשתמש: 26 כתוביות
+            # כפולות, בהפרש של כשנייה זו מזו
+            return [f for f in _segments_from(payload, start)
+                    if f.end > begin and f.start < end
+                    and not _already_there(f, settled)]
+
+        rescued = await asyncio.gather(
+            *(one(i, b, e) for i, (b, e) in enumerate(gaps, 1)),
+            return_exceptions=True)
+    for batch in rescued:
+        if isinstance(batch, BaseException):
+            log.warning("הצלת קטע נכשלה: %s", batch)
+            continue
+        for found in batch:
+            segments.append(found)
+            added += 1
+
+    if added:
+        segments.sort(key=lambda s: s.start)
+        for position, segment in enumerate(segments):
+            segment.index = position
+        log.warning("הוצלו %d שורות דיבור שהתמלול הראשון פספס", added)
+    else:
+        log.info("הניסיון החוזר לא הוסיף שורות — כנראה אין שם דיבור ברור")
+    return added
+
+
+# שמות קבצים שאינם אומרים דבר על התוכן
+GENERIC_NAMES = frozenset({
+    "source", "video", "movie", "film", "file", "output", "input",
+    "untitled", "temp", "tmp", "download", "clip", "media", "audio",
+    "sample", "new", "test", "final", "episode", "vid",
+})
+
+
+def title_hint(source: "Path") -> str:
+    """רמז לתמלול מתוך שם הקובץ.
+
+    ‏prompt של Whisper הוא המנגנון הרשמי להטיית הפענוח לשמות פרטיים,
+    ושם הקובץ הוא המקור היחיד שיש לנו **לפני** התמלול: מילון שמות
+    אמיתי אפשר לבנות רק מהתמלול עצמו, וזה מעגל.
+
+    שם כמו "Avatar.Seven.Havens.S01E13.1080p.WEB.h264-GROUP" מכיל את
+    שם הסדרה, וזה בדיוק מה שמטה את המודל לאיית את השמות נכון במקום
+    לנחש אותם לפי צליל
+    """
+    stem = source.stem if hasattr(source, "stem") else str(source)
+    words: list[str] = []
+    for part in re.split(r"[.\s_\-]+", stem):
+        if not part:
+            continue
+        # מכאן והלאה זה תגיות הפצה ולא שם: עונה/פרק, רזולוציה, קודק
+        if re.fullmatch(r"(?i)s\d{1,2}(e\d{1,3})?|\d{3,4}p|x26[45]|h\.?26[45]"
+                        r"|web|webrip|web-?dl|bluray|hdtv|aac\d?|ddp?5|atmos"
+                        r"|hevc|dv|hdr|\d{4}|amzn|atvp|netflix|nf", part):
+            break
+        words.append(part)
+    name = " ".join(words).strip()
+    if len(name) < 3:
+        return ""
+    # שם כללי אינו רמז אלא רעש. הורדה מקישור יוצרת תמיד source.mp4
+    # (התבנית ב-fetch), ורמז "source" היה מטה את המודל למילה הזאת
+    # במקום לשמות שבסרט — כלומר מזיק יותר מלא לשלוח כלום
+    if name.lower().replace(" ", "") in GENERIC_NAMES:
+        return ""
+    return f"{name}."
+
+
+async def transcribe(chunks: list[Chunk], *, hint: str | None = None,
+                     on_chunk=None, work: Path | None = None) -> Transcript:
+    """מתמלל את כל הקטעים במקביל, קטע לכל מפתח.
+
+    עד כה הקטעים תומללו בזה אחר זה, כך שמפתח אחד עבד והשאר המתינו. כל
+    קטע עומד בפני עצמו — הזמנים שלו מוסטים לפי ה-offset — ולכן אין סיבה
+    לסדר ביניהם.
+    """
+    pool = KeyPool("groq", config.GROQ_API_KEYS)
+    workers = config.parallel(config.STT_PARALLEL, config.GROQ_API_KEYS)
+    gate = asyncio.Semaphore(workers)
+    done = 0
+    log.info("מתמלל %d קטעים, עד %d במקביל", len(chunks), workers)
+
+    async with httpx.AsyncClient() as client:
+        async def one(index: int, chunk: Chunk):
+            nonlocal done
+            async with gate:
+                payload = await _transcribe_chunk(
+                    client, pool, chunk, hint,
+                    work or chunk.path.parent)
+            done += 1
+            log.info("הושלם קטע %d/%d", done, len(chunks))
+            if on_chunk:
+                await on_chunk(done, len(chunks))
+            return index, payload
+
+        results = await asyncio.gather(*(one(i, c) for i, c in enumerate(chunks)))
+
+    segments: list[Segment] = []
+    language = ""
+    failed: list[int] = []
+
+    for index, payload in sorted(results, key=lambda pair: pair[0]):
+        chunk = chunks[index]
+        if payload is None:
+            log.error("קטע %d לא תומלל — ממשיכים בלעדיו", index + 1)
+            failed.append(index + 1)
+            continue
+
+        language = language or (payload.get("language") or "")
+        raw_segments = payload.get("segments") or []
+        raw_words = payload.get("words") or []
+
+        for seg in raw_segments:
+            text = (seg.get("text") or "").strip()
+            if not text:
+                continue
+            start = float(seg.get("start", 0.0)) + chunk.offset
+            end = float(seg.get("end", start)) + chunk.offset
+            words = [
+                Word(float(w["start"]) + chunk.offset, float(w["end"]) + chunk.offset,
+                     str(w.get("word", "")).strip())
+                for w in raw_words
+                if w.get("start") is not None
+                and start - chunk.offset - 0.01 <= float(w["start"]) <= end - chunk.offset + 0.01
+            ]
+            words = _unstretch(words)
+            if words:
+                first, last = words[0].start, words[-1].end
+                if start - 2.0 <= first <= end:
+                    start = first
+                if start <= last <= end + 2.0:
+                    end = last
+
+            segments.append(Segment(
+                index=0, start=start, end=max(end, start + 0.2), text=text,
+                words=words, no_speech=float(seg.get("no_speech_prob") or 0.0),
+            ))
+
+    segments.sort(key=lambda s: s.start)
+    if failed:
+        log.error("%d מתוך %d קטעים לא תומללו: %s",
+                  len(failed), len(chunks), ", ".join(map(str, failed)))
+    if not segments and failed:
+        raise RuntimeError(
+            "התמלול נכשל: Groq לא הגיב לאף קטע. זו תקלה זמנית אצלם — נסה שוב בעוד כמה דקות."
+        )
+
+    segments = _drop_hallucinations(segments)
+    for i, seg in enumerate(segments):
+        seg.index = i
+    return Transcript(language=language or "unknown", segments=segments)
+
+
+def _spoken_length(text: str) -> float:
+    """כמה זמן לוקח להגות מילה כזו, בערך."""
+    return min(0.9, max(0.12, len(text.strip()) * 0.075))
+
+
+def _unstretch(words: list[Word]) -> list[Word]:
+    """מתקן מילה שנמתחה על פני שקט או מוזיקה.
+
+    כש-Whisper מאבד יישור בתחילת חלון הוא נותן למילה הראשונה את זמן
+    תחילת החלון, אבל את זמן הסיום האמיתי. כך נוצרת "מילה" באורך כמה
+    שניות — למשל האות A שנמתחה מ-30.00 עד 32.52. הסיום אמין, ולכן
+    ההתחלה מחושבת ממנו לאחור לפי אורך ההגייה הסביר.
+    """
+    fixed = []
+    for position, word in enumerate(words):
+        length = word.end - word.start
+        expected = _spoken_length(word.text)
+        if length > max(1.0, expected * 4):
+            corrected = max(word.end - expected, 0.0)
+            # לא דוחפים מילה אל תוך זו שלפניה
+            if position:
+                corrected = max(corrected, fixed[-1].end)
+            log.info("מילה מתוחה תוקנה: %r %.2f-%.2f ⇐ %.2f",
+                     word.text, corrected, word.end, word.start)
+            word = Word(corrected, word.end, word.text)
+        fixed.append(word)
+    return fixed
+
+
+# כתובת אתר או סימן מים בתוך שקט — כמעט תמיד המצאה של המודל
+_URL = re.compile(r"(https?://|www\.|\.(com|net|org|tv|ru|ir|co\.il)\b)", re.I)
+
+_JUNK = {
+    "תרגום וכתוביות", "כתוביות", "סוף", "תודה רבה", "thank you", "thanks for watching",
+    "subtitles by", "amara.org", "please subscribe", "משנה הבאה",
+}
+
+# קרדיט של מתרגם, בכל שפה. המודל אומן על קורפוס כתוביות, ולכן על
+# קטע שקט הוא פולט בדיוק את השורות האלה — נמדד אצל המשתמש:
+# "Undertexter av Nicolai Winther" הופיע באמצע סרט יפני, בתוך חור
+# של שתי דקות. רשימה באנגלית בלבד לא תפסה אותה
+_CREDIT = re.compile(
+    r"(?i)\b(sub(title)?s?|undertext(er|ning)?|sous-titres|untertitel"
+    r"|subt[ií]tulos|sottotitoli|legendas|napisy|titulky|subtitrare"
+    r"|altyaz[ıi]|แปลโดย|字幕|자막|перевод|субтитры|תרגום|כתוביות)\b"
+    r".{0,24}(?:\b(?:by|av|de|par|von|por|di|przez|od|av/by)\b|[:\-\u2013])"
+    r"|\bamara\.org\b")
+
+
+def _drop_hallucinations(segments: list[Segment]) -> list[Segment]:
+    """Whisper נוטה להמציא טקסט על קטעי שקט. מסננים את החשודים."""
+    clean: list[Segment] = []
+    for seg in segments:
+        low = seg.text.strip().lower().strip(".!?,- ")
+        if seg.no_speech > 0.75 and len(low) < 40:
+            continue
+        if any(j in low for j in _JUNK) and len(low) < 45:
+            continue
+        # קרדיט מתרגם נמחק גם כשהוא ארוך יותר ובלי קשר ל-no_speech:
+        # זו אינה שורה שנאמרה אי פעם בסרט, בשום שפה
+        if _CREDIT.search(low) and len(low) < 70:
+            log.info("נמחק קרדיט מתרגם שהמודל המציא: %s", seg.text[:60])
+            continue
+        # כתובת אתר או סימן מים — כמעט תמיד המצאה של המודל, לא דיבור
+        if _URL.search(low) and len(low) < 60:
+            continue
+        # שכפול זהה רצוף
+        if clean and clean[-1].text.strip() == seg.text.strip() and seg.end - seg.start < 1.5:
+            clean[-1].end = max(clean[-1].end, seg.end)
+            continue
+        clean.append(seg)
+    return clean

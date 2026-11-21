@@ -1,0 +1,7 @@
+.env
+allowlist.json
+*.session
+*.session-journal
+__pycache__/
+work/
+spell/
