@@ -65,7 +65,12 @@ async def _run(cmd: list[str], *, nice: bool = True,
         raise
     if proc.returncode != 0:
         tail = err.decode("utf-8", "replace").strip().splitlines()[-12:]
-        raise FFmpegError("\n".join(tail) or f"exit {proc.returncode}")
+        # "exit 1" לבדו לא אמר כלום — לא איזה כלי ולא על מה. הפקודה
+        # המקוצרת נכנסת להודעה וללוג, כדי שאפשר יהיה לדעת מה נכשל
+        brief = " ".join(cmd[:12])[:300]
+        log.warning("פקודה נכשלה (exit %s): %s", proc.returncode, brief)
+        raise FFmpegError("\n".join(tail)
+                          or f"exit {proc.returncode}: {brief}")
     return out.decode("utf-8", "replace")
 
 
