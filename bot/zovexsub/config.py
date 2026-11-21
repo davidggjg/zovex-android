@@ -319,6 +319,9 @@ CREDIT_TEXT = os.getenv("CREDIT_TEXT", "עלה וקודד ע״י zovex|& עול�
 CREDIT_SECONDS = float(os.getenv("CREDIT_SECONDS") or 10)
 # החלפת שמע: כמה זמן לחכות לקובץ השמע אחרי שהסרטון ירד
 DUB_WAIT = float(os.getenv("DUB_WAIT") or 1800)
+# ffmpeg חדש (7.1 ומעלה) לצד הישן, רק להמרת שמע ש-ffmpeg 4.4 לא מכיר —
+# xHE-AAC למשל. ריק = מחפשים ב-/opt/zovexsub/ffmpeg/ffmpeg
+FFMPEG_NEW = os.getenv("FFMPEG_NEW") or "/opt/zovexsub/ffmpeg/ffmpeg"
 CREDIT_SIZE = _int("CREDIT_SIZE", 44)
 # ריווח מהקצה העליון של התמונה (בסקאלה של 720), ורוחב האותיות באחוזים.
 # בלי ריווח בין אותיות (\fsp): ב-libass הוא שובר את כיוון העברית, ונמדד

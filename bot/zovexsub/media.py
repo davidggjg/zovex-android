@@ -1970,6 +1970,21 @@ async def replace_audio(video: Path, audio: Path | None, dst: Path,
         # רצועות — ואז הבוט המיר במקום להעתיק, וההמרה נכשלה. נמדד אצל המשתמש
         keeps = kind in ("aac", "mp3", "ac3", "eac3", "opus", "flac", "alac",
                          "?", "")
+        # שמע שה-ffmpeg בשרת אינו מזהה (xHE-AAC) — רוב המכשירים לא יזהו
+        # אותו גם הם. אם מותקן ffmpeg חדש, ממירים אותו קודם ל-AAC רגיל,
+        # שכל מכשיר מנגן
+        if kind in ("?", "") and Path(config.FFMPEG_NEW).exists():
+            plain = work / "audio.m4a"
+            try:
+                await say("🎵 ממיר את השמע לפורמט שכל מכשיר מכיר…")
+                await _run([config.FFMPEG_NEW, "-nostdin", "-y", "-i",
+                            str(audio), "-vn", "-c:a", "aac", "-b:a",
+                            config.AUDIO_BITRATE, str(plain)])
+                audio = plain
+                kind = "aac"
+                log.info("השמע הומר ל-AAC רגיל עם %s", config.FFMPEG_NEW)
+            except Exception as exc:  # noqa: BLE001 — נשארים עם העתקה
+                log.warning("המרת השמע ב-ffmpeg החדש נכשלה (%s) — מעתיקים", exc)
         cmd += ["-i", str(audio), "-map", "0:v:0", "-map", "1:a:0"]
         cmd += (["-c:a", "copy"] if keeps
                 else ["-c:a", "aac", "-b:a", config.AUDIO_BITRATE])
